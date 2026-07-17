@@ -1,0 +1,46 @@
+[project]
+name = "storecipe-workspace"
+version = "0.1.0"
+description = "Storecipe backend workspace"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["services/catalog", "services/ingestion"]
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.21,<0.22",
+    "httpx>=0.28,<0.29",
+    "mypy>=1.17,<2",
+    "openapi-spec-validator>=0.7.2,<0.8",
+    "pytest>=8.4,<9",
+    "pytest-asyncio>=1.1,<2",
+    "pytest-cov>=6.2,<7",
+    "ruff>=0.12,<0.13",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers --import-mode=importlib"
+testpaths = ["services/catalog/tests", "services/ingestion/tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["services/catalog/src", "services/ingestion/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "celery.*"
+ignore_missing_imports = true

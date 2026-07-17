@@ -1,0 +1,32 @@
+{$PUBLIC_HOST:localhost} {
+    encode zstd gzip
+
+    # Routes mirror contracts/openapi.yaml: one public host, /v1/* paths split
+    # by resource owner (contracts/ownership.md). Imports belong to Ingestion;
+    # every other /v1 resource belongs to Catalog. handle blocks are mutually
+    # exclusive and matched in order, so the imports route must stay first.
+    handle /v1/imports* {
+        reverse_proxy ingestion-api:8001
+    }
+
+    handle /v1/* {
+        reverse_proxy catalog-api:8000
+    }
+
+    # MCP clients discover OAuth metadata at the public resource origin and
+    # connect to the Catalog-owned Streamable HTTP endpoint.
+    handle /.well-known/oauth-protected-resource* {
+        reverse_proxy catalog-api:8000
+    }
+
+    handle /mcp* {
+        reverse_proxy catalog-api:8000
+    }
+
+    # The internal catalog route is intentionally not proxied.
+    handle {
+        root * /srv/web
+        try_files {path} /index.html
+        file_server
+    }
+}

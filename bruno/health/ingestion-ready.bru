@@ -1,0 +1,18 @@
+meta {
+  name: Ingestion readiness
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{ingestion_url}}/health/ready
+  body: none
+  auth: none
+}
+
+tests {
+  test("ingestion dependencies are ready", function () {
+    expect(res.status).to.equal(200);
+  });
+}
+

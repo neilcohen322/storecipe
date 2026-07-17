@@ -1,0 +1,2 @@
+Catalog-owned Alembic revisions live here. Keep migrations aligned with the reviewed
+data contract; do not let models silently define the schema.

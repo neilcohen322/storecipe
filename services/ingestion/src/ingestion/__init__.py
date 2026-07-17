@@ -1,0 +1,1 @@
+"""Storecipe ingestion service."""

@@ -1,0 +1,14 @@
+# Keep the build context small: service images only need pyproject.toml,
+# uv.lock, and the services/ source trees.
+.git
+.github
+.venv
+.env
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+apps/web/node_modules
+apps/web/.expo
+apps/web/dist
+bruno

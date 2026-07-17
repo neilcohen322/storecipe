@@ -1,0 +1,1 @@
+"""Storecipe catalog service."""

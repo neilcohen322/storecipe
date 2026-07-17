@@ -1,0 +1,18 @@
+meta {
+  name: Catalog readiness
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{catalog_url}}/health/ready
+  body: none
+  auth: none
+}
+
+tests {
+  test("catalog dependencies are ready", function () {
+    expect(res.status).to.equal(200);
+  });
+}
+

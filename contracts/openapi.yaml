@@ -1,0 +1,278 @@
+openapi: 3.1.0
+info:
+  title: Storecipe public API contract
+  version: 0.3.0
+  description: Public contract for recipes, ratings, private search, and imports.
+servers:
+  - url: https://api.storecipe.example
+security:
+  - bearerAuth: []
+paths:
+  /v1/recipes:
+    get:
+      operationId: searchRecipes
+      description: Requires the `recipes:read` scope.
+      parameters:
+        - {name: query, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
+        - {name: tag, in: query, schema: {type: string, minLength: 1, maxLength: 64}}
+        - {name: maxTotalMinutes, in: query, schema: {type: integer, minimum: 0}}
+        - {name: minRating, in: query, schema: {type: integer, minimum: 1, maximum: 5}}
+        - {name: cursor, in: query, schema: {type: string, maxLength: 512}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        "200":
+          description: User-owned recipes
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecipePage"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+    post:
+      operationId: createRecipe
+      description: Requires the `recipes:write` scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RecipeCreate"}
+      responses:
+        "201":
+          description: Created recipe
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Recipe"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+  /v1/recipes/{recipeId}:
+    parameters:
+      - {$ref: "#/components/parameters/RecipeId"}
+    get:
+      operationId: getRecipe
+      description: Requires `recipes:read`; another user's recipe is reported as not found.
+      responses:
+        "200": {description: Recipe, content: {application/json: {schema: {$ref: "#/components/schemas/Recipe"}}}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    patch:
+      operationId: updateRecipe
+      description: Requires the `recipes:write` scope.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RecipePatch"}
+      responses:
+        "200": {description: Updated recipe, content: {application/json: {schema: {$ref: "#/components/schemas/Recipe"}}}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+    delete:
+      operationId: deleteRecipe
+      description: Requires the `recipes:write` scope.
+      responses:
+        "204": {description: Deleted}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /v1/recipes/{recipeId}/rating:
+    parameters:
+      - {$ref: "#/components/parameters/RecipeId"}
+    put:
+      operationId: rateRecipe
+      description: Creates or replaces the authenticated user's rating; requires `ratings:write`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RatingInput"}
+      responses:
+        "200": {description: Rating saved, content: {application/json: {schema: {$ref: "#/components/schemas/Rating"}}}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+    delete:
+      operationId: deleteRating
+      description: Idempotently removes the authenticated user's rating; requires `ratings:write`.
+      responses:
+        "204": {description: Rating removed}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /v1/recommendations:
+    post:
+      operationId: recommendRecipes
+      responses:
+        "200": {description: Deterministically ranked recipes}
+  /v1/imports/url:
+    post:
+      operationId: importRecipeFromUrl
+      responses:
+        "202": {description: Accepted import, content: {application/json: {schema: {$ref: "#/components/schemas/ImportAccepted"}}}}
+  /v1/imports/text:
+    post:
+      operationId: importRecipeFromText
+      responses:
+        "202": {description: Accepted import, content: {application/json: {schema: {$ref: "#/components/schemas/ImportAccepted"}}}}
+  /v1/imports/{jobId}:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getImportStatus
+      responses:
+        "200": {description: Import job status, content: {application/json: {schema: {$ref: "#/components/schemas/ImportJob"}}}}
+    delete:
+      operationId: cancelQueuedImport
+      responses:
+        "204": {description: Queued job cancelled}
+        "409": {description: Job is no longer queued}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    RecipeId:
+      name: recipeId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      headers:
+        WWW-Authenticate:
+          schema: {type: string}
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    Forbidden:
+      description: Access token lacks a required scope
+      headers:
+        WWW-Authenticate:
+          schema: {type: string}
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    NotFound:
+      description: Resource not found or not owned by the authenticated user
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    RatingInput:
+      type: object
+      required: [value]
+      properties:
+        value: {type: integer, minimum: 1, maximum: 5}
+    Rating:
+      type: object
+      required: [value]
+      properties:
+        value: {type: integer, minimum: 1, maximum: 5}
+    RecipeCreate:
+      type: object
+      required: [title, ingredients, instructions]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        sourceUrl: {type: [string, "null"], format: uri}
+        servings: {type: [integer, "null"], minimum: 1}
+        prepMinutes: {type: [integer, "null"], minimum: 0}
+        cookMinutes: {type: [integer, "null"], minimum: 0}
+        totalMinutes: {type: [integer, "null"], minimum: 0}
+        ingredients:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/Ingredient"}
+        instructions:
+          type: array
+          minItems: 1
+          items: {type: string, minLength: 1}
+        tags:
+          type: array
+          items: {type: string, minLength: 1, maxLength: 64}
+          default: []
+    RecipePatch:
+      type: object
+      minProperties: 1
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        sourceUrl: {type: [string, "null"], format: uri}
+        servings: {type: [integer, "null"], minimum: 1}
+        prepMinutes: {type: [integer, "null"], minimum: 0}
+        cookMinutes: {type: [integer, "null"], minimum: 0}
+        totalMinutes: {type: [integer, "null"], minimum: 0}
+        ingredients:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/Ingredient"}
+        instructions:
+          type: array
+          minItems: 1
+          items: {type: string, minLength: 1}
+        tags:
+          type: array
+          items: {type: string, minLength: 1, maxLength: 64}
+    Recipe:
+      type: object
+      required: [id, title, sourceUrl, servings, prepMinutes, cookMinutes, totalMinutes, ingredients, instructions, tags, rating]
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string, minLength: 1, maxLength: 200}
+        sourceUrl: {type: [string, "null"], format: uri}
+        servings: {type: [integer, "null"], minimum: 1}
+        prepMinutes: {type: [integer, "null"], minimum: 0}
+        cookMinutes: {type: [integer, "null"], minimum: 0}
+        totalMinutes: {type: [integer, "null"], minimum: 0}
+        ingredients: {type: array, items: {$ref: "#/components/schemas/Ingredient"}}
+        instructions: {type: array, items: {type: string, minLength: 1}}
+        tags: {type: array, items: {type: string}}
+        rating: {type: [integer, "null"], minimum: 1, maximum: 5}
+    Ingredient:
+      type: object
+      required: [rawText, name]
+      properties:
+        rawText: {type: string, minLength: 1}
+        name: {type: string, minLength: 1, maxLength: 200}
+        quantity: {type: [number, "null"], minimum: 0}
+        unit: {type: [string, "null"], minLength: 1, maxLength: 64}
+    RecipePage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/Recipe"}}
+        nextCursor: {type: [string, "null"]}
+    ImportAccepted:
+      type: object
+      required: [jobId, status]
+      properties:
+        jobId: {type: string, format: uuid}
+        status: {const: queued}
+    ImportJob:
+      type: object
+      required: [id, status, attemptCount]
+      properties:
+        id: {type: string, format: uuid}
+        status: {enum: [queued, processing, completed, review_required, failed, cancelled, timed_out]}
+        attemptCount: {type: integer, minimum: 0}
+        createdRecipeId: {type: [string, "null"], format: uuid}
+        errorCategory: {type: [string, "null"]}
+    Problem:
+      type: object
+      required: [type, title, status, request_id]
+      properties:
+        type: {type: string, format: uri}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        request_id: {type: string}

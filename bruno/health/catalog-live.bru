@@ -1,0 +1,18 @@
+meta {
+  name: Catalog liveness
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{catalog_url}}/health/live
+  body: none
+  auth: none
+}
+
+tests {
+  test("catalog is alive", function () {
+    expect(res.status).to.equal(200);
+  });
+}
+

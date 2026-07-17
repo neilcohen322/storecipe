@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "id": "clean-he-01",
+      "category": "clean_text",
+      "language": "he",
+      "source": {"kind": "text", "content": "סלט עגבניות\nמנות: 2\nמרכיבים: 2 עגבניות; 1 כף שמן זית\nהוראות: חותכים עגבניות. מערבבים עם שמן."},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "סלט עגבניות",
+        "source_url": "https://evaluation.storecipe.invalid/clean-he-01",
+        "servings": 2,
+        "ingredients": [
+          {"raw_text": "2 עגבניות", "name": "עגבניות", "quantity": 2},
+          {"raw_text": "1 כף שמן זית", "name": "שמן זית", "quantity": 1, "unit": "כף"}
+        ],
+        "instructions": ["חותכים עגבניות.", "מערבבים עם שמן."]
+      }
+    },
+    {
+      "id": "clean-en-01",
+      "category": "clean_text",
+      "language": "en",
+      "source": {"kind": "text", "content": "Lemon Couscous\nServes 2\nIngredients: 1 cup couscous; 1 lemon\nSteps: Cover couscous with hot water. Stir in lemon juice."},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "Lemon Couscous",
+        "source_url": "https://evaluation.storecipe.invalid/clean-en-01",
+        "servings": 2,
+        "ingredients": [
+          {"raw_text": "1 cup couscous", "name": "couscous", "quantity": 1, "unit": "cup"},
+          {"raw_text": "1 lemon", "name": "lemon", "quantity": 1}
+        ],
+        "instructions": ["Cover couscous with hot water.", "Stir in lemon juice."]
+      }
+    },
+    {
+      "id": "clean-mixed-01",
+      "category": "clean_text",
+      "language": "mixed",
+      "source": {"kind": "text", "content": "Pasta עם עגבניות\n2 servings\nIngredients: 200 g pasta; 2 עגבניות\nSteps: Cook the pasta. מוסיפים עגבניות ומערבבים."},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "Pasta עם עגבניות",
+        "source_url": "https://evaluation.storecipe.invalid/clean-mixed-01",
+        "servings": 2,
+        "ingredients": [
+          {"raw_text": "200 g pasta", "name": "pasta", "quantity": 200, "unit": "g"},
+          {"raw_text": "2 עגבניות", "name": "עגבניות", "quantity": 2}
+        ],
+        "instructions": ["Cook the pasta.", "מוסיפים עגבניות ומערבבים."]
+      }
+    },
+    {
+      "id": "messy-he-01",
+      "category": "messy_text",
+      "language": "he",
+      "source": {"kind": "text", "content": "הכנתי את זה אחרי העבודה וזה יצא נהדר!\nמרק עדשים — 4 מנות\n* כוס עדשים\n- 2 גזרים\nמה עושים? שוטפים עדשים.   מבשלים עם הגזר 30 דקות."},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "מרק עדשים",
+        "source_url": "https://evaluation.storecipe.invalid/messy-he-01",
+        "servings": 4,
+        "ingredients": [
+          {"raw_text": "כוס עדשים", "name": "עדשים", "quantity": 1, "unit": "כוס"},
+          {"raw_text": "2 גזרים", "name": "גזרים", "quantity": 2}
+        ],
+        "instructions": ["שוטפים עדשים.", "מבשלים עם הגזר 30 דקות."]
+      }
+    },
+    {
+      "id": "messy-he-02",
+      "category": "messy_text",
+      "language": "he",
+      "source": {"kind": "text", "content": "פתק מהמטבח:\nחביתה ירוקה (למנה אחת)\nביצים x2 / חופן תרד\n1. טורפים את הביצים\n2) מוסיפים תרד ומטגנים"},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "חביתה ירוקה",
+        "source_url": "https://evaluation.storecipe.invalid/messy-he-02",
+        "servings": 1,
+        "ingredients": [
+          {"raw_text": "ביצים x2", "name": "ביצים", "quantity": 2},
+          {"raw_text": "חופן תרד", "name": "תרד", "quantity": 1, "unit": "חופן"}
+        ],
+        "instructions": ["טורפים את הביצים.", "מוסיפים תרד ומטגנים."]
+      }
+    },
+    {
+      "id": "messy-en-01",
+      "category": "messy_text",
+      "language": "en",
+      "source": {"kind": "text", "content": "Quick note from Sunday brunch...\nAPPLE OATS [serves 2]\n1 cup oats --- 1 apple\nMETHOD\nMix oats with water.\nThen fold in the chopped apple."},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "Apple Oats",
+        "source_url": "https://evaluation.storecipe.invalid/messy-en-01",
+        "servings": 2,
+        "ingredients": [
+          {"raw_text": "1 cup oats", "name": "oats", "quantity": 1, "unit": "cup"},
+          {"raw_text": "1 apple", "name": "apple", "quantity": 1}
+        ],
+        "instructions": ["Mix oats with water.", "Fold in the chopped apple."]
+      }
+    },
+    {
+      "id": "messy-en-02",
+      "category": "messy_text",
+      "language": "en",
+      "source": {"kind": "text", "content": "This is my tiny weekday dinner.\nBean Toast - makes 1\nING: bread, two slices | beans, half cup\nToast bread!! spoon beans over it."},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "Bean Toast",
+        "source_url": "https://evaluation.storecipe.invalid/messy-en-02",
+        "servings": 1,
+        "ingredients": [
+          {"raw_text": "bread, two slices", "name": "bread", "quantity": 2, "unit": "slices"},
+          {"raw_text": "beans, half cup", "name": "beans", "quantity": 0.5, "unit": "cup"}
+        ],
+        "instructions": ["Toast bread.", "Spoon beans over it."]
+      }
+    },
+    {
+      "id": "messy-mixed-01",
+      "category": "messy_text",
+      "language": "mixed",
+      "source": {"kind": "text", "content": "Lunch experiment :)\nסלט Quinoa / serves 3\n1 cup quinoa + מלפפון אחד\nCook quinoa and cool. חותכים מלפפון ומערבבים."},
+      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "expected": {
+        "title": "סלט Quinoa",
+        "source_url": "https://evaluation.storecipe.invalid/messy-mixed-01",
+        "servings": 3,
+        "ingredients": [
+          {"raw_text": "1 cup quinoa", "name": "quinoa", "quantity": 1, "unit": "cup"},
+          {"raw_text": "מלפפון אחד", "name": "מלפפון", "quantity": 1}
+        ],
+        "instructions": ["Cook quinoa and cool.", "חותכים מלפפון ומערבבים."]
+      }
+    },
+    {
+      "id": "web-he-01",
+      "category": "web_without_jsonld",
+      "language": "he",
+      "source": {"kind": "html", "content": "<!doctype html><html lang=\"he\" dir=\"rtl\"><head><title>טחינה ירוקה</title></head><body><article><h1>טחינה ירוקה</h1><p>2 מנות</p><h2>מרכיבים</h2><ul><li>חצי כוס טחינה</li><li>חופן פטרוזיליה</li></ul><h2>הכנה</h2><ol><li>טוחנים פטרוזיליה.</li><li>מערבבים עם טחינה.</li></ol></article></body></html>"},
+      "provenance": {"kind": "self_authored", "note": "Synthetic page without JSON-LD"},
+      "expected": {
+        "title": "טחינה ירוקה",
+        "source_url": "https://evaluation.storecipe.invalid/web-he-01",
+        "servings": 2,
+        "ingredients": [
+          {"raw_text": "חצי כוס טחינה", "name": "טחינה", "quantity": 0.5, "unit": "כוס"},
+          {"raw_text": "חופן פטרוזיליה", "name": "פטרוזיליה", "quantity": 1, "unit": "חופן"}
+        ],
+        "instructions": ["טוחנים פטרוזיליה.", "מערבבים עם טחינה."]
+      }
+    },
+    {
+      "id": "web-en-01",
+      "category": "web_without_jsonld",
+      "language": "en",
+      "source": {"kind": "html", "content": "<!doctype html><html lang=\"en\"><head><title>Mint Peas</title></head><body><main><h1>Mint Peas</h1><p>Serves 2</p><h2>Ingredients</h2><ul><li>2 cups peas</li><li>1 tbsp mint</li></ul><h2>Method</h2><ol><li>Warm the peas.</li><li>Stir in mint.</li></ol></main></body></html>"},
+      "provenance": {"kind": "self_authored", "note": "Synthetic page without JSON-LD"},
+      "expected": {
+        "title": "Mint Peas",
+        "source_url": "https://evaluation.storecipe.invalid/web-en-01",
+        "servings": 2,
+        "ingredients": [
+          {"raw_text": "2 cups peas", "name": "peas", "quantity": 2, "unit": "cups"},
+          {"raw_text": "1 tbsp mint", "name": "mint", "quantity": 1, "unit": "tbsp"}
+        ],
+        "instructions": ["Warm the peas.", "Stir in mint."]
+      }
+    }
+  ]
+}
