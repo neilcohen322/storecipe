@@ -14,10 +14,10 @@ def test_extraction_evaluation_seed_is_balanced_and_valid() -> None:
     assert manifest["schemaVersion"] == 1
     assert len(cases) == 10
     assert Counter(case["language"] for case in cases) == {
-        "he": 4,
-        "en": 4,
-        "mixed": 2,
+        "he": 5,
+        "en": 5,
     }
+    assert {case["language"] for case in cases} == {"he", "en"}
     assert set(case["category"] for case in cases) == {
         "clean_text",
         "messy_text",

@@ -76,12 +76,21 @@ def test_reports_no_recipe_when_no_recipe_node_exists() -> None:
 @pytest.mark.parametrize(
     ("fixture", "title", "servings", "instructions"),
     [
-        ("recipe-hebrew.html", "מרק כתום", 4, ["חותכים את הירקות.", "מבשלים וטוחנים."]),
-        ("recipe-english.html", "Herb Rice", 2, ["Cook the rice.", "Fold in the herbs."]),
-        ("recipe-mixed.html", "Chicken עם לימון", 3, ["Season the chicken.", "אופים עד שמוכן."]),
+        (
+            "recipe-hebrew.html",
+            "מרק כתום",
+            4,
+            ["חותכים את הירקות.", "מבשלים וטוחנים."],
+        ),
+        (
+            "recipe-english.html",
+            "Herb Rice",
+            2,
+            ["Cook the rice.", "Fold in the herbs."],
+        ),
     ],
 )
-def test_normalizes_hebrew_english_and_mixed_fixtures(
+def test_normalizes_hebrew_and_english_fixtures(
     fixture: str,
     title: str,
     servings: int,

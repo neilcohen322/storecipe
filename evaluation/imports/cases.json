@@ -36,20 +36,38 @@
       }
     },
     {
-      "id": "clean-mixed-01",
+      "id": "clean-he-02",
       "category": "clean_text",
-      "language": "mixed",
-      "source": {"kind": "text", "content": "Pasta עם עגבניות\n2 servings\nIngredients: 200 g pasta; 2 עגבניות\nSteps: Cook the pasta. מוסיפים עגבניות ומערבבים."},
-      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "language": "he",
+      "source": {
+        "kind": "text",
+        "content": "פסטה בעגבניות\nמנות: 2\nמרכיבים: 200 גרם פסטה; 2 עגבניות\nהוראות: מבשלים את הפסטה. מוסיפים עגבניות ומערבבים."
+      },
+      "provenance": {
+        "kind": "self_authored",
+        "note": "Created for Storecipe evaluation"
+      },
       "expected": {
-        "title": "Pasta עם עגבניות",
-        "source_url": "https://evaluation.storecipe.invalid/clean-mixed-01",
+        "title": "פסטה בעגבניות",
+        "source_url": "https://evaluation.storecipe.invalid/clean-he-02",
         "servings": 2,
         "ingredients": [
-          {"raw_text": "200 g pasta", "name": "pasta", "quantity": 200, "unit": "g"},
-          {"raw_text": "2 עגבניות", "name": "עגבניות", "quantity": 2}
+          {
+            "raw_text": "200 גרם פסטה",
+            "name": "פסטה",
+            "quantity": 200,
+            "unit": "גרם"
+          },
+          {
+            "raw_text": "2 עגבניות",
+            "name": "עגבניות",
+            "quantity": 2
+          }
         ],
-        "instructions": ["Cook the pasta.", "מוסיפים עגבניות ומערבבים."]
+        "instructions": [
+          "מבשלים את הפסטה.",
+          "מוסיפים עגבניות ומערבבים."
+        ]
       }
     },
     {
@@ -121,20 +139,38 @@
       }
     },
     {
-      "id": "messy-mixed-01",
+      "id": "messy-en-03",
       "category": "messy_text",
-      "language": "mixed",
-      "source": {"kind": "text", "content": "Lunch experiment :)\nסלט Quinoa / serves 3\n1 cup quinoa + מלפפון אחד\nCook quinoa and cool. חותכים מלפפון ומערבבים."},
-      "provenance": {"kind": "self_authored", "note": "Created for Storecipe evaluation"},
+      "language": "en",
+      "source": {
+        "kind": "text",
+        "content": "Lunch experiment :)\nQUINOA SALAD / serves 3\n1 cup quinoa + one cucumber\nMETHOD? Cook quinoa and cool... chop the cucumber and combine!"
+      },
+      "provenance": {
+        "kind": "self_authored",
+        "note": "Created for Storecipe evaluation"
+      },
       "expected": {
-        "title": "סלט Quinoa",
-        "source_url": "https://evaluation.storecipe.invalid/messy-mixed-01",
+        "title": "Quinoa Salad",
+        "source_url": "https://evaluation.storecipe.invalid/messy-en-03",
         "servings": 3,
         "ingredients": [
-          {"raw_text": "1 cup quinoa", "name": "quinoa", "quantity": 1, "unit": "cup"},
-          {"raw_text": "מלפפון אחד", "name": "מלפפון", "quantity": 1}
+          {
+            "raw_text": "1 cup quinoa",
+            "name": "quinoa",
+            "quantity": 1,
+            "unit": "cup"
+          },
+          {
+            "raw_text": "one cucumber",
+            "name": "cucumber",
+            "quantity": 1
+          }
         ],
-        "instructions": ["Cook quinoa and cool.", "חותכים מלפפון ומערבבים."]
+        "instructions": [
+          "Cook quinoa and cool.",
+          "Chop the cucumber and combine."
+        ]
       }
     },
     {

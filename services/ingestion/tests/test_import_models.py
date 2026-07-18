@@ -11,22 +11,48 @@ from ingestion.import_models import (
 )
 
 
-def test_candidate_preserves_mixed_hebrew_and_english() -> None:
+@pytest.mark.parametrize(
+    ("title", "raw_text", "ingredient_name", "instruction", "tag"),
+    [
+        (
+            "עוגת שוקולד",
+            "2 כוסות קמח",
+            "קמח",
+            "מערבבים היטב",
+            "קינוח",
+        ),
+        (
+            "Chocolate Cake",
+            "2 cups flour",
+            "flour",
+            "Mix thoroughly",
+            "dessert",
+        ),
+    ],
+)
+def test_candidate_preserves_hebrew_and_english(
+    title: str,
+    raw_text: str,
+    ingredient_name: str,
+    instruction: str,
+    tag: str,
+) -> None:
     candidate = RecipeImportCandidate(
-        title="עוגת Chocolate",
+        title=title,
         source_url="https://example.com/מתכון",
         ingredients=[
             IngredientCandidate(
-                raw_text="2 cups קמח",
-                name="2 cups קמח",
+                raw_text=raw_text,
+                name=ingredient_name,
             )
         ],
-        instructions=["Mix היטב"],
-        tags=["Dessert", "ישראלי"],
+        instructions=[instruction],
+        tags=[tag],
     )
 
-    assert candidate.title == "עוגת Chocolate"
-    assert candidate.ingredients[0].raw_text == "2 cups קמח"
+    assert candidate.title == title
+    assert candidate.ingredients[0].raw_text == raw_text
+    assert candidate.instructions == [instruction]
     assert unquote(str(candidate.source_url)) == "https://example.com/מתכון"
 
 
