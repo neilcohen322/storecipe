@@ -1,11 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
-from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from fastapi import FastAPI, Request, Response, status
+from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from catalog.auth import Auth0TokenVerifier
@@ -13,9 +10,11 @@ from catalog.config import get_settings
 from catalog.database import create_engine, create_session_factory
 from catalog.mcp_server import create_mcp_server
 from catalog.problems import install_problem_details, problem_response
-from catalog.ratings import router as ratings_router
-from catalog.recipes import internal_router
-from catalog.recipes import router as recipes_router
+from catalog.routes.health import router as health_router
+from catalog.routes.internal_recipes import router as internal_recipes_router
+from catalog.routes.ratings import router as ratings_router
+from catalog.routes.recipes import router as recipes_router
+from catalog.services.errors import CatalogError, InvalidCursor, InvalidFilter, RecipeNotFound
 
 settings = get_settings()
 token_verifier = Auth0TokenVerifier(settings)
@@ -32,6 +31,22 @@ async def mcp_http_problem(request: Request, exc: Exception) -> Response:
 
 
 mcp_app.add_exception_handler(StarletteHTTPException, mcp_http_problem)
+
+
+def _status_for(exc: CatalogError) -> int:
+    if isinstance(exc, RecipeNotFound):
+        return status.HTTP_404_NOT_FOUND
+    if isinstance(exc, InvalidCursor | InvalidFilter):
+        return status.HTTP_422_UNPROCESSABLE_CONTENT
+    return status.HTTP_400_BAD_REQUEST
+
+
+async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
+    """Translate framework-independent domain errors into problem responses."""
+    if not isinstance(exc, CatalogError):  # pragma: no cover - handler is typed
+        raise exc
+    detail = "Recipe not found." if isinstance(exc, RecipeNotFound) else str(exc)
+    return problem_response(request, _status_for(exc), detail=detail)
 
 
 @asynccontextmanager
@@ -55,32 +70,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 install_problem_details(app)
+app.add_exception_handler(CatalogError, catalog_error)
 app.include_router(recipes_router)
 app.include_router(ratings_router)
-app.include_router(internal_router)
-
-
-@app.get("/health/live", tags=["health"])
-async def liveness() -> dict[str, str]:
-    return {"status": "ok", "service": get_settings().service_name}
-
-
-@app.get("/health/ready", tags=["health"])
-async def readiness(request: Request) -> dict[str, Any]:
-    engine: AsyncEngine = request.app.state.engine
-    try:
-        async with engine.connect() as connection:
-            await connection.execute(text("SELECT 1"))
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="dependency unavailable: postgres",
-        ) from exc
-    return {
-        "status": "ok",
-        "service": get_settings().service_name,
-        "dependencies": {"postgres": "ok"},
-    }
+app.include_router(internal_recipes_router)
+app.include_router(health_router)
 
 
 # Mount last so REST and health routes retain priority while the SDK serves

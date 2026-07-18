@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -30,3 +31,8 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
     session_factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
     async with session_factory() as session:
         yield session
+
+
+# Route modules depend on the session through this alias so they need not import
+# SQLAlchemy types directly (see tests/test_architecture.py).
+SessionDependency = Annotated[AsyncSession, Depends(get_session)]

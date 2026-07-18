@@ -1,26 +1,24 @@
+"""Recipe workflows: queries, transactions, and serialization to view schemas."""
+
 import base64
 from datetime import UTC, datetime
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from catalog.auth import Principal, require_scopes
-from catalog.database import get_session
 from catalog.models import Ingredient, Instruction, Rating, Recipe, RecipeTag, Tag, User
-from catalog.schemas import ImportedRecipeCreate, RecipeCreate, RecipePage, RecipePatch, RecipeView
-
-router = APIRouter(prefix="/v1/recipes", tags=["recipes"])
-internal_router = APIRouter(prefix="/internal/recipes", tags=["internal"])
-
-SessionDependency = Annotated[AsyncSession, Depends(get_session)]
-ReadPrincipal = Annotated[Principal, Depends(require_scopes("recipes:read"))]
-WritePrincipal = Annotated[Principal, Depends(require_scopes("recipes:write"))]
-InternalPrincipal = Annotated[Principal, Depends(require_scopes("recipes:internal:create"))]
+from catalog.schemas import (
+    ImportedRecipeCreate,
+    RecipeCreate,
+    RecipePage,
+    RecipePatch,
+    RecipeView,
+)
+from catalog.services.errors import InvalidCursor, InvalidFilter, RecipeNotFound
+from catalog.services.users import resolve_user
 
 
 def _recipe_query() -> Select[tuple[Recipe]]:
@@ -30,24 +28,6 @@ def _recipe_query() -> Select[tuple[Recipe]]:
         selectinload(Recipe.recipe_tags).selectinload(RecipeTag.tag),
         selectinload(Recipe.ratings),
     )
-
-
-async def _resolve_user(session: AsyncSession, subject: str) -> User:
-    user = await session.scalar(select(User).where(User.auth_subject == subject))
-    if user is not None:
-        return user
-
-    user = User(auth_subject=subject)
-    session.add(user)
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        existing = await session.scalar(select(User).where(User.auth_subject == subject))
-        if existing is None:
-            raise
-        return existing
-    return user
 
 
 def _normalize_tags(tags: list[str]) -> list[str]:
@@ -76,19 +56,13 @@ def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
             raise ValueError("cursor timestamp must include a timezone")
         return created_at, UUID(recipe_id)
     except (ValueError, UnicodeDecodeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Invalid pagination cursor.",
-        ) from exc
+        raise InvalidCursor() from exc
 
 
 def _nonblank_filter(value: str, name: str) -> str:
     normalized = value.strip()
     if not normalized:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"{name} must contain non-whitespace characters.",
-        )
+        raise InvalidFilter(name)
     return normalized
 
 
@@ -158,11 +132,12 @@ def _recipe_view(recipe: Recipe, user_id: UUID) -> RecipeView:
     )
 
 
-async def _owned_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID) -> Recipe:
+async def get_owned_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID) -> Recipe:
+    """Load a recipe owned by ``user_id`` or raise :class:`RecipeNotFound`."""
     statement = _recipe_query().where(Recipe.id == recipe_id, Recipe.user_id == user_id)
     recipe = await session.scalar(statement)
     if recipe is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipe not found.")
+        raise RecipeNotFound(recipe_id)
     return recipe
 
 
@@ -174,17 +149,12 @@ async def _reload_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID) 
     )
     recipe = await session.scalar(statement)
     if recipe is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipe not found.")
+        raise RecipeNotFound(recipe_id)
     return recipe
 
 
-@router.post("", response_model=RecipeView, status_code=status.HTTP_201_CREATED)
-async def create_recipe(
-    payload: RecipeCreate,
-    session: SessionDependency,
-    principal: WritePrincipal,
-) -> RecipeView:
-    user = await _resolve_user(session, principal.subject)
+async def create_recipe(session: AsyncSession, subject: str, payload: RecipeCreate) -> RecipeView:
+    user = await resolve_user(session, subject)
     recipe = await _new_recipe(session, user, payload)
     user.catalog_version += 1
     session.add(recipe)
@@ -193,18 +163,18 @@ async def create_recipe(
     return _recipe_view(loaded, user.id)
 
 
-@router.get("", response_model=RecipePage)
 async def list_recipes(
-    session: SessionDependency,
-    principal: ReadPrincipal,
-    query: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
-    tag: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
-    max_total_minutes: Annotated[int | None, Query(alias="maxTotalMinutes", ge=0)] = None,
-    min_rating: Annotated[int | None, Query(alias="minRating", ge=1, le=5)] = None,
-    cursor: Annotated[str | None, Query(max_length=512)] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    session: AsyncSession,
+    subject: str,
+    *,
+    query: str | None = None,
+    tag: str | None = None,
+    max_total_minutes: int | None = None,
+    min_rating: int | None = None,
+    cursor: str | None = None,
+    limit: int = 20,
 ) -> RecipePage:
-    user = await _resolve_user(session, principal.subject)
+    user = await resolve_user(session, subject)
     statement = _recipe_query().where(Recipe.user_id == user.id)
     if query:
         pattern = f"%{_escape_like(_nonblank_filter(query, 'query'))}%"
@@ -252,26 +222,17 @@ async def list_recipes(
     )
 
 
-@router.get("/{recipe_id}", response_model=RecipeView)
-async def get_recipe(
-    recipe_id: UUID,
-    session: SessionDependency,
-    principal: ReadPrincipal,
-) -> RecipeView:
-    user = await _resolve_user(session, principal.subject)
-    recipe = await _owned_recipe(session, user.id, recipe_id)
+async def get_recipe(session: AsyncSession, subject: str, recipe_id: UUID) -> RecipeView:
+    user = await resolve_user(session, subject)
+    recipe = await get_owned_recipe(session, user.id, recipe_id)
     return _recipe_view(recipe, user.id)
 
 
-@router.patch("/{recipe_id}", response_model=RecipeView)
 async def update_recipe(
-    recipe_id: UUID,
-    payload: RecipePatch,
-    session: SessionDependency,
-    principal: WritePrincipal,
+    session: AsyncSession, subject: str, recipe_id: UUID, payload: RecipePatch
 ) -> RecipeView:
-    user = await _resolve_user(session, principal.subject)
-    recipe = await _owned_recipe(session, user.id, recipe_id)
+    user = await resolve_user(session, subject)
+    recipe = await get_owned_recipe(session, user.id, recipe_id)
 
     scalar_fields = {
         "title",
@@ -306,34 +267,23 @@ async def update_recipe(
     return _recipe_view(loaded, user.id)
 
 
-@router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_recipe(
-    recipe_id: UUID,
-    session: SessionDependency,
-    principal: WritePrincipal,
-) -> Response:
-    user = await _resolve_user(session, principal.subject)
-    recipe = await _owned_recipe(session, user.id, recipe_id)
+async def delete_recipe(session: AsyncSession, subject: str, recipe_id: UUID) -> None:
+    user = await resolve_user(session, subject)
+    recipe = await get_owned_recipe(session, user.id, recipe_id)
     await session.delete(recipe)
     user.catalog_version += 1
     await session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@internal_router.post(
-    "/imported",
-    response_model=RecipeView,
-    status_code=status.HTTP_201_CREATED,
-    include_in_schema=False,
-)
 async def create_imported_recipe(
-    payload: ImportedRecipeCreate,
-    response: Response,
-    session: SessionDependency,
-    _principal: InternalPrincipal,
-) -> RecipeView:
-    """Idempotently create the recipe produced by one ingestion job."""
-    user = await _resolve_user(session, payload.owner_subject)
+    session: AsyncSession, payload: ImportedRecipeCreate
+) -> tuple[RecipeView, bool]:
+    """Idempotently create the recipe produced by one ingestion job.
+
+    Returns the view and whether the recipe already existed (so the caller can
+    respond ``200`` on a replay instead of ``201``).
+    """
+    user = await resolve_user(session, payload.owner_subject)
     existing = await session.scalar(
         _recipe_query().where(
             Recipe.user_id == user.id,
@@ -341,8 +291,7 @@ async def create_imported_recipe(
         )
     )
     if existing is not None:
-        response.status_code = status.HTTP_200_OK
-        return _recipe_view(existing, user.id)
+        return _recipe_view(existing, user.id), True
 
     recipe = await _new_recipe(
         session,
@@ -366,8 +315,7 @@ async def create_imported_recipe(
         )
         if winner is None:
             raise
-        response.status_code = status.HTTP_200_OK
-        return _recipe_view(winner, user.id)
+        return _recipe_view(winner, user.id), True
 
     loaded = await _reload_recipe(session, user.id, recipe.id)
-    return _recipe_view(loaded, user.id)
+    return _recipe_view(loaded, user.id), False
