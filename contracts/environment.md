@@ -12,6 +12,7 @@
 | `AUTH0_JWKS_URL` | APIs/MCP | no | Optional JWKS override; defaults to `<issuer>/.well-known/jwks.json` |
 | `MCP_RESOURCE_URL` | Catalog | MCP enabled | Canonical HTTPS MCP resource identifier |
 | `OPENROUTER_API_KEY` | Worker | AI enabled | Secret model-provider credential |
+| `OPENROUTER_MODEL` | Worker | no | Pinned extraction model; defaults to `openai/gpt-5-nano` |
 | `AI_EXTRACTION_ENABLED` | Worker | no | AI kill switch; defaults false |
 
 Production values are injected by the deployment environment. `.env` is local only;
