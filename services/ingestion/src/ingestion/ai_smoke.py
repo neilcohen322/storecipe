@@ -1,4 +1,4 @@
-"""Run one labeled evaluation case through the Week 5 OpenRouter exercise."""
+"""Run one labeled evaluation case through the configured AI provider."""
 
 import argparse
 import asyncio
@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ingestion.ai_extractor import AiohttpOpenRouterTransport, AiRecipeExtractor
+from ingestion.ai_extractor import AiRecipeExtractor
+from ingestion.ai_providers import UnknownAiProviderError, create_ai_provider
 from ingestion.config import get_settings
 
 ROOT = Path(__file__).parents[4]
@@ -26,16 +27,15 @@ async def _run(case_id: str) -> None:
     settings = get_settings()
     if not settings.ai_extraction_enabled:
         raise SystemExit("Set AI_EXTRACTION_ENABLED=true before making a live call.")
-    api_key = settings.openrouter_api_key.get_secret_value()
-    if not api_key:
-        raise SystemExit("Set OPENROUTER_API_KEY before making a live call.")
+    if not settings.ai_api_key.get_secret_value():
+        raise SystemExit("Set AI_API_KEY before making a live call.")
 
     case = _load_case(case_id)
-    transport = AiohttpOpenRouterTransport(
-        api_key=api_key,
-        model=settings.openrouter_model,
-    )
-    extractor = AiRecipeExtractor(transport)
+    try:
+        provider = create_ai_provider(settings.ai_provider_config())
+    except UnknownAiProviderError as exc:
+        raise SystemExit(str(exc)) from exc
+    extractor = AiRecipeExtractor(provider)
     result = await extractor.extract(
         source_text=case["source"]["content"],
         trusted_source_url=case["expected"]["source_url"],
