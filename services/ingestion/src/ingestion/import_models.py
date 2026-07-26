@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 # Bound candidate integers to PostgreSQL int4 so an out-of-range scraped value
 # fails as a typed validation error here instead of a 500 at the catalog insert.
@@ -49,15 +49,21 @@ class FetchError(Exception):
 
 
 class ParseError(Exception):
-    def __init__(self, code: ParseFailureCode) -> None:
+    def __init__(
+        self,
+        code: ParseFailureCode,
+        *,
+        candidate: "RecipeImportCandidate | ReviewRecipeCandidate | None" = None,
+    ) -> None:
         super().__init__(code.value)
         self.code = code
+        self.candidate = candidate
 
 
 @dataclass(frozen=True, slots=True)
 class FetchedDocument:
-    requested_url: str
-    final_url: str
+    requested_url: str | None
+    final_url: str | None
     html: str
     content_type: str
     byte_count: int
@@ -68,6 +74,7 @@ class ImportModel(BaseModel):
 
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
+BoundedReviewText = Annotated[str, Field(min_length=1, max_length=4096)]
 
 
 class IngredientCandidate(ImportModel):
@@ -79,7 +86,7 @@ class IngredientCandidate(ImportModel):
 
 class RecipeImportCandidate(ImportModel):
     title: Annotated[str, Field(min_length=1, max_length=200)]
-    source_url: HttpUrl
+    source_url: HttpUrl | None = None
     servings: Annotated[int | None, Field(ge=1, le=MAX_PG_INT)] = None
     prep_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     cook_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
@@ -90,9 +97,42 @@ class RecipeImportCandidate(ImportModel):
 
     @field_validator("source_url")
     @classmethod
-    def _source_url_within_column(cls, value: HttpUrl) -> HttpUrl:
+    def _source_url_within_column(cls, value: HttpUrl | None) -> HttpUrl | None:
         # Reject before persistence: an over-long final URL would otherwise pass
         # HttpUrl's ~2083-char cap and fail the String(2048) catalog column.
-        if len(str(value)) > MAX_SOURCE_URL_LENGTH:
+        if value is not None and len(str(value)) > MAX_SOURCE_URL_LENGTH:
             raise ValueError("source_url exceeds the maximum stored length")
         return value
+
+
+class ReviewRecipeCandidate(ImportModel):
+    """Bounded, safe partial recipe data retained for later human review."""
+
+    title: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    source_url: HttpUrl | None = None
+    servings: Annotated[int | None, Field(ge=1, le=MAX_PG_INT)] = None
+    prep_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
+    cook_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
+    total_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
+    ingredients: Annotated[list[IngredientCandidate], Field(max_length=256)] = Field(
+        default_factory=list
+    )
+    instructions: Annotated[list[BoundedReviewText], Field(max_length=256)] = Field(
+        default_factory=list
+    )
+    tags: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=64)
+    ] = Field(default_factory=list)
+
+    @field_validator("source_url")
+    @classmethod
+    def _source_url_within_column(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is not None and len(str(value)) > MAX_SOURCE_URL_LENGTH:
+            raise ValueError("source_url exceeds the maximum stored length")
+        return value
+
+    @model_validator(mode="after")
+    def _contains_meaningful_recipe_data(self) -> "ReviewRecipeCandidate":
+        if self.title is None and not self.ingredients and not self.instructions:
+            raise ValueError("review candidate must contain meaningful recipe data")
+        return self

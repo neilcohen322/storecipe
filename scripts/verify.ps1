@@ -21,8 +21,8 @@ function Invoke-Step {
 
 # --frozen matches CI (.github/workflows/ci.yml); dependency edits require `uv lock` first.
 Invoke-Step 'uv sync (frozen)' { uv sync --all-packages --group dev --frozen }
-Invoke-Step 'ruff lint' { uv run ruff check . }
-Invoke-Step 'ruff format check' { uv run ruff format --check . }
+Invoke-Step 'ruff lint' { uv run ruff check . --exclude evaluation/notebooks/recipe_model_selection.ipynb }
+Invoke-Step 'ruff format check' { uv run ruff format --check . --exclude evaluation/notebooks/recipe_model_selection.ipynb }
 Invoke-Step 'mypy' { uv run mypy services/catalog/src services/ingestion/src }
 Invoke-Step 'pytest' { uv run pytest }
 Invoke-Step 'openapi contract' { uv run openapi-spec-validator contracts/openapi.yaml }

@@ -1,0 +1,154 @@
+from collections.abc import AsyncIterator
+from typing import Annotated, Any
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
+
+from ingestion.auth import Principal, require_scopes
+from ingestion.crypto import PayloadCipher
+from ingestion.schemas import ImportAccepted, ImportJobView, TextImportRequest, UrlImportRequest
+from ingestion.services.imports import (
+    IdempotencyConflict,
+    ImportNotCancellable,
+    ImportNotFound,
+    ImportService,
+)
+
+router = APIRouter(prefix="/v1/imports", tags=["imports"])
+
+ReadPrincipal = Annotated[Principal, Depends(require_scopes("recipes:read"))]
+WritePrincipal = Annotated[Principal, Depends(require_scopes("recipes:write"))]
+IdempotencyKey = Annotated[
+    str | None, Header(min_length=1, max_length=255, alias="Idempotency-Key")
+]
+
+
+async def get_session(request: Request) -> AsyncIterator[Any]:
+    session_factory: Any = request.app.state.session_factory
+    async with session_factory() as session:
+        yield session
+
+
+def _service(request: Request, session: Any) -> ImportService:
+    cipher: PayloadCipher = request.app.state.payload_cipher
+    return ImportService(
+        session,
+        cipher,
+        deadline_seconds=getattr(request.app.state, "import_deadline_seconds", 900),
+    )
+
+
+def _accepted(job_id: UUID, status_value: Any) -> ImportAccepted:
+    return ImportAccepted(job_id=job_id, status=status_value)
+
+
+def _view(job: Any) -> ImportJobView:
+    return ImportJobView(
+        id=job.id,
+        status=job.status,
+        attempt_count=job.attempt_count,
+        created_recipe_id=job.catalog_recipe_id,
+        error_category=job.safe_error_category,
+        cancellation_requested=job.cancel_requested_at is not None,
+    )
+
+
+@router.post(
+    "/url",
+    response_model=ImportAccepted | ImportJobView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_url(
+    payload: UrlImportRequest,
+    request: Request,
+    response: Response,
+    principal: WritePrincipal,
+    session: Annotated[Any, Depends(get_session)],
+    idempotency_key: IdempotencyKey = None,
+) -> ImportAccepted | ImportJobView:
+    service = _service(request, session)
+    try:
+        result = await service.submit_url(principal.subject, str(payload.url), idempotency_key)
+    except IdempotencyConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Idempotency key is already used for a different request.",
+        ) from exc
+    response.headers["Location"] = f"/v1/imports/{result.job.id}"
+    if result.replayed:
+        response.status_code = status.HTTP_200_OK
+        return _view(result.job)
+    return _accepted(result.job.id, result.job.status)
+
+
+@router.post(
+    "/text",
+    response_model=ImportAccepted | ImportJobView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_text(
+    payload: TextImportRequest,
+    request: Request,
+    response: Response,
+    principal: WritePrincipal,
+    session: Annotated[Any, Depends(get_session)],
+    idempotency_key: IdempotencyKey = None,
+) -> ImportAccepted | ImportJobView:
+    service = _service(request, session)
+    try:
+        result = await service.submit_text(principal.subject, payload.text, idempotency_key)
+    except IdempotencyConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Idempotency key is already used for a different request.",
+        ) from exc
+    response.headers["Location"] = f"/v1/imports/{result.job.id}"
+    if result.replayed:
+        response.status_code = status.HTTP_200_OK
+        return _view(result.job)
+    return _accepted(result.job.id, result.job.status)
+
+
+@router.get("/{job_id}", response_model=ImportJobView)
+async def get_import(
+    job_id: UUID,
+    request: Request,
+    principal: ReadPrincipal,
+    session: Annotated[Any, Depends(get_session)],
+) -> ImportJobView:
+    try:
+        job = await _service(request, session).get(principal.subject, job_id)
+    except ImportNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import job not found.",
+        ) from exc
+    return _view(job)
+
+
+@router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_import(
+    job_id: UUID,
+    request: Request,
+    principal: WritePrincipal,
+    session: Annotated[Any, Depends(get_session)],
+) -> Response:
+    try:
+        job, cooperative = await _service(request, session).cancel(principal.subject, job_id)
+    except ImportNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import job not found.",
+        ) from exc
+    except ImportNotCancellable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Import job is no longer queued.",
+        ) from exc
+    if cooperative:
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content=_view(job).model_dump(mode="json", by_alias=True),
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

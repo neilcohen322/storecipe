@@ -243,7 +243,7 @@ def build_extraction_messages(source_text: str) -> list[dict[str, str]]:
 def candidate_from_model_content(
     content: str,
     *,
-    trusted_source_url: str,
+    trusted_source_url: str | None,
 ) -> RecipeImportCandidate:
     """Exercise step 3: validate model content and attach trusted provenance."""
 
@@ -267,7 +267,7 @@ class AiRecipeExtractor:
         self,
         *,
         source_text: str,
-        trusted_source_url: str,
+        trusted_source_url: str | None,
     ) -> AiExtractionResult:
         messages = build_extraction_messages(source_text)
         response_format = build_response_format()

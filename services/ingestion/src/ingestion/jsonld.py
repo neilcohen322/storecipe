@@ -15,6 +15,7 @@ from ingestion.import_models import (
     ParseError,
     ParseFailureCode,
     RecipeImportCandidate,
+    ReviewRecipeCandidate,
 )
 
 MAX_JSONLD_DEPTH = 64
@@ -230,7 +231,7 @@ def _tags(node: dict[str, Any]) -> list[str]:
     return result
 
 
-def _candidate(node: dict[str, Any], source_url: str) -> RecipeImportCandidate | None:
+def _candidate(node: dict[str, Any], source_url: str | None) -> RecipeImportCandidate | None:
     title = _clean_text(node.get("name")) or _clean_text(node.get("headline"))
     # Build every Pydantic model inside the guard so any residual validation
     # failure (including per-ingredient) degrades the node to ineligible rather
@@ -255,6 +256,39 @@ def _candidate(node: dict[str, Any], source_url: str) -> RecipeImportCandidate |
         return None
 
 
+def _review_candidate(node: dict[str, Any], source_url: str | None) -> ReviewRecipeCandidate | None:
+    """Retain only bounded, normalized fields from an incomplete Recipe node."""
+
+    title = _clean_text(node.get("name")) or _clean_text(node.get("headline"))
+    try:
+        ingredients = [
+            IngredientCandidate(
+                raw_text=ingredient.raw_text[:4096],
+                name=ingredient.name[:200],
+                quantity=ingredient.quantity,
+                unit=ingredient.unit,
+            )
+            for ingredient in _ingredients(node.get("recipeIngredient"))[:256]
+        ]
+        instructions = [
+            instruction[:4096]
+            for instruction in _instructions(node.get("recipeInstructions"))[:256]
+        ]
+        return ReviewRecipeCandidate(
+            title=title[:200] if title is not None else None,
+            source_url=source_url,
+            servings=_servings(node.get("recipeYield")),
+            prep_minutes=_duration_minutes(node.get("prepTime")),
+            cook_minutes=_duration_minutes(node.get("cookTime")),
+            total_minutes=_duration_minutes(node.get("totalTime")),
+            ingredients=ingredients,
+            instructions=instructions,
+            tags=_tags(node)[:64],
+        )
+    except ValidationError:
+        return None
+
+
 def _optional_score(candidate: RecipeImportCandidate) -> int:
     return sum(
         value is not None
@@ -273,12 +307,30 @@ def parse_recipe_jsonld(document: FetchedDocument) -> RecipeImportCandidate:
         raise ParseError(ParseFailureCode.NO_RECIPE_FOUND)
 
     eligible: list[tuple[DiscoveredRecipe, RecipeImportCandidate]] = []
+    reviewable: list[tuple[DiscoveredRecipe, ReviewRecipeCandidate]] = []
     for item in discovered:
         candidate = _candidate(item.node, document.final_url)
         if candidate is not None:
             eligible.append((item, candidate))
+            continue
+        partial = _review_candidate(item.node, document.final_url)
+        if partial is not None:
+            reviewable.append((item, partial))
     if not eligible:
-        raise ParseError(ParseFailureCode.INCOMPLETE_RECIPE)
+        partial = (
+            max(
+                reviewable,
+                key=lambda pair: (
+                    pair[0].is_main_entity,
+                    pair[1].title is not None,
+                    len(pair[1].ingredients) + len(pair[1].instructions),
+                    -pair[0].order,
+                ),
+            )[1]
+            if reviewable
+            else None
+        )
+        raise ParseError(ParseFailureCode.INCOMPLETE_RECIPE, candidate=partial)
 
     _item, winner = max(
         eligible,

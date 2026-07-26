@@ -1,6 +1,7 @@
 """RFC 9457 problem-details responses for all error paths (contracts/errors.md)."""
 
 import uuid
+from collections.abc import Mapping
 from http import HTTPStatus
 
 from fastapi import FastAPI, Request, Response
@@ -26,6 +27,7 @@ def problem_response(
     detail: str | None = None,
     problem_type: str | None = None,
     extra: dict[str, object] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     try:
         title = HTTPStatus(status_code).phrase
@@ -42,7 +44,12 @@ def problem_response(
         body["detail"] = detail
     if extra:
         body.update(extra)
-    return JSONResponse(status_code=status_code, content=body, media_type=PROBLEM_MEDIA_TYPE)
+    return JSONResponse(
+        status_code=status_code,
+        content=body,
+        media_type=PROBLEM_MEDIA_TYPE,
+        headers=headers,
+    )
 
 
 def install_problem_details(app: FastAPI) -> None:
@@ -59,7 +66,7 @@ def install_problem_details(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def http_problem(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         detail = exc.detail if isinstance(exc.detail, str) else None
-        return problem_response(request, exc.status_code, detail=detail)
+        return problem_response(request, exc.status_code, detail=detail, headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def validation_problem(request: Request, exc: RequestValidationError) -> JSONResponse:

@@ -7,6 +7,8 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from ingestion.models import Base
+
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -15,7 +17,7 @@ config.set_main_option(
     "sqlalchemy.url",
     os.getenv("INGESTION_DATABASE_URL", config.get_main_option("sqlalchemy.url")),
 )
-target_metadata = None
+target_metadata = Base.metadata
 
 # alembic.ini is the single source of truth for the version-table location.
 version_table = config.get_main_option("version_table", "alembic_version_ingestion")

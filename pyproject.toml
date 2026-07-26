@@ -26,6 +26,10 @@ dev = [
 [tool.pytest.ini_options]
 addopts = "-q --strict-markers --import-mode=importlib"
 testpaths = ["services/catalog/tests", "services/ingestion/tests"]
+markers = [
+    "integration: requires an explicitly configured PostgreSQL integration database",
+    "docker: requires the explicitly enabled local Docker integration stack",
+]
 
 [tool.ruff]
 target-version = "py313"

@@ -66,6 +66,16 @@ def test_candidate_enforces_catalog_title_limit() -> None:
         )
 
 
+def test_text_import_candidate_allows_missing_source_url() -> None:
+    candidate = RecipeImportCandidate(
+        title="Family soup",
+        ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+        instructions=["Simmer."],
+    )
+
+    assert candidate.source_url is None
+
+
 def test_candidate_rejects_integers_beyond_postgres_int4() -> None:
     with pytest.raises(ValidationError):
         RecipeImportCandidate(

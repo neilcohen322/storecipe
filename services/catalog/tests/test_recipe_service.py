@@ -100,8 +100,12 @@ async def test_imported_recipe_is_idempotent(session: AsyncSession) -> None:
     )
 
     first_view, first_existed = await recipe_service.create_imported_recipe(session, payload)
-    second_view, second_existed = await recipe_service.create_imported_recipe(session, payload)
+    second_view, second_existed = await recipe_service.create_imported_recipe(
+        session,
+        payload.model_copy(update={"title": "A replay that must not replace the first recipe"}),
+    )
 
     assert first_existed is False
     assert second_existed is True
     assert first_view.id == second_view.id
+    assert second_view.title == "Imported Stew"

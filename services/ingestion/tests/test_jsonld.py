@@ -58,12 +58,16 @@ def test_salvages_overlong_title_and_name_but_preserves_raw_ingredient() -> None
 
 
 def test_reports_incomplete_when_recipe_nodes_exist_but_none_are_eligible() -> None:
-    html = script('{"@type":"Recipe","name":"Only"}')
+    html = script('{"@type":"Recipe","name":"Only","recipeIngredient":["1 cup water"]}')
 
     with pytest.raises(ParseError) as captured:
         parse_recipe_jsonld(document(html))
 
     assert captured.value.code is ParseFailureCode.INCOMPLETE_RECIPE
+    assert captured.value.candidate is not None
+    assert captured.value.candidate.title == "Only"
+    assert [item.raw_text for item in captured.value.candidate.ingredients] == ["1 cup water"]
+    assert captured.value.candidate.instructions == []
 
 
 def test_reports_no_recipe_when_no_recipe_node_exists() -> None:

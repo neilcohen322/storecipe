@@ -36,6 +36,25 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redis-broker:
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+      - --appendonly
+      - "yes"
+    volumes:
+      - redis-broker-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   catalog-api:
     build:
       context: .
@@ -65,8 +84,15 @@ services:
     environment: &ingestion-environment
       INGESTION_DATABASE_URL: ${INGESTION_DATABASE_URL:-postgresql+asyncpg://ingestion_app:local_ingestion_only@postgres:5432/storecipe}
       INGESTION_REDIS_URL: ${INGESTION_REDIS_URL:-redis://redis:6379}
-      INGESTION_CELERY_BROKER_URL: ${INGESTION_CELERY_BROKER_URL:-redis://redis:6379/0}
-      INGESTION_CELERY_RESULT_BACKEND: ${INGESTION_CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+      INGESTION_CELERY_BROKER_URL: ${INGESTION_CELERY_BROKER_URL:-redis://redis-broker:6379/0}
+      INGESTION_IMPORT_DEADLINE_SECONDS: ${INGESTION_IMPORT_DEADLINE_SECONDS:-900}
+      INGESTION_PAYLOAD_ACTIVE_KEY_ID: ${INGESTION_PAYLOAD_ACTIVE_KEY_ID:-local}
+      INGESTION_PAYLOAD_KEYRING: ${INGESTION_PAYLOAD_KEYRING:-local=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+      CATALOG_API_URL: ${CATALOG_API_URL:-http://catalog-api:8000}
+      CATALOG_M2M_TOKEN_URL: ${CATALOG_M2M_TOKEN_URL:-}
+      CATALOG_M2M_CLIENT_ID: ${CATALOG_M2M_CLIENT_ID:-}
+      CATALOG_M2M_CLIENT_SECRET: ${CATALOG_M2M_CLIENT_SECRET:-}
+      CATALOG_M2M_AUDIENCE: ${CATALOG_M2M_AUDIENCE:-}
       AUTH0_ISSUER: ${AUTH0_ISSUER:-}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-}
       AUTH0_JWKS_URL: ${AUTH0_JWKS_URL:-}
@@ -76,6 +102,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis-broker:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/ready')"]
@@ -93,9 +121,34 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-broker:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ingestion-dispatcher:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    command: ["python", "-m", "ingestion.dispatcher"]
+    environment: *ingestion-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-broker:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ingestion-reconciler:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    command: ["python", "-m", "ingestion.reconciler"]
+    environment: *ingestion-environment
+    depends_on:
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
   postgres-data:
+  redis-broker-data:

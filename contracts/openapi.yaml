@@ -111,25 +111,88 @@ paths:
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
+      description: Requires `recipes:write`. A matching idempotency replay returns the current job.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/UrlImportRequest"}
       responses:
-        "202": {description: Accepted import, content: {application/json: {schema: {$ref: "#/components/schemas/ImportAccepted"}}}}
+        "202":
+          description: New durable import accepted
+          headers:
+            Location: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportAccepted"}
+        "200":
+          description: Existing idempotent import
+          headers:
+            Location: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportJob"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/text:
     post:
       operationId: importRecipeFromText
+      description: Requires `recipes:write`. Text is limited to 256 KiB UTF-8.
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TextImportRequest"}
       responses:
-        "202": {description: Accepted import, content: {application/json: {schema: {$ref: "#/components/schemas/ImportAccepted"}}}}
+        "202":
+          description: New durable import accepted
+          headers:
+            Location: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportAccepted"}
+        "200":
+          description: Existing idempotent import
+          headers:
+            Location: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportJob"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/{jobId}:
     parameters:
       - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
     get:
       operationId: getImportStatus
+      description: Requires `recipes:read`; another user's job is reported as not found.
       responses:
         "200": {description: Import job status, content: {application/json: {schema: {$ref: "#/components/schemas/ImportJob"}}}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
     delete:
-      operationId: cancelQueuedImport
+      operationId: cancelImport
+      description: Requires `recipes:write`; cancellation is cooperative once processing starts.
       responses:
-        "204": {description: Queued job cancelled}
-        "409": {description: Job is no longer queued}
+        "204": {description: Queued or already-cancelled job is cancelled}
+        "202":
+          description: Cooperative cancellation requested
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportJob"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
 components:
   securitySchemes:
     bearerAuth:
@@ -142,6 +205,11 @@ components:
       in: path
       required: true
       schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: {type: string, minLength: 1, maxLength: 255}
   responses:
     Unauthorized:
       description: Missing or invalid access token
@@ -166,6 +234,11 @@ components:
           schema: {$ref: "#/components/schemas/Problem"}
     ValidationError:
       description: Request validation failed
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    Conflict:
+      description: Request conflicts with durable resource state
       content:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
@@ -258,15 +331,26 @@ components:
       properties:
         jobId: {type: string, format: uuid}
         status: {const: queued}
+    UrlImportRequest:
+      type: object
+      required: [url]
+      properties:
+        url: {type: string, format: uri, maxLength: 2048}
+    TextImportRequest:
+      type: object
+      required: [text]
+      properties:
+        text: {type: string, minLength: 1, maxLength: 262144}
     ImportJob:
       type: object
-      required: [id, status, attemptCount]
+      required: [id, status, attemptCount, createdRecipeId, errorCategory, cancellationRequested]
       properties:
         id: {type: string, format: uuid}
         status: {enum: [queued, processing, completed, review_required, failed, cancelled, timed_out]}
         attemptCount: {type: integer, minimum: 0}
         createdRecipeId: {type: [string, "null"], format: uuid}
         errorCategory: {type: [string, "null"]}
+        cancellationRequested: {type: boolean}
     Problem:
       type: object
       required: [type, title, status, request_id]
