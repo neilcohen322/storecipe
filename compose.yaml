@@ -19,8 +19,7 @@ services:
 
   redis:
     image: redis:7.4-alpine
-    # Only cache and rate-limit keys get TTLs, so volatile-lru cannot evict Celery
-    # broker keys. If broker keys exhaust memory, enqueues fail loudly instead.
+    # Disposable cache/rate-limit Redis. The Celery broker uses redis-broker.
     command:
       - redis-server
       - --maxmemory

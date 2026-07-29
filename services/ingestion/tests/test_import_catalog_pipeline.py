@@ -1,4 +1,6 @@
 import base64
+import json
+import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -80,8 +82,9 @@ class TransactionAwareCatalog(Catalog):
 
 @pytest.mark.asyncio
 async def test_pipeline_completes_catalog_handoff_after_deterministic_checkpoint(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository = ImportRepository(session)
     job = await repository.create_job(
         owner_subject="owner",
@@ -108,6 +111,11 @@ async def test_pipeline_completes_catalog_handoff_after_deterministic_checkpoint
     assert job.stage is ImportStage.COMPLETED
     assert job.catalog_recipe_id == catalog.recipe_id
     assert catalog.transaction_open_during_call is False
+    events = [json.loads(record.message) for record in caplog.records]
+    assert any(
+        event["event"] == "stage.completed" and event["stage"] == "validating" for event in events
+    )
+    assert any(event["event"] == "catalog.succeeded" for event in events)
 
 
 @pytest.mark.asyncio

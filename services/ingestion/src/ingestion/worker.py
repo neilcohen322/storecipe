@@ -1,6 +1,8 @@
 import asyncio
+import logging
 import os
 import socket
+import time
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
 from typing import TypedDict
@@ -11,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ingestion.import_models import FetchedDocument, RecipeImportCandidate
 from ingestion.jsonld import parse_recipe_jsonld
+from ingestion.orchestration import LeaseToken
+from ingestion.repositories.imports import ImportRepository
+from ingestion.telemetry import ImportEvent, emit_import_event, queue_import_event
 
 
 class SmokeResult(TypedDict):
@@ -34,10 +39,40 @@ celery_app.conf.update(
 
 ImportRunner = Callable[[UUID, int], Coroutine[object, object, None]]
 _import_runner: ImportRunner | None = None
+logger = logging.getLogger(__name__)
 
 
 def _model_if_enabled[Model](enabled: bool, model: Model) -> Model | None:
     return model if enabled else None
+
+
+async def _record_receipt_and_claim(
+    repository: ImportRepository,
+    job_id: UUID,
+    owner: str,
+    dispatch_generation: int,
+    *,
+    lease_seconds: int = 60,
+) -> LeaseToken | None:
+    started = time.monotonic()
+    token = await repository.record_receipt_and_claim(
+        job_id,
+        owner,
+        dispatch_generation,
+        lease_seconds=lease_seconds,
+    )
+    event = ImportEvent(
+        name="worker.received" if token is not None else "worker.stale",
+        job_id=str(job_id),
+        dispatch_generation=dispatch_generation,
+        elapsed_ms=max(0, int((time.monotonic() - started) * 1000)),
+        error_category=None if token is not None else "claim_rejected",
+    )
+    if token is None:
+        emit_import_event(logger, event)
+    else:
+        queue_import_event(repository.session, logger, event)
+    return token
 
 
 async def _renew_lease_loop(
@@ -115,7 +150,8 @@ def build_import_runner() -> ImportRunner:
                 await ImportRepository(validation_session).assert_payload_keys_available(cipher)
             async with factory() as session:
                 repository = ImportRepository(session)
-                token = await repository.record_receipt_and_claim(
+                token = await _record_receipt_and_claim(
+                    repository,
                     job_id,
                     owner,
                     dispatch_generation,
@@ -138,6 +174,15 @@ def build_import_runner() -> ImportRunner:
                     )
                 except StaleLease:
                     await session.rollback()
+                    emit_import_event(
+                        logger,
+                        ImportEvent(
+                            name="worker.stale",
+                            job_id=str(job_id),
+                            dispatch_generation=dispatch_generation,
+                            error_category="stale_lease",
+                        ),
+                    )
                     return
                 finally:
                     heartbeat.cancel()

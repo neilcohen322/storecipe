@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     cipher = PayloadCipher.from_settings(settings)
     engine = create_engine()
     try:
-        session_factory = async_sessionmaker(engine)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
         async with session_factory() as session:
             await ImportRepository(session).assert_payload_keys_available(cipher)
     except BaseException:

@@ -19,6 +19,7 @@ from ingestion.import_models import FetchedDocument
 from ingestion.models import ImportDispatch, ImportInputKind, ImportJob, ImportStage, ImportStatus
 from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.pipeline import ImportAdapters, ImportPipeline
+from ingestion.reconciler import ImportReconciler
 from ingestion.repositories.imports import ImportRepository
 from ingestion.services.imports import ImportService
 from ingestion.worker import _renew_lease_loop
@@ -106,6 +107,126 @@ async def test_concurrent_same_owner_key_creates_one_job_and_dispatch() -> None:
             assert (job_count, dispatch_count) == (1, 1)
             await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_expired_receipt_recovery_creates_one_current_generation() -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|receipt-recovery|{uuid4()}"
+    job_id, _ = await create_claimed_job(factory, owner)
+    now = datetime.now(UTC)
+    try:
+        async with factory.begin() as session:
+            await session.execute(
+                ImportJob.__table__.update()
+                .where(ImportJob.id == job_id)
+                .values(
+                    lease_expires_at=now - timedelta(seconds=1),
+                    next_attempt_at=now - timedelta(seconds=1),
+                )
+            )
+
+        async with factory.begin() as session:
+            assert await ImportReconciler(session).reconcile(now=now) == 1
+
+        async with factory.begin() as session:
+            generations = list(
+                await session.scalars(
+                    select(ImportDispatch.generation)
+                    .where(ImportDispatch.job_id == job_id)
+                    .order_by(ImportDispatch.generation)
+                )
+            )
+            assert generations == [1, 2]
+    finally:
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_delivery_cannot_claim_a_live_generation() -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|duplicate-delivery|{uuid4()}"
+    barrier = asyncio.Barrier(2)
+    async with factory.begin() as session:
+        created = await ImportRepository(session).create_job(
+            owner_subject=owner,
+            input_kind=ImportInputKind.URL,
+            request_fingerprint=("e" * 63) + "1",
+            plaintext_input=b"https://recipes.example/soup",
+            payload_cipher=make_test_cipher(),
+        )
+        job_id = created.id
+
+    async def claim(worker: str) -> LeaseToken | None:
+        async with factory.begin() as session:
+            await barrier.wait()
+            return await ImportRepository(session).record_receipt_and_claim(
+                job_id, worker, 1, lease_seconds=60
+            )
+
+    try:
+        claims = await asyncio.gather(claim("worker-a"), claim("worker-b"))
+        assert sum(token is not None for token in claims) == 1
+
+        async with factory.begin() as observer:
+            stored = await observer.get(ImportJob, job_id)
+            assert stored is not None
+            assert stored.attempt_count == 1
+            assert stored.receipt_count == 1
+            assert stored.lease_owner in {"worker-a", "worker-b"}
+            assert stored.lease_expires_at is not None
+            assert stored.lease_expires_at > datetime.now(UTC)
+    finally:
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_job_is_not_redispatched_after_lease_loss() -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|cancel-after-lease-loss|{uuid4()}"
+    job_id, _ = await create_claimed_job(factory, owner)
+    now = datetime.now(UTC)
+    try:
+        async with factory.begin() as setup:
+            await setup.execute(
+                ImportJob.__table__.update()
+                .where(ImportJob.id == job_id)
+                .values(
+                    cancel_requested_at=now - timedelta(seconds=2),
+                    lease_expires_at=now - timedelta(seconds=1),
+                    next_attempt_at=now - timedelta(seconds=1),
+                )
+            )
+
+        async with factory.begin() as reconciliation:
+            assert await ImportReconciler(reconciliation).reconcile(now=now) == 0
+
+        async with factory.begin() as observer:
+            stored = await observer.get(ImportJob, job_id)
+            assert stored is not None
+            assert stored.status is ImportStatus.CANCELLED
+            assert stored.stage is ImportStage.CANCELLED
+            assert stored.lease_owner is None
+            assert stored.lease_expires_at is None
+            generations = list(
+                await observer.scalars(
+                    select(ImportDispatch.generation)
+                    .where(ImportDispatch.job_id == job_id)
+                    .order_by(ImportDispatch.generation)
+                )
+            )
+            assert generations == [1]
+    finally:
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
         await engine.dispose()
 
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -23,13 +26,15 @@ from ingestion.import_models import (
     RecipeImportCandidate,
     ReviewRecipeCandidate,
 )
-from ingestion.models import AttemptState, ImportInputKind, ImportStage, ImportStatus
+from ingestion.models import AttemptState, ImportInputKind, ImportJob, ImportStage, ImportStatus
 from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.repositories.imports import MAX_PIPELINE_PAYLOAD_BYTES, ImportRepository
+from ingestion.telemetry import ImportEvent, emit_import_event
 
 PROVIDER_ATTEMPT_SECONDS = 60
 RETRY_DELAY_SECONDS = 1
 CATALOG_RETRY_CEILING_SECONDS = 300
+logger = logging.getLogger(__name__)
 
 
 class Fetcher(Protocol):
@@ -86,7 +91,12 @@ class ImportPipeline:
             if await self._finish_if_cancelled_or_timed_out(job, lease_token):
                 return
         if job.stage is ImportStage.FETCHING:
-            await self._checkpoint_source(job_id, lease_token, adapters.fetcher)
+            await self._run_stage(
+                job_id,
+                lease_token,
+                ImportStage.FETCHING,
+                lambda: self._checkpoint_source(job_id, lease_token, adapters.fetcher),
+            )
             try:
                 job = await self._repository.get_job_for_lease(lease_token)
             except StaleLease:
@@ -94,7 +104,12 @@ class ImportPipeline:
             if await self._finish_if_cancelled_or_timed_out(job, lease_token):
                 return
         if job.stage is ImportStage.EXTRACTING:
-            await self._run_deterministic(job_id, lease_token, adapters.deterministic)
+            await self._run_stage(
+                job_id,
+                lease_token,
+                ImportStage.EXTRACTING,
+                lambda: self._run_deterministic(job_id, lease_token, adapters.deterministic),
+            )
             try:
                 job = await self._repository.get_job_for_lease(lease_token)
             except StaleLease:
@@ -102,7 +117,12 @@ class ImportPipeline:
             if await self._finish_if_cancelled_or_timed_out(job, lease_token):
                 return
         if job.stage is ImportStage.MODEL_EXTRACTING:
-            await self._run_model(job_id, lease_token, adapters.model)
+            await self._run_stage(
+                job_id,
+                lease_token,
+                ImportStage.MODEL_EXTRACTING,
+                lambda: self._run_model(job_id, lease_token, adapters.model),
+            )
             try:
                 job = await self._repository.get_job_for_lease(lease_token)
             except StaleLease:
@@ -113,7 +133,75 @@ class ImportPipeline:
             ImportStage.VALIDATING,
             ImportStage.CATALOG_PENDING,
         }:
-            await self._run_catalog(job_id, lease_token, adapters.catalog)
+            catalog = adapters.catalog
+            catalog_stage = job.stage
+            await self._run_stage(
+                job_id,
+                lease_token,
+                catalog_stage,
+                lambda: self._run_catalog(job_id, lease_token, catalog),
+            )
+
+    async def _run_stage(
+        self,
+        job_id: UUID,
+        token: LeaseToken,
+        stage: ImportStage,
+        operation: Callable[[], Awaitable[None]],
+    ) -> None:
+        started = time.monotonic()
+        emit_import_event(
+            logger,
+            ImportEvent(
+                name="stage.started",
+                job_id=str(job_id),
+                dispatch_generation=token.generation,
+                stage=stage.value,
+            ),
+        )
+        try:
+            await operation()
+        except StaleLease:
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="stage.stale",
+                    job_id=str(job_id),
+                    dispatch_generation=token.generation,
+                    stage=stage.value,
+                    elapsed_ms=max(0, int((time.monotonic() - started) * 1000)),
+                    error_category="stale_lease",
+                ),
+            )
+            raise
+        job = await self._repository.session.get(ImportJob, job_id)
+        if job is None:
+            return
+        if job.status is ImportStatus.QUEUED:
+            event_name = "stage.retry_scheduled"
+        elif job.status in {
+            ImportStatus.REVIEW_REQUIRED,
+            ImportStatus.FAILED,
+            ImportStatus.CANCELLED,
+            ImportStatus.TIMED_OUT,
+        }:
+            event_name = "stage.terminal"
+        elif job.status is ImportStatus.COMPLETED or job.stage is not stage:
+            event_name = "stage.completed"
+        else:
+            event_name = "stage.deferred"
+        emit_import_event(
+            logger,
+            ImportEvent(
+                name=event_name,
+                job_id=str(job_id),
+                dispatch_generation=token.generation,
+                stage=stage.value,
+                elapsed_ms=max(0, int((time.monotonic() - started) * 1000)),
+                error_category=job.safe_error_category,
+                status=job.status.value,
+            ),
+        )
 
     async def _checkpoint_source(self, job_id: UUID, token: LeaseToken, fetcher: Fetcher) -> None:
         job = await self._repository.get_job_for_lease(token)
@@ -306,6 +394,17 @@ class ImportPipeline:
                 diagnostic_reference=None,
             )
             await self._commit()
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="provider.failed",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.MODEL_EXTRACTING.value,
+                    error_category="provider_attempt_limit",
+                    status=ImportStatus.FAILED.value,
+                ),
+            )
             return
         if attempt.state is AttemptState.IN_FLIGHT:
             if self._deadline_elapsed(attempt.request_deadline_at, now):
@@ -328,6 +427,23 @@ class ImportPipeline:
                         diagnostic_reference=None,
                     )
             await self._commit()
+            if self._deadline_elapsed(attempt.request_deadline_at, now):
+                emit_import_event(
+                    logger,
+                    ImportEvent(
+                        name="provider.ambiguous",
+                        job_id=str(token.job_id),
+                        dispatch_generation=token.generation,
+                        stage=ImportStage.MODEL_EXTRACTING.value,
+                        attempt=attempt.ordinal,
+                        error_category="provider_attempt_unresolved",
+                        status=(
+                            ImportStatus.QUEUED.value
+                            if attempt.ordinal < 2
+                            else ImportStatus.FAILED.value
+                        ),
+                    ),
+                )
             return
         await self._commit()
         provider_attempt = await self._repository.adopt_provider_attempt(
@@ -361,6 +477,17 @@ class ImportPipeline:
             await self._repository.session.rollback()
             return
         await self._commit()
+        emit_import_event(
+            logger,
+            ImportEvent(
+                name="provider.succeeded",
+                job_id=str(token.job_id),
+                dispatch_generation=token.generation,
+                stage=ImportStage.MODEL_EXTRACTING.value,
+                attempt=provider_attempt.ordinal,
+                status=ImportStatus.PROCESSING.value,
+            ),
+        )
         await self._repository.adopt_provider_success(
             token,
             provider_attempt.operation_id,
@@ -392,6 +519,26 @@ class ImportPipeline:
                 diagnostic_reference=None,
             )
         await self._commit()
+        emit_import_event(
+            logger,
+            ImportEvent(
+                name=(
+                    "provider.retry_scheduled"
+                    if retryable and attempt.ordinal < 2
+                    else "provider.failed"
+                ),
+                job_id=str(token.job_id),
+                dispatch_generation=token.generation,
+                stage=ImportStage.MODEL_EXTRACTING.value,
+                attempt=attempt.ordinal,
+                error_category=category,
+                status=(
+                    ImportStatus.QUEUED.value
+                    if retryable and attempt.ordinal < 2
+                    else ImportStatus.FAILED.value
+                ),
+            ),
+        )
 
     async def _load_document(self, job_id: UUID) -> FetchedDocument:
         raw = await self._repository.load_payload(job_id, "fetched", self._payload_cipher)
@@ -439,6 +586,18 @@ class ImportPipeline:
                 error_category="catalog_attempt_unresolved",
             )
             await self._commit()
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="catalog.ambiguous",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.CATALOG_PENDING.value,
+                    attempt=attempt.ordinal,
+                    error_category="catalog_attempt_unresolved",
+                    status=ImportStatus.QUEUED.value,
+                ),
+            )
             return
         adopted = await self._repository.adopt_catalog_attempt(token, attempt.operation_id)
         if adopted is None:
@@ -459,6 +618,18 @@ class ImportPipeline:
                 diagnostic_reference=None,
             )
             await self._commit()
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="catalog.failed",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.CATALOG_PENDING.value,
+                    attempt=adopted.ordinal,
+                    error_category="candidate_checkpoint_missing",
+                    status=ImportStatus.FAILED.value,
+                ),
+            )
             return
         candidate = RecipeImportCandidate.model_validate_json(candidate_payload)
         await self._commit()
@@ -483,6 +654,20 @@ class ImportPipeline:
                     diagnostic_reference=None,
                 )
             await self._commit()
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="catalog.retry_scheduled" if error.retryable else "catalog.failed",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.CATALOG_PENDING.value,
+                    attempt=adopted.ordinal,
+                    error_category=category,
+                    status=(
+                        ImportStatus.QUEUED.value if error.retryable else ImportStatus.FAILED.value
+                    ),
+                ),
+            )
             return
         except (TimeoutError, aiohttp.ClientError):
             await self._repository.fail_catalog_attempt(
@@ -494,11 +679,34 @@ class ImportPipeline:
                 error_category="catalog_transport",
             )
             await self._commit()
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="catalog.retry_scheduled",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.CATALOG_PENDING.value,
+                    attempt=adopted.ordinal,
+                    error_category="catalog_transport",
+                    status=ImportStatus.QUEUED.value,
+                ),
+            )
             return
         await self._repository.attach_catalog_success(
             token, adopted.operation_id, catalog_recipe_id=recipe_id
         )
         await self._commit()
+        emit_import_event(
+            logger,
+            ImportEvent(
+                name="catalog.succeeded",
+                job_id=str(token.job_id),
+                dispatch_generation=token.generation,
+                stage=ImportStage.CATALOG_PENDING.value,
+                attempt=adopted.ordinal,
+                status=ImportStatus.COMPLETED.value,
+            ),
+        )
 
     @staticmethod
     def _catalog_backoff(ordinal: int) -> float:

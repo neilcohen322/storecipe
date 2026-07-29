@@ -27,6 +27,18 @@ Invoke-Step 'mypy' { uv run mypy services/catalog/src services/ingestion/src }
 Invoke-Step 'pytest' { uv run pytest }
 Invoke-Step 'openapi contract' { uv run openapi-spec-validator contracts/openapi.yaml }
 
+if ([string]::IsNullOrWhiteSpace($env:INGESTION_TEST_DATABASE_URL)) {
+    Write-Host 'UNVERIFIED: PostgreSQL integration checks require INGESTION_TEST_DATABASE_URL.'
+} else {
+    Write-Host 'AVAILABLE: PostgreSQL integration checks can run with INGESTION_TEST_DATABASE_URL.'
+}
+
+if ($env:RUN_DOCKER_INTEGRATION -ne '1') {
+    Write-Host 'UNVERIFIED: Docker integration checks require RUN_DOCKER_INTEGRATION=1.'
+} else {
+    Write-Host 'AVAILABLE: Isolated Docker integration checks are enabled.'
+}
+
 Push-Location apps/web
 try {
     Invoke-Step 'pnpm install (frozen)' { pnpm install --frozen-lockfile }

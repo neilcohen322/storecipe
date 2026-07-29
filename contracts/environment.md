@@ -21,6 +21,8 @@
 | `CATALOG_M2M_CLIENT_ID` | Worker | catalog stage | M2M client ID |
 | `CATALOG_M2M_CLIENT_SECRET` | Worker | catalog stage | M2M client secret |
 | `CATALOG_M2M_AUDIENCE` | Worker | catalog stage | M2M token audience |
+| `INGESTION_TEST_DATABASE_URL` | PostgreSQL integration tests | opt-in | Disposable migrated PostgreSQL DSN for concurrency and transaction checks |
+| `RUN_DOCKER_INTEGRATION` | Docker integration tests | opt-in | Set to `1` to build an isolated Compose project with deterministic local Auth and Catalog substitutes; the harness issues its own test token |
 
 Production values are injected by the deployment environment. `.env` is local only;
 `.env.example` contains names and harmless defaults but no secrets.

@@ -59,7 +59,12 @@ def _configure_payload_startup(
     monkeypatch.setattr(health_routes, "get_settings", lambda: settings)
     monkeypatch.setattr(main, "create_engine", lambda: engine)
     monkeypatch.setattr(main, "Redis", _FakeRedis)
-    monkeypatch.setattr(main, "async_sessionmaker", lambda _: lambda: session, raising=False)
+
+    def session_factory(_: object, *, expire_on_commit: bool | None = None) -> object:
+        assert expire_on_commit is False
+        return lambda: session
+
+    monkeypatch.setattr(main, "async_sessionmaker", session_factory, raising=False)
     return engine
 
 

@@ -1,6 +1,7 @@
 """Broker-loss recovery, deadline enforcement, and import retention."""
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -18,6 +19,7 @@ from ingestion.models import (
     ImportStatus,
 )
 from ingestion.repositories.imports import ImportRepository
+from ingestion.telemetry import ImportEvent, emit_import_event, queue_import_event
 
 TERMINAL = {
     ImportStatus.COMPLETED,
@@ -26,6 +28,7 @@ TERMINAL = {
     ImportStatus.CANCELLED,
     ImportStatus.TIMED_OUT,
 }
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +64,8 @@ class ImportReconciler:
             )
         )
         scheduled = 0
+        events: list[ImportEvent] = []
+        scheduled_events: list[ImportEvent] = []
         for job in jobs:
             if job.cancel_requested_at is not None and job.catalog_pending_since is None:
                 job.status = ImportStatus.CANCELLED
@@ -69,6 +74,14 @@ class ImportReconciler:
                 job.next_attempt_at = None
                 job.lease_owner = None
                 job.lease_expires_at = None
+                events.append(
+                    ImportEvent(
+                        name="recovery.cancelled",
+                        job_id=str(job.id),
+                        dispatch_generation=job.dispatch_generation,
+                        status=job.status.value,
+                    )
+                )
                 continue
             if (
                 job.deadline_at is not None
@@ -80,6 +93,15 @@ class ImportReconciler:
                 job.terminal_at = current
                 job.next_attempt_at = None
                 job.safe_error_category = "import_deadline_exceeded"
+                events.append(
+                    ImportEvent(
+                        name="recovery.timed_out",
+                        job_id=str(job.id),
+                        dispatch_generation=job.dispatch_generation,
+                        error_category=job.safe_error_category,
+                        status=job.status.value,
+                    )
+                )
                 continue
             has_open_dispatch = await self._session.scalar(
                 select(
@@ -104,7 +126,19 @@ class ImportReconciler:
                 )
             )
             scheduled += 1
+            scheduled_events.append(
+                ImportEvent(
+                    name="recovery.scheduled",
+                    job_id=str(job.id),
+                    dispatch_generation=job.dispatch_generation,
+                    catalog_pending_age_ms=self._catalog_pending_age_ms(job, current),
+                )
+            )
         await self._session.flush()
+        for event in events:
+            queue_import_event(self._session, logger, event)
+        for event in scheduled_events:
+            queue_import_event(self._session, logger, event)
         return scheduled
 
     async def catalog_pending_alerts(
@@ -121,8 +155,10 @@ class ImportReconciler:
                 )
             )
         )
-        return [
-            CatalogPendingAlert(
+        alerts: list[CatalogPendingAlert] = []
+        for job in jobs:
+            age_ms = self._catalog_pending_age_ms(job, current) or 0
+            alert = CatalogPendingAlert(
                 job_id=str(job.id),
                 severity=(
                     "critical"
@@ -139,8 +175,27 @@ class ImportReconciler:
                 catalog_attempt_count=job.catalog_count,
                 next_attempt_at=job.next_attempt_at,
             )
-            for job in jobs
-        ]
+            alerts.append(alert)
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="catalog.pending",
+                    job_id=str(job.id),
+                    dispatch_generation=job.dispatch_generation,
+                    stage=job.stage.value,
+                    attempt=job.catalog_count,
+                    catalog_pending_age_ms=age_ms,
+                    error_category=job.safe_error_category,
+                    status=job.status.value,
+                ),
+            )
+        return alerts
+
+    @staticmethod
+    def _catalog_pending_age_ms(job: ImportJob, current: datetime) -> int | None:
+        if job.catalog_pending_since is None:
+            return None
+        return max(0, int((current - job.catalog_pending_since).total_seconds() * 1000))
 
     async def sweep_retention(self, *, now: datetime | None = None) -> tuple[int, int]:
         current = now or datetime.now(UTC)
@@ -186,6 +241,11 @@ class ImportReconciler:
                 ImportJob.status.in_(TERMINAL),
                 ImportJob.terminal_at <= current - timedelta(days=90),
             )
+        )
+        queue_import_event(
+            self._session,
+            logger,
+            ImportEvent(name="retention.swept", status="completed"),
         )
         return (
             int(payload_result.rowcount or 0) if isinstance(payload_result, CursorResult) else 0,

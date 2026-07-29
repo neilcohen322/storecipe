@@ -8,8 +8,9 @@ authorization, private search and filtering, and an authenticated MCP boundary.
 
 - **Catalog API:** recipes, ratings, private search, and authenticated MCP access.
 - **Ingestion API/worker:** asynchronous recipe-import and extraction infrastructure.
+- **Ingestion dispatcher/reconciler:** durable outbox publication, lease recovery, and retention.
 - **PostgreSQL:** authoritative data, separated into catalog and ingestion schemas/roles.
-- **Redis:** Celery broker and short-lived task-result backend.
+- **Redis:** disposable cache/rate-limit Redis plus a dedicated persistent Celery broker Redis.
 - **Expo:** universal client shell for web and native applications.
 
 See [`contracts/ownership.md`](contracts/ownership.md) and

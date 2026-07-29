@@ -11,6 +11,7 @@ from pathlib import Path
 import ingestion
 
 ROUTES_DIR = Path(ingestion.__file__).parent / "routes"
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _imported_modules(source: str) -> Iterator[str]:
@@ -40,3 +41,17 @@ def test_route_modules_do_not_import_sqlalchemy_or_models() -> None:
         if forbidden:
             offenders[path.name] = forbidden
     assert not offenders, f"Route modules must not import SQLAlchemy or models: {offenders}"
+
+
+def test_operations_docs_describe_split_redis_and_opt_in_recovery_checks() -> None:
+    readme = (REPO_ROOT / "README.md").read_text()
+    compose = (REPO_ROOT / "compose.yaml").read_text()
+    verifier = (REPO_ROOT / "scripts" / "verify.ps1").read_text()
+
+    assert "dedicated persistent Celery broker Redis" in readme
+    assert "ingestion-dispatcher" in compose
+    assert "ingestion-reconciler" in compose
+    assert "Celery broker uses redis-broker" in compose
+    assert "UNVERIFIED" in verifier
+    assert "INGESTION_TEST_DATABASE_URL" in verifier
+    assert "RUN_DOCKER_INTEGRATION" in verifier

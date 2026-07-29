@@ -1,4 +1,6 @@
 import base64
+import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -54,8 +56,9 @@ def job(now: datetime, **values: object) -> ImportJob:
 
 @pytest.mark.asyncio
 async def test_dispatcher_publishes_due_generation_and_sets_receipt_deadline(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.dispatcher")
     now = datetime(2026, 7, 25, tzinfo=UTC)
     target = job(now)
     session.add(target)
@@ -78,6 +81,77 @@ async def test_dispatcher_publishes_due_generation_and_sets_receipt_deadline(
     assert published == [(target.id, 1)]
     assert target.dispatch_count == 1
     assert target.next_attempt_at == now + timedelta(seconds=30)
+    assert caplog.records == []
+    await session.commit()
+    events = [json.loads(record.message) for record in caplog.records]
+    assert events[-1]["event"] == "dispatch.published"
+    assert events[-1]["job_id"] == str(target.id)
+    assert events[-1]["dispatch_generation"] == 1
+    assert events[-1]["queue_delay_ms"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_logs_publication_retry_without_exposing_exception(
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.dispatcher")
+    now = datetime(2026, 7, 25, tzinfo=UTC)
+    target = job(now)
+    session.add(target)
+    await session.flush()
+    session.add(
+        ImportDispatch(
+            job_id=target.id,
+            generation=1,
+            dispatch_type=DispatchType.PROCESS,
+            due_at=now,
+        )
+    )
+    await session.flush()
+
+    async def publish(job_id: object, generation: int) -> None:
+        raise RuntimeError("provider secret must not be logged")
+
+    assert await OutboxDispatcher(session, publish).dispatch_due(now=now) == 0
+    assert caplog.records == []
+    await session.commit()
+    events = [json.loads(record.message) for record in caplog.records]
+    assert events[-1]["event"] == "dispatch.publish_retry"
+    assert events[-1]["error_category"] == "publication_failure"
+    assert "provider secret" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_receipt_and_duplicate_claim_outcomes(
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.worker")
+    now = datetime(2026, 7, 25, tzinfo=UTC)
+    target = job(now)
+    session.add(target)
+    await session.flush()
+    session.add(
+        ImportDispatch(
+            job_id=target.id,
+            generation=1,
+            dispatch_type=DispatchType.PROCESS,
+            due_at=now,
+        )
+    )
+    await session.flush()
+
+    repository = ImportRepository(session)
+    first = await ingestion_worker._record_receipt_and_claim(repository, target.id, "worker-a", 1)
+    assert caplog.records == []
+    await session.commit()
+    duplicate = await ingestion_worker._record_receipt_and_claim(
+        repository, target.id, "worker-b", 1
+    )
+
+    assert first is not None
+    assert duplicate is None
+    events = [json.loads(record.message) for record in caplog.records]
+    assert [event["event"] for event in events[-2:]] == ["worker.received", "worker.stale"]
 
 
 @pytest.mark.asyncio
@@ -173,6 +247,43 @@ async def test_dispatcher_does_not_publish_terminal_job_dispatch(
 
 
 @pytest.mark.asyncio
+async def test_reconciler_requeues_expired_current_receipt_once(session: AsyncSession) -> None:
+    """A lost worker receipt creates one current-generation retry and no historical republish."""
+
+    now = datetime(2026, 7, 27, tzinfo=UTC)
+    target = job(
+        now - timedelta(seconds=31),
+        status=ImportStatus.PROCESSING,
+        stage=ImportStage.FETCHING,
+        next_attempt_at=now - timedelta(seconds=1),
+        dispatch_generation=1,
+    )
+    session.add(target)
+    await session.flush()
+    session.add(
+        ImportDispatch(
+            job_id=target.id,
+            generation=1,
+            dispatch_type=DispatchType.PROCESS,
+            due_at=now - timedelta(seconds=31),
+            published_at=now - timedelta(seconds=31),
+        )
+    )
+    await session.flush()
+
+    assert await ImportReconciler(session).reconcile(now=now) == 1
+    generations = list(
+        await session.scalars(
+            select(ImportDispatch.generation)
+            .where(ImportDispatch.job_id == target.id)
+            .order_by(ImportDispatch.generation)
+        )
+    )
+    assert generations == [1, 2]
+    assert target.dispatch_generation == 2
+
+
+@pytest.mark.asyncio
 async def test_reconciler_expires_deadline_before_catalog_intent(session: AsyncSession) -> None:
     now = datetime(2026, 7, 25, tzinfo=UTC)
     target = job(
@@ -215,8 +326,9 @@ async def test_reconciler_terminalizes_active_cancellation_after_worker_loss(
 
 @pytest.mark.asyncio
 async def test_reconciler_schedules_lost_catalog_pending_work_and_reports_safe_alert(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.reconciler")
     now = datetime(2026, 7, 25, tzinfo=UTC)
     target = job(
         now - timedelta(minutes=31),
@@ -231,6 +343,8 @@ async def test_reconciler_schedules_lost_catalog_pending_work_and_reports_safe_a
     await session.flush()
 
     assert await ImportReconciler(session).reconcile(now=now) == 1
+    assert caplog.records == []
+    await session.commit()
     dispatch = await session.scalar(
         select(ImportDispatch).where(ImportDispatch.job_id == target.id)
     )
@@ -241,6 +355,13 @@ async def test_reconciler_schedules_lost_catalog_pending_work_and_reports_safe_a
         (item.severity, item.safe_error_category, item.catalog_attempt_count) for item in alerts
     ]
     assert safe_alerts == [("critical", "catalog_timeout", 4)]
+    events = [json.loads(record.message) for record in caplog.records]
+    recovery = next(event for event in events if event["event"] == "recovery.scheduled")
+    assert recovery["job_id"] == str(target.id)
+    assert recovery["catalog_pending_age_ms"] == 1_860_000
+    pending = next(event for event in events if event["event"] == "catalog.pending")
+    assert pending["job_id"] == str(target.id)
+    assert pending["catalog_pending_age_ms"] == 1_860_000
 
 
 @pytest.mark.asyncio

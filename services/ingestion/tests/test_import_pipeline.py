@@ -1,4 +1,6 @@
 import base64
+import json
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -300,9 +302,10 @@ def adapters(
 
 @pytest.mark.asyncio
 async def test_deterministic_candidate_is_checkpointed_and_reused_after_redelivery(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Removing the validated-candidate checkpoint would fetch/extract again after redelivery."""
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
 
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=b"https://recipes.example/lentils"
@@ -323,6 +326,10 @@ async def test_deterministic_candidate_is_checkpointed_and_reused_after_redelive
     assert len(fetcher.calls) == 1
     assert len(deterministic.calls) == 1
     assert model.calls == []
+    events = [json.loads(record.message) for record in caplog.records]
+    stage_events = [event for event in events if event["event"] == "stage.completed"]
+    assert {event["stage"] for event in stage_events} >= {"fetching", "extracting"}
+    assert all(event["elapsed_ms"] >= 0 for event in stage_events)
 
     next_token = await redeliver(session, repository, job_id)
     await pipeline.run(job_id, next_token, adapters(fetcher, deterministic, model))
@@ -836,10 +843,14 @@ async def test_adoption_deadline_predicate_uses_database_clock_not_fetched_time(
     ],
 )
 async def test_timeout_and_temporary_5xx_schedule_the_second_reservation(
-    session: AsyncSession, failure: BaseException, category: str
+    session: AsyncSession,
+    failure: BaseException,
+    category: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Classifying timeout or temporary 5xx as terminal would discard the allowed retry."""
 
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=b"https://recipes.example/lentils"
     )
@@ -861,6 +872,19 @@ async def test_timeout_and_temporary_5xx_schedule_the_second_reservation(
     assert retried.stage is ImportStage.MODEL_EXTRACTING
     assert retried.provider_count == 1
     assert retried.safe_error_category == category
+    events = [json.loads(record.message) for record in caplog.records]
+    assert any(
+        event["event"] == "stage.retry_scheduled" and event["stage"] == "model_extracting"
+        for event in events
+    )
+    assert not any(
+        event["event"] == "stage.completed" and event["stage"] == "model_extracting"
+        for event in events
+    )
+    assert any(
+        event["event"] == "provider.retry_scheduled" and event["error_category"] == category
+        for event in events
+    )
 
 
 @pytest.mark.asyncio

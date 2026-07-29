@@ -1,0 +1,83 @@
+services:
+  fake-deps:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    command: ["python", "services/ingestion/tests/integration/fake_stack.py"]
+    ports:
+      - "${FAKE_DEPS_TEST_PORT:-18082}:8080"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  ingestion-migrate:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    command:
+      [
+        "alembic",
+        "-c",
+        "services/ingestion/alembic.ini",
+        "upgrade",
+        "head",
+      ]
+    environment:
+      INGESTION_DATABASE_URL: postgresql+asyncpg://ingestion_app:local_ingestion_only@postgres:5432/storecipe
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  ingestion-api:
+    environment: &week8-ingestion-environment
+      AUTH0_AUDIENCE: https://storecipe.test
+      AUTH0_ISSUER: http://fake-deps:8080/
+      AUTH0_JWKS_URL: http://fake-deps:8080/.well-known/jwks.json
+      CATALOG_API_URL: http://fake-deps:8080
+      CATALOG_M2M_AUDIENCE: https://storecipe.test
+      CATALOG_M2M_CLIENT_ID: week8
+      CATALOG_M2M_CLIENT_SECRET: local-only
+      CATALOG_M2M_TOKEN_URL: http://fake-deps:8080/oauth/token
+      INGESTION_CELERY_BROKER_URL: redis://redis-broker:6379/0
+      INGESTION_DATABASE_URL: postgresql+asyncpg://ingestion_app:local_ingestion_only@postgres:5432/storecipe
+      INGESTION_PAYLOAD_ACTIVE_KEY_ID: local
+      INGESTION_PAYLOAD_KEYRING: local=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      INGESTION_REDIS_URL: redis://redis:6379
+    ports: !override
+      - "${INGESTION_TEST_PORT:-18081}:8001"
+    depends_on:
+      fake-deps:
+        condition: service_healthy
+      ingestion-migrate:
+        condition: service_completed_successfully
+
+  ingestion-worker:
+    environment: *week8-ingestion-environment
+    depends_on:
+      fake-deps:
+        condition: service_healthy
+      ingestion-migrate:
+        condition: service_completed_successfully
+
+  ingestion-dispatcher:
+    environment: *week8-ingestion-environment
+    depends_on:
+      fake-deps:
+        condition: service_healthy
+      ingestion-migrate:
+        condition: service_completed_successfully
+
+  ingestion-reconciler:
+    environment: *week8-ingestion-environment
+    depends_on:
+      ingestion-migrate:
+        condition: service_completed_successfully
