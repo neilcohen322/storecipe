@@ -16,10 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import FetchedDocument
-from ingestion.models import ImportDispatch, ImportInputKind, ImportJob, ImportStage, ImportStatus
+from ingestion.models import (
+    AiDailyUsage,
+    AttemptState,
+    ImportDispatch,
+    ImportInputKind,
+    ImportJob,
+    ImportStage,
+    ImportStatus,
+    ProviderAttempt,
+)
 from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.pipeline import ImportAdapters, ImportPipeline
 from ingestion.reconciler import ImportReconciler
+from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.imports import ImportRepository
 from ingestion.services.imports import ActiveUrlImportExists, ImportService
 from ingestion.worker import _renew_lease_loop
@@ -381,4 +391,76 @@ async def test_cancellation_and_catalog_intent_are_mutually_exclusive() -> None:
     finally:
         async with factory.begin() as session:
             await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_budget_reservations_cannot_overspend_daily_cap() -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|budget-race|{uuid4()}"
+    barrier = asyncio.Barrier(4)
+    budget_date = datetime.now(UTC).date()
+
+    async with factory.begin() as session:
+        attempts: list[ProviderAttempt] = []
+        for ordinal in range(1, 5):
+            job = ImportJob(
+                owner_subject=owner,
+                input_kind=ImportInputKind.URL,
+                request_fingerprint=f"{ordinal:064x}",
+                status=ImportStatus.PROCESSING,
+                stage=ImportStage.MODEL_EXTRACTING,
+                deadline_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+            session.add(job)
+            await session.flush()
+            attempt = ProviderAttempt(
+                job_id=job.id,
+                ordinal=1,
+                state=AttemptState.IN_FLIGHT,
+                reserved_at=datetime.now(UTC),
+                request_deadline_at=datetime.now(UTC) + timedelta(minutes=1),
+            )
+            session.add(attempt)
+            attempts.append(attempt)
+        await session.flush()
+
+    async def reserve(attempt_id: UUID) -> bool:
+        async with factory.begin() as session:
+            attempt = await session.get(ProviderAttempt, attempt_id)
+            assert attempt is not None
+            job = await session.get(ImportJob, attempt.job_id)
+            assert job is not None
+            await barrier.wait()
+            try:
+                await AiBudgetRepository(session).reserve(
+                    job=job,
+                    provider_attempt=attempt,
+                    provider_name="openrouter",
+                    model_name="test-model",
+                    prompt_version="integration",
+                    reservation_tokens=275_000,
+                    daily_limit=550_000,
+                    budget_date=budget_date,
+                )
+                return True
+            except BudgetExceeded:
+                return False
+
+    try:
+        results = await asyncio.gather(*(reserve(attempt.id) for attempt in attempts))
+        assert results.count(True) == 2
+        assert results.count(False) == 2
+
+        async with factory.begin() as session:
+            usage = await session.get(AiDailyUsage, (owner, budget_date))
+            assert usage is not None
+            assert (usage.reserved_tokens, usage.consumed_tokens) == (550_000, 0)
+            assert usage.reserved_tokens >= 0
+            assert usage.consumed_tokens >= 0
+    finally:
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+            await session.execute(delete(AiDailyUsage).where(AiDailyUsage.owner_subject == owner))
         await engine.dispose()

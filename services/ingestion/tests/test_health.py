@@ -3,12 +3,39 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from ingestion import main
+from ingestion.config import Settings
 from ingestion.crypto import PayloadKeyUnavailableError
 from ingestion.main import app
 from ingestion.routes import health as health_routes
+
+
+@pytest.fixture
+def test_settings_kwargs() -> dict[str, str]:
+    return {
+        "payload_active_key_id": "test",
+        "payload_keyring": "test=dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHQ=",
+    }
+
+
+def test_usage_governance_defaults(test_settings_kwargs: dict[str, str]) -> None:
+    settings = Settings(**test_settings_kwargs)
+
+    assert settings.import_burst_requests == 5
+    assert settings.import_burst_window_seconds == 60
+    assert settings.ai_daily_token_limit == 1_100_000
+    assert settings.ai_invocation_reservation_tokens == 275_000
+
+
+def test_reservation_cannot_exceed_daily_budget(test_settings_kwargs: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            **test_settings_kwargs,
+            ai_daily_token_limit=100,
+            ai_invocation_reservation_tokens=101,
+        )
 
 
 class _FakeEngine:

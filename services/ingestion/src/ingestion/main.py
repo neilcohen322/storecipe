@@ -11,6 +11,7 @@ from ingestion.config import get_settings
 from ingestion.crypto import PayloadCipher
 from ingestion.database import create_engine
 from ingestion.problems import install_problem_details
+from ingestion.rate_limits import RedisBurstLimiter
 from ingestion.repositories.imports import ImportRepository
 from ingestion.routes.health import router as health_router
 from ingestion.routes.imports import router as imports_router
@@ -41,13 +42,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.token_verifier = Auth0TokenVerifier(settings)
     app.state.source_lookup = build_catalog_client(settings)
     app.state.redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    app.state.import_burst_limiter = RedisBurstLimiter.from_redis_url(
+        settings.redis_url,
+        amount=getattr(settings, "import_burst_requests", 5),
+        window_seconds=getattr(settings, "import_burst_window_seconds", 60),
+    )
     try:
         yield
     finally:
         try:
-            await app.state.redis.aclose()
+            await app.state.import_burst_limiter.close()
         finally:
-            await app.state.engine.dispose()
+            try:
+                await app.state.redis.aclose()
+            finally:
+                await app.state.engine.dispose()
 
 
 app = FastAPI(

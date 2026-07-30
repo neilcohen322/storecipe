@@ -10,6 +10,7 @@ from ingestion.config import Settings
 from ingestion.crypto import PayloadCipher
 from ingestion.main import app
 from ingestion.models import Base
+from ingestion.rate_limits import UnlimitedBurstLimiter
 
 
 class MissingSourceLookup:
@@ -40,6 +41,7 @@ async def api_client() -> AsyncIterator[AsyncClient]:
         active_key_id="test", keyring=f"test={keyring}"
     )
     app.state.source_lookup = MissingSourceLookup()
+    app.state.import_burst_limiter = UnlimitedBurstLimiter()
     app.state.token_verifier = Auth0TokenVerifier(
         Settings(payload_active_key_id="test", payload_keyring=f"test={keyring}")
     )

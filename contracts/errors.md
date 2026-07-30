@@ -63,3 +63,11 @@ informing the user; that policy does not override the active-import rule above.
 If the default Catalog source lookup is unavailable, `POST /v1/imports/url`
 returns `503 Service Unavailable` rather than accepting a request without the
 duplicate check.
+
+## Import submission burst limit
+
+Both import submission endpoints return `429 Too Many Requests` when the caller
+exceeds the configured import burst limit. The response includes `Retry-After`,
+`RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers and uses
+the safe problem category `import_burst_exceeded`; it exposes no internal limiter
+or Redis details.

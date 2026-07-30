@@ -1,3 +1,5 @@
+import math
+import time
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from uuid import UUID
@@ -8,6 +10,7 @@ from fastapi.responses import JSONResponse
 from ingestion.auth import Principal, require_scopes
 from ingestion.crypto import PayloadCipher
 from ingestion.problems import PROBLEM_TYPE_BASE, problem_response
+from ingestion.rate_limits import BurstLimiter, RateLimitDecision
 from ingestion.schemas import ImportAccepted, ImportJobView, TextImportRequest, UrlImportRequest
 from ingestion.services.imports import (
     ActiveUrlImportExists,
@@ -61,6 +64,32 @@ def _view(job: Any) -> ImportJobView:
     )
 
 
+async def _admit_import(request: Request, response: Response, subject: str) -> Response | None:
+    limiter: BurstLimiter = request.app.state.import_burst_limiter
+    decision = await limiter.hit(subject, "import")
+    headers = _rate_limit_headers(decision)
+    if not decision.allowed:
+        headers["Retry-After"] = str(max(1, decision.reset_at - math.floor(time.time())))
+        return problem_response(
+            request,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Import submission burst limit exceeded.",
+            problem_type=f"{PROBLEM_TYPE_BASE}/import-burst-exceeded",
+            extra={"errorCategory": "import_burst_exceeded"},
+            headers=headers,
+        )
+    response.headers.update(headers)
+    return None
+
+
+def _rate_limit_headers(decision: RateLimitDecision) -> dict[str, str]:
+    return {
+        "RateLimit-Limit": str(decision.limit),
+        "RateLimit-Remaining": str(decision.remaining),
+        "RateLimit-Reset": str(decision.reset_at),
+    }
+
+
 @router.post(
     "/url",
     response_model=ImportAccepted | ImportJobView,
@@ -74,6 +103,9 @@ async def submit_url(
     session: Annotated[Any, Depends(get_session)],
     idempotency_key: IdempotencyKey = None,
 ) -> ImportAccepted | ImportJobView | Response:
+    rejection = await _admit_import(request, response, principal.subject)
+    if rejection is not None:
+        return rejection
     service = _service(request, session)
     try:
         result = await service.submit_url(
@@ -136,7 +168,10 @@ async def submit_text(
     principal: WritePrincipal,
     session: Annotated[Any, Depends(get_session)],
     idempotency_key: IdempotencyKey = None,
-) -> ImportAccepted | ImportJobView:
+) -> ImportAccepted | ImportJobView | Response:
+    rejection = await _admit_import(request, response, principal.subject)
+    if rejection is not None:
+        return rejection
     service = _service(request, session)
     try:
         result = await service.submit_text(principal.subject, payload.text, idempotency_key)

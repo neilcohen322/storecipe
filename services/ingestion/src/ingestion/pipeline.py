@@ -15,7 +15,16 @@ from uuid import UUID
 
 import aiohttp
 
-from ingestion.ai_extractor import AiExtractionError, AiExtractionFailureCode, AiExtractionResult
+from ingestion.ai_extractor import (
+    MAX_OUTPUT_TOKENS,
+    AiExtractionError,
+    AiExtractionFailureCode,
+    AiExtractionResult,
+    OpenRouterUsage,
+    build_extraction_messages,
+    build_response_format,
+    serialize_openrouter_request,
+)
 from ingestion.catalog_client import CatalogError
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import (
@@ -28,6 +37,7 @@ from ingestion.import_models import (
 )
 from ingestion.models import AttemptState, ImportInputKind, ImportJob, ImportStage, ImportStatus
 from ingestion.orchestration import LeaseToken, StaleLease
+from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.imports import MAX_PIPELINE_PAYLOAD_BYTES, ImportRepository
 from ingestion.telemetry import ImportEvent, emit_import_event
 
@@ -69,12 +79,30 @@ class ImportAdapters:
     catalog: CatalogGateway | None
 
 
+@dataclass(frozen=True, slots=True)
+class AiBudgetPolicy:
+    daily_limit: int
+    reservation_tokens: int
+    provider_name: str
+    model_name: str
+    prompt_version: str
+
+
 class ImportPipeline:
     """Advance extraction checkpoints without repeating completed external work."""
 
-    def __init__(self, repository: ImportRepository, payload_cipher: PayloadCipher) -> None:
+    def __init__(
+        self,
+        repository: ImportRepository,
+        payload_cipher: PayloadCipher,
+        *,
+        budgets: AiBudgetRepository | None = None,
+        budget_policy: AiBudgetPolicy | None = None,
+    ) -> None:
         self._repository = repository
         self._payload_cipher = payload_cipher
+        self._budgets = budgets
+        self._budget_policy = budget_policy
 
     async def run(self, job_id: UUID, lease_token: LeaseToken, adapters: ImportAdapters) -> None:
         if job_id != lease_token.job_id:
@@ -380,6 +408,15 @@ class ImportPipeline:
             )
             await self._commit()
             return
+        if self._budgets is None or self._budget_policy is None:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category="budget_not_configured",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            return
         now = datetime.now(UTC)
         request_deadline = now + timedelta(seconds=PROVIDER_ATTEMPT_SECONDS)
         if job.deadline_at is not None:
@@ -410,6 +447,38 @@ class ImportPipeline:
                 ),
             )
             return
+        try:
+            reservation = await self._budgets.reserve(
+                job=job,
+                provider_attempt=attempt,
+                provider_name=self._budget_policy.provider_name,
+                model_name=self._budget_policy.model_name,
+                prompt_version=self._budget_policy.prompt_version,
+                reservation_tokens=self._budget_policy.reservation_tokens,
+                daily_limit=self._budget_policy.daily_limit,
+            )
+        except BudgetExceeded:
+            await self._repository.session.rollback()
+            job = await self._repository.get_job_for_lease(token)
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.REVIEW_REQUIRED,
+                error_category="daily_ai_budget_exceeded",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="budget.exhausted",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.MODEL_EXTRACTING.value,
+                    error_category="daily_ai_budget_exceeded",
+                    status=ImportStatus.REVIEW_REQUIRED.value,
+                ),
+            )
+            return
         if attempt.state is AttemptState.IN_FLIGHT:
             if self._deadline_elapsed(attempt.request_deadline_at, now):
                 await self._repository.mark_provider_attempt_ambiguous(
@@ -417,6 +486,7 @@ class ImportPipeline:
                     attempt.operation_id,
                     outcome_category="provider_attempt_unresolved",
                 )
+                await self._budgets.mark_ambiguous(reservation.invocation_id)
                 if attempt.ordinal < 2:
                     await self._repository.schedule_retry(
                         token,
@@ -454,24 +524,44 @@ class ImportPipeline:
             token, attempt.operation_id
         )
         if provider_attempt is None:
+            await self._budgets.fail(
+                reservation.invocation_id, safe_error_category="provider_request_not_started"
+            )
             await self._commit()
             return
         document = await self._load_document(job_id)
         await self._commit()
         try:
             result = await extractor.extract(
-                source_text=self._capped_utf8(document.html),
+                source_text=self._capped_model_source(document.html),
                 trusted_source_url=document.final_url,
             )
         except (TimeoutError, AiExtractionError, aiohttp.ClientError) as error:
-            await self._handle_provider_failure(token, provider_attempt, error)
+            await self._handle_provider_failure(
+                token, provider_attempt, reservation.invocation_id, error
+            )
+            return
+        if not self._usage_is_consistent(result.usage):
+            await self._handle_provider_failure(
+                token,
+                provider_attempt,
+                reservation.invocation_id,
+                AiExtractionError(
+                    AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE,
+                    provider_request_started=True,
+                    usage=result.usage,
+                    model_name=result.model,
+                    prompt_version=result.prompt_version,
+                    latency_ms=result.latency_ms,
+                ),
+            )
             return
         payload = self._serialize_candidate(result.candidate)
         recorded = await self._repository.record_provider_success(
             provider_attempt.operation_id,
             candidate_payload=payload,
             payload_cipher=self._payload_cipher,
-            provider_name="openrouter",
+            provider_name=self._budget_policy.provider_name,
             model_name=result.model,
             input_tokens=result.usage.prompt_tokens,
             output_tokens=result.usage.completion_tokens,
@@ -480,6 +570,13 @@ class ImportPipeline:
         if not recorded:
             await self._repository.session.rollback()
             return
+        await self._budgets.succeed(
+            reservation.invocation_id,
+            input_tokens=result.usage.prompt_tokens,
+            output_tokens=result.usage.completion_tokens,
+            cost_microunits=self._cost_microunits(result.usage.cost),
+            latency_ms=result.latency_ms,
+        )
         await self._commit()
         emit_import_event(
             logger,
@@ -500,15 +597,32 @@ class ImportPipeline:
         await self._commit()
 
     async def _handle_provider_failure(
-        self, token: LeaseToken, attempt: object, error: Exception
+        self, token: LeaseToken, attempt: object, invocation_id: UUID, error: Exception
     ) -> None:
         from ingestion.models import ProviderAttempt
 
         assert isinstance(attempt, ProviderAttempt)
+        assert self._budgets is not None
         category, retryable = self._provider_failure(error)
         await self._repository.fail_provider_attempt(
             token, attempt.operation_id, outcome_category=category
         )
+        if (
+            isinstance(error, AiExtractionError)
+            and error.usage is not None
+            and self._usage_is_consistent(error.usage)
+        ):
+            await self._budgets.succeed(
+                invocation_id,
+                input_tokens=error.usage.prompt_tokens,
+                output_tokens=error.usage.completion_tokens,
+                cost_microunits=self._cost_microunits(error.usage.cost),
+                latency_ms=error.latency_ms or 0,
+            )
+        elif self._definitely_no_usage(error):
+            await self._budgets.fail(invocation_id, safe_error_category=category)
+        else:
+            await self._budgets.mark_ambiguous(invocation_id)
         if retryable and attempt.ordinal < 2:
             await self._repository.schedule_retry(
                 token,
@@ -764,15 +878,45 @@ class ImportPipeline:
             raise ValueError("candidate payload exceeds the retention limit")
         return payload
 
-    @staticmethod
-    def _capped_utf8(text: str) -> str:
-        """Bound model-visible source text by bytes without splitting a UTF-8 code point."""
+    def _capped_model_source(self, text: str) -> str:
+        """Fit source into both retention and the pinned serialized request reservation."""
 
-        return text.encode("utf-8")[:MAX_PIPELINE_PAYLOAD_BYTES].decode("utf-8", errors="ignore")
+        policy = self._budget_policy
+        assert policy is not None
+        retained = text.encode("utf-8")[:MAX_PIPELINE_PAYLOAD_BYTES].decode(
+            "utf-8", errors="ignore"
+        )
+
+        def request_bytes(candidate: str) -> int:
+            return len(
+                serialize_openrouter_request(
+                    model=policy.model_name,
+                    messages=build_extraction_messages(candidate),
+                    response_format=build_response_format(),
+                )
+            )
+
+        limit = policy.reservation_tokens - MAX_OUTPUT_TOKENS
+        if request_bytes("") > limit:
+            raise AiExtractionError(AiExtractionFailureCode.NOT_CONFIGURED)
+        if request_bytes(retained) <= limit:
+            return retained
+        low, high = 0, len(retained)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if request_bytes(retained[:middle]) <= limit:
+                low = middle
+            else:
+                high = middle - 1
+        return retained[:low]
 
     @staticmethod
     def _cost_microunits(cost: Decimal) -> int:
         return int((cost * Decimal(1_000_000)).to_integral_value(rounding=ROUND_HALF_UP))
+
+    @staticmethod
+    def _usage_is_consistent(usage: OpenRouterUsage) -> bool:
+        return usage.total_tokens == usage.prompt_tokens + usage.completion_tokens
 
     @staticmethod
     def _deadline_elapsed(deadline: datetime, now: datetime) -> bool:
@@ -787,6 +931,8 @@ class ImportPipeline:
         if isinstance(error, TimeoutError):
             return "provider_timeout", True
         if isinstance(error, AiExtractionError):
+            if error.code is AiExtractionFailureCode.NOT_CONFIGURED:
+                return "budget_not_configured", False
             if error.code is AiExtractionFailureCode.RATE_LIMITED:
                 return "provider_rate_limited", True
             if error.code in {
@@ -800,6 +946,20 @@ class ImportPipeline:
                 return "provider_request_failed", False
             return "provider_request_failed", False
         return "provider_transport", True
+
+    @staticmethod
+    def _definitely_no_usage(error: Exception) -> bool:
+        if not isinstance(error, AiExtractionError):
+            return False
+        if not error.provider_request_started:
+            return True
+        return error.usage is None and (
+            error.code is AiExtractionFailureCode.RATE_LIMITED
+            or (
+                error.code is AiExtractionFailureCode.PROVIDER_REQUEST_FAILED
+                and error.status in {400, 401, 403, 404, 422}
+            )
+        )
 
     @staticmethod
     def _fetch_failure_retryable(error: FetchError) -> bool:

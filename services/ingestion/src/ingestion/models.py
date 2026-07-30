@@ -1,6 +1,6 @@
 """Durable SQLAlchemy models for the import orchestration workflow."""
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -63,6 +63,13 @@ class DispatchType(StrEnum):
 class AttemptState(StrEnum):
     RESERVED = "reserved"
     IN_FLIGHT = "in_flight"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    AMBIGUOUS = "ambiguous"
+
+
+class LlmInvocationState(StrEnum):
+    RESERVED = "reserved"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     AMBIGUOUS = "ambiguous"
@@ -174,6 +181,7 @@ class ImportJob(Base):
     dispatches: Mapped[list["ImportDispatch"]] = relationship(back_populates="job")
     provider_attempts: Mapped[list["ProviderAttempt"]] = relationship(back_populates="job")
     catalog_attempts: Mapped[list["CatalogAttempt"]] = relationship(back_populates="job")
+    llm_invocations: Mapped[list["LlmInvocation"]] = relationship(back_populates="job")
 
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("id", uuid4())
@@ -284,6 +292,90 @@ class ProviderAttempt(Base):
     cost_microunits: Mapped[int | None] = mapped_column(Integer)
 
     job: Mapped[ImportJob] = relationship(back_populates="provider_attempts")
+
+
+class AiDailyUsage(Base):
+    __tablename__ = "ai_daily_usage"
+    __table_args__ = (
+        CheckConstraint(
+            "reserved_tokens >= 0 AND consumed_tokens >= 0",
+            name="ck_ai_daily_usage_nonnegative_tokens",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    owner_subject: Mapped[str] = mapped_column(String(255), primary_key=True)
+    budget_date_utc: Mapped[date] = mapped_column(primary_key=True)
+    reserved_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    consumed_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class LlmInvocation(Base):
+    __tablename__ = "llm_invocations"
+    __table_args__ = (
+        UniqueConstraint("provider_operation_id", name="uq_llm_invocations_provider_operation"),
+        Index("ix_llm_invocations_owner_budget_date", "owner_subject", "budget_date_utc"),
+        Index("ix_llm_invocations_state_request_deadline", "state", "request_deadline_at"),
+        CheckConstraint("reserved_tokens >= 0", name="ck_llm_invocations_reserved_tokens"),
+        CheckConstraint("input_tokens >= 0", name="ck_llm_invocations_input_tokens"),
+        CheckConstraint("output_tokens >= 0", name="ck_llm_invocations_output_tokens"),
+        CheckConstraint("total_tokens >= 0", name="ck_llm_invocations_total_tokens"),
+        CheckConstraint("cost_microunits >= 0", name="ck_llm_invocations_cost_microunits"),
+        CheckConstraint("latency_ms >= 0", name="ck_llm_invocations_latency_ms"),
+        CheckConstraint(
+            "input_tokens IS NULL OR output_tokens IS NULL OR total_tokens IS NULL "
+            "OR total_tokens = input_tokens + output_tokens",
+            name="ck_llm_invocations_total_tokens_match",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    job_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.import_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider_operation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.provider_attempts.operation_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    budget_date_utc: Mapped[date] = mapped_column(nullable=False)
+    state: Mapped[LlmInvocationState] = mapped_column(
+        _enum(LlmInvocationState, "llm_invocation_state"), nullable=False
+    )
+    provider_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    reserved_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    total_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_microunits: Mapped[int | None] = mapped_column(Integer)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    request_deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    safe_error_category: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    job: Mapped[ImportJob] = relationship(back_populates="llm_invocations")
 
 
 class CatalogAttempt(Base):

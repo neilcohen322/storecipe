@@ -150,6 +150,7 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
+        "429": {$ref: "#/components/responses/ImportBurstExceeded"}
         "503":
           description: The default Catalog source lookup is unavailable.
           content:
@@ -185,6 +186,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/ImportBurstExceeded"}
         "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/{jobId}:
     parameters:
@@ -257,6 +259,20 @@ components:
           schema: {$ref: "#/components/schemas/Problem"}
     Conflict:
       description: Request conflicts with durable resource state
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    ImportBurstExceeded:
+      description: Import submission burst limit exceeded; retry after the indicated interval.
+      headers:
+        Retry-After:
+          schema: {type: integer, minimum: 1}
+        RateLimit-Limit:
+          schema: {type: integer, minimum: 1}
+        RateLimit-Remaining:
+          schema: {type: integer, minimum: 0}
+        RateLimit-Reset:
+          schema: {type: integer, minimum: 0}
       content:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}

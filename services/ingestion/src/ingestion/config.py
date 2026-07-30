@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     payload_active_key_id: str
     payload_keyring: SecretStr
     import_deadline_seconds: int = Field(default=900, ge=1, le=86_400)
+    import_burst_requests: int = Field(default=5, ge=1, le=1_000)
+    import_burst_window_seconds: int = Field(default=60, ge=1, le=86_400)
+    ai_daily_token_limit: int = Field(default=1_100_000, ge=1)
+    ai_invocation_reservation_tokens: int = Field(default=275_000, ge=1)
 
     @property
     def resolved_jwks_url(self) -> str:
@@ -84,6 +88,8 @@ class Settings(BaseSettings):
 
         if self.payload_active_key_id not in parse_keyring(keyring):
             raise ValueError("payload active key id is absent from the payload keyring")
+        if self.ai_invocation_reservation_tokens > self.ai_daily_token_limit:
+            raise ValueError("AI invocation reservation cannot exceed the daily token limit")
         return self
 
 

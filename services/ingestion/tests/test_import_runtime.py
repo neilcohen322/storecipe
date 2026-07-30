@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import ingestion.worker as ingestion_worker
+from ingestion.config import Settings
 from ingestion.crypto import PayloadCipher
 from ingestion.dispatcher import OutboxDispatcher
 from ingestion.models import (
@@ -413,3 +414,21 @@ def test_worker_omits_model_adapter_when_ai_extraction_is_disabled() -> None:
     assert ingestion_worker._model_if_enabled(False, model) is None
     assert ingestion_worker._model_if_enabled(True, model) is model
     assert celery_app.conf.task_ignore_result is True
+
+
+def test_worker_builds_budget_policy_from_runtime_settings() -> None:
+    keyring = base64.b64encode(b"k" * 32).decode()
+    settings = Settings(
+        payload_active_key_id="current",
+        payload_keyring=f"current={keyring}",
+        ai_daily_token_limit=900_000,
+        ai_invocation_reservation_tokens=270_000,
+        openrouter_model="provider/model-pinned",
+    )
+
+    policy = ingestion_worker._ai_budget_policy(settings)
+
+    assert policy.daily_limit == 900_000
+    assert policy.reservation_tokens == 270_000
+    assert policy.provider_name == "openrouter"
+    assert policy.model_name == "provider/model-pinned"

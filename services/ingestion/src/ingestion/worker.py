@@ -11,9 +11,11 @@ from uuid import UUID
 from celery import Celery
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ingestion.config import Settings
 from ingestion.import_models import FetchedDocument, RecipeImportCandidate
 from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.orchestration import LeaseToken
+from ingestion.pipeline import AiBudgetPolicy
 from ingestion.repositories.imports import ImportRepository
 from ingestion.telemetry import ImportEvent, emit_import_event, queue_import_event
 
@@ -44,6 +46,18 @@ logger = logging.getLogger(__name__)
 
 def _model_if_enabled[Model](enabled: bool, model: Model) -> Model | None:
     return model if enabled else None
+
+
+def _ai_budget_policy(settings: Settings) -> AiBudgetPolicy:
+    from ingestion.ai_extractor import PROMPT_VERSION
+
+    return AiBudgetPolicy(
+        daily_limit=settings.ai_daily_token_limit,
+        reservation_tokens=settings.ai_invocation_reservation_tokens,
+        provider_name="openrouter",
+        model_name=settings.openrouter_model,
+        prompt_version=PROMPT_VERSION,
+    )
 
 
 async def _record_receipt_and_claim(
@@ -120,6 +134,7 @@ def build_import_runner() -> ImportRunner:
     from ingestion.fetcher import SafeFetcher
     from ingestion.orchestration import StaleLease
     from ingestion.pipeline import ImportAdapters, ImportPipeline
+    from ingestion.repositories.budgets import AiBudgetRepository
     from ingestion.repositories.imports import ImportRepository
 
     settings = get_settings()
@@ -153,7 +168,12 @@ def build_import_runner() -> ImportRunner:
                 await session.commit()
                 heartbeat = asyncio.create_task(_renew_lease_loop(factory, token))
                 try:
-                    await ImportPipeline(repository, cipher).run(
+                    await ImportPipeline(
+                        repository,
+                        cipher,
+                        budgets=AiBudgetRepository(session),
+                        budget_policy=_ai_budget_policy(settings),
+                    ).run(
                         job_id,
                         token,
                         ImportAdapters(

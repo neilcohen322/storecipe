@@ -13,10 +13,15 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ingestion.ai_extractor import (
+    MAX_OUTPUT_TOKENS,
+    PROMPT_VERSION,
     AiExtractionError,
     AiExtractionFailureCode,
     AiExtractionResult,
     OpenRouterUsage,
+    build_extraction_messages,
+    build_response_format,
+    serialize_openrouter_request,
 )
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import (
@@ -28,6 +33,7 @@ from ingestion.import_models import (
     ReviewRecipeCandidate,
 )
 from ingestion.models import (
+    AiDailyUsage,
     AttemptState,
     Base,
     ImportInputKind,
@@ -35,9 +41,13 @@ from ingestion.models import (
     ImportPayload,
     ImportStage,
     ImportStatus,
+    LlmInvocation,
+    LlmInvocationState,
     ProviderAttempt,
 )
-from ingestion.pipeline import ImportAdapters, ImportPipeline
+from ingestion.pipeline import AiBudgetPolicy, ImportAdapters
+from ingestion.pipeline import ImportPipeline as _ImportPipeline
+from ingestion.repositories.budgets import AiBudgetRepository
 from ingestion.repositories.imports import ImportRepository
 
 
@@ -58,6 +68,28 @@ async def session() -> AsyncSession:
 def cipher() -> PayloadCipher:
     keyring = base64.b64encode(b"p" * 32).decode()
     return PayloadCipher.from_keyring(active_key_id="current", keyring=f"current={keyring}")
+
+
+def ImportPipeline(
+    repository: ImportRepository,
+    payload_cipher: PayloadCipher,
+    *,
+    budgets: AiBudgetRepository | None = None,
+    budget_policy: AiBudgetPolicy | None = None,
+) -> _ImportPipeline:
+    return _ImportPipeline(
+        repository,
+        payload_cipher,
+        budgets=budgets or AiBudgetRepository(repository.session),
+        budget_policy=budget_policy
+        or AiBudgetPolicy(
+            daily_limit=10_000_000,
+            reservation_tokens=275_000,
+            provider_name="openrouter",
+            model_name="fake-model",
+            prompt_version="test-v1",
+        ),
+    )
 
 
 def candidate(*, source_url: str | None) -> RecipeImportCandidate:
@@ -148,7 +180,10 @@ class ProviderVisibilityModelExtractor:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession], job_id: UUID) -> None:
         self._session_factory = session_factory
         self._job_id = job_id
-        self.observed: tuple[ImportStage | None, int | None, AttemptState | None] | None = None
+        self.observed: (
+            tuple[ImportStage | None, int | None, AttemptState | None, LlmInvocationState | None]
+            | None
+        ) = None
 
     async def extract(
         self, *, source_text: str, trusted_source_url: str | None
@@ -161,10 +196,14 @@ class ProviderVisibilityModelExtractor:
                 .order_by(ProviderAttempt.ordinal.desc())
                 .limit(1)
             )
+            invocation = await observer.scalar(
+                select(LlmInvocation).where(LlmInvocation.job_id == self._job_id)
+            )
             self.observed = (
                 visible_job.stage if visible_job is not None else None,
                 visible_job.provider_count if visible_job is not None else None,
                 attempt.state if attempt is not None else None,
+                invocation.state if invocation is not None else None,
             )
         return model_result()
 
@@ -298,6 +337,346 @@ def adapters(
     model: RecordingModelExtractor,
 ) -> ImportAdapters:
     return ImportAdapters(fetcher=fetcher, deterministic=deterministic, model=model, catalog=None)
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_never_calls_provider(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session,
+        input_kind=ImportInputKind.URL,
+        plaintext=b"https://recipes.example/lentils",
+    )
+    session.add(
+        AiDailyUsage(
+            owner_subject="auth0|owner",
+            budget_date_utc=datetime.now(UTC).date(),
+            reserved_tokens=0,
+            consumed_tokens=1_100_000,
+        )
+    )
+    await session.commit()
+    extractor = RecordingModelExtractor([model_result()])
+    pipeline = ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        budget_policy=AiBudgetPolicy(
+            daily_limit=1_100_000,
+            reservation_tokens=275_000,
+            provider_name="openrouter",
+            model_name="openai/gpt-5-nano",
+            prompt_version=PROMPT_VERSION,
+        ),
+    )
+
+    await pipeline.run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            extractor,
+        ),
+    )
+
+    stored = await session.get(ImportJob, job_id)
+    assert stored is not None
+    assert extractor.calls == []
+    assert stored.status is ImportStatus.REVIEW_REQUIRED
+    assert stored.safe_error_category == "daily_ai_budget_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_extraction_bypasses_exhausted_ai_budget(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"structured recipe"
+    )
+    session.add(
+        AiDailyUsage(
+            owner_subject="auth0|owner",
+            budget_date_utc=datetime.now(UTC).date(),
+            consumed_tokens=10_000_000,
+        )
+    )
+    await session.commit()
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(candidate(source_url=None)),
+            RecordingModelExtractor([]),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert stored.stage is ImportStage.VALIDATING
+    assert await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id)) is None
+
+
+@pytest.mark.asyncio
+async def test_provider_success_settles_actual_usage_and_pinned_provider(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    policy = AiBudgetPolicy(
+        daily_limit=1_000_000,
+        reservation_tokens=275_000,
+        provider_name="pinned-provider",
+        model_name="pinned-model",
+        prompt_version=PROMPT_VERSION,
+    )
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        budget_policy=policy,
+    ).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            RecordingModelExtractor([model_result()]),
+        ),
+    )
+
+    invocation = await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id))
+    attempt = await session.scalar(select(ProviderAttempt).where(ProviderAttempt.job_id == job_id))
+    usage = await session.get(AiDailyUsage, ("auth0|owner", datetime.now(UTC).date()))
+    assert invocation is not None and invocation.state is LlmInvocationState.SUCCEEDED
+    assert invocation.total_tokens == 3
+    assert usage is not None
+    assert usage.reserved_tokens == 0
+    assert usage.consumed_tokens == 3
+    assert attempt is not None
+    assert attempt.provider_name == "pinned-provider"
+
+
+@pytest.mark.asyncio
+async def test_known_precharge_rejection_releases_reservation(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    failure = AiExtractionError(
+        AiExtractionFailureCode.PROVIDER_REQUEST_FAILED,
+        status=401,
+        provider_request_started=True,
+    )
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            RecordingModelExtractor([failure]),
+        ),
+    )
+
+    invocation = await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id))
+    usage = await session.get(AiDailyUsage, ("auth0|owner", datetime.now(UTC).date()))
+    assert invocation is not None and invocation.state is LlmInvocationState.FAILED
+    assert usage is not None and usage.reserved_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_paid_schema_invalid_completion_settles_actual_usage(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    failure = AiExtractionError(
+        AiExtractionFailureCode.SCHEMA_VALIDATION_FAILED,
+        provider_request_started=True,
+        usage=OpenRouterUsage(
+            prompt_tokens=11,
+            completion_tokens=7,
+            total_tokens=18,
+            cost=Decimal("0.000123"),
+        ),
+        model_name="fake-model",
+        prompt_version=PROMPT_VERSION,
+        latency_ms=9,
+    )
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            RecordingModelExtractor([failure]),
+        ),
+    )
+
+    invocation = await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id))
+    assert invocation is not None
+    assert invocation.state is LlmInvocationState.SUCCEEDED
+    assert invocation.total_tokens == 18
+    assert invocation.cost_microunits == 123
+    assert invocation.latency_ms == 9
+
+
+@pytest.mark.asyncio
+async def test_inconsistent_provider_usage_remains_ambiguous(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    result = model_result()
+    result = AiExtractionResult(
+        candidate=result.candidate,
+        model=result.model,
+        prompt_version=result.prompt_version,
+        usage=OpenRouterUsage(
+            prompt_tokens=1,
+            completion_tokens=2,
+            total_tokens=30,
+            cost=Decimal("0.000123"),
+        ),
+        latency_ms=result.latency_ms,
+    )
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            RecordingModelExtractor([result]),
+        ),
+    )
+
+    invocation = await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id))
+    usage = await session.get(AiDailyUsage, ("auth0|owner", datetime.now(UTC).date()))
+    assert invocation is not None
+    assert invocation.state is LlmInvocationState.AMBIGUOUS
+    assert invocation.settled_at is None
+    assert usage is not None and usage.reserved_tokens == 275_000
+
+
+@pytest.mark.asyncio
+async def test_malformed_paid_response_without_usage_remains_ambiguous(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    failure = AiExtractionError(
+        AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE,
+        provider_request_started=True,
+    )
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            RecordingModelExtractor([failure]),
+        ),
+    )
+
+    invocation = await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id))
+    assert invocation is not None
+    assert invocation.state is LlmInvocationState.AMBIGUOUS
+    assert invocation.settled_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [TimeoutError(), aiohttp.ClientConnectionError()])
+async def test_ambiguous_transport_failure_retains_reservation(
+    session: AsyncSession, failure: BaseException
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            RecordingModelExtractor([failure]),
+        ),
+    )
+
+    invocation = await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id))
+    usage = await session.get(AiDailyUsage, ("auth0|owner", datetime.now(UTC).date()))
+    assert invocation is not None and invocation.state is LlmInvocationState.AMBIGUOUS
+    assert usage is not None and usage.reserved_tokens == 275_000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unit", ['"', "\\", "\x00", "\x1f", "א"])
+async def test_actual_serialized_request_fits_reserved_token_envelope(
+    session: AsyncSession, unit: str
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session,
+        input_kind=ImportInputKind.TEXT,
+        plaintext=(unit * (256 * 1024)).encode("utf-8"),
+    )
+    extractor = RecordingModelExtractor([model_result()])
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            extractor,
+        ),
+    )
+
+    source = extractor.calls[0][0]
+    serialized = serialize_openrouter_request(
+        model="fake-model",
+        messages=build_extraction_messages(source),
+        response_format=build_response_format(),
+    )
+    assert len(serialized) + MAX_OUTPUT_TOKENS <= 275_000
+
+
+@pytest.mark.asyncio
+async def test_undersized_reservation_fails_closed_before_provider_io(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    extractor = RecordingModelExtractor([model_result()])
+    policy = AiBudgetPolicy(
+        daily_limit=10_000,
+        reservation_tokens=1,
+        provider_name="openrouter",
+        model_name="fake-model",
+        prompt_version=PROMPT_VERSION,
+    )
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        budget_policy=policy,
+    ).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            extractor,
+        ),
+    )
+
+    stored = await job(session, job_id)
+    invocation = await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id))
+    usage = await session.get(AiDailyUsage, ("auth0|owner", datetime.now(UTC).date()))
+    assert extractor.calls == []
+    assert stored.status is ImportStatus.FAILED
+    assert stored.safe_error_category == "budget_not_configured"
+    assert invocation is not None and invocation.state is LlmInvocationState.FAILED
+    assert usage is not None and usage.reserved_tokens == 0
 
 
 @pytest.mark.asyncio
@@ -489,7 +868,12 @@ async def test_provider_reservation_is_visible_before_model_external_work(
             ),
         )
 
-    assert model.observed == (ImportStage.MODEL_EXTRACTING, 1, AttemptState.IN_FLIGHT)
+    assert model.observed == (
+        ImportStage.MODEL_EXTRACTING,
+        1,
+        AttemptState.IN_FLIGHT,
+        LlmInvocationState.RESERVED,
+    )
 
 
 @pytest.mark.asyncio
@@ -700,7 +1084,7 @@ async def test_provider_success_survives_lease_loss_and_is_adopted_without_anoth
         "text/html",
         21,
     )
-    fetched_payload = ImportPipeline._serialize_document(document)
+    fetched_payload = _ImportPipeline._serialize_document(document)
     fetched_hash = await repository.store_pipeline_payload(
         stale_token,
         "fetched",

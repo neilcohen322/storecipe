@@ -7,6 +7,10 @@
 | `INGESTION_REDIS_URL` | Ingestion API | yes | Readiness, locks, and rate limiting |
 | `INGESTION_CELERY_BROKER_URL` | Worker/dispatcher | yes | Dedicated persistent, `noeviction` Celery Redis broker |
 | `INGESTION_IMPORT_DEADLINE_SECONDS` | API/worker/reconciler | no | Overall pre-Catalog import deadline; defaults to 900 seconds |
+| `INGESTION_IMPORT_BURST_REQUESTS` | Ingestion API | no | Maximum import submissions accepted in one burst window; defaults to 5 |
+| `INGESTION_IMPORT_BURST_WINDOW_SECONDS` | Ingestion API | no | Import submission burst-window duration; defaults to 60 seconds |
+| `INGESTION_AI_DAILY_TOKEN_LIMIT` | Ingestion worker | no | Per-user daily AI extraction token budget; defaults to 1,100,000 |
+| `INGESTION_AI_INVOCATION_RESERVATION_TOKENS` | Ingestion worker | no | Tokens reserved before one AI invocation; defaults to 275,000 and cannot exceed the daily budget |
 | `INGESTION_PAYLOAD_ACTIVE_KEY_ID` | Ingestion/worker | yes | Key ID used for new encrypted payload writes |
 | `INGESTION_PAYLOAD_KEYRING` | Ingestion/worker | yes | Secret `key-id=base64-key` mapping for retained payloads |
 | `AUTH0_ISSUER` | APIs/MCP | protected routes | Expected JWT issuer |
@@ -22,6 +26,7 @@
 | `CATALOG_M2M_CLIENT_SECRET` | Ingestion API/worker | source lookup/catalog stage | M2M client secret |
 | `CATALOG_M2M_AUDIENCE` | Ingestion API/worker | source lookup/catalog stage | M2M token audience |
 | `INGESTION_TEST_DATABASE_URL` | PostgreSQL integration tests | opt-in | Disposable migrated PostgreSQL DSN for concurrency and transaction checks |
+| `STORECIPE_TEST_REDIS_URL` | Redis integration tests | opt-in | Disposable Redis DSN for rate-limit and AI usage-governance checks |
 | `RUN_DOCKER_INTEGRATION` | Docker integration tests | opt-in | Set to `1` to build an isolated Compose project with deterministic local Auth and Catalog substitutes; the harness issues its own test token |
 
 Production values are injected by the deployment environment. `.env` is local only;

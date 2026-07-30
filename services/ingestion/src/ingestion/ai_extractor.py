@@ -1,5 +1,8 @@
 """Validated recipe extraction through OpenRouter."""
 
+from __future__ import annotations
+
+import json
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -70,10 +73,20 @@ class AiExtractionError(Exception):
         code: AiExtractionFailureCode,
         *,
         status: int | None = None,
+        provider_request_started: bool = False,
+        usage: OpenRouterUsage | None = None,
+        model_name: str | None = None,
+        prompt_version: str | None = None,
+        latency_ms: int | None = None,
     ) -> None:
         super().__init__(code.value)
         self.code = code
         self.status = status
+        self.provider_request_started = provider_request_started
+        self.usage = usage
+        self.model_name = model_name
+        self.prompt_version = prompt_version
+        self.latency_ms = latency_ms
 
 
 class OpenRouterUsage(BaseModel):
@@ -157,16 +170,11 @@ class AiohttpOpenRouterTransport:
         if not self._api_key:
             raise AiExtractionError(AiExtractionFailureCode.NOT_CONFIGURED)
 
-        payload = {
-            "model": self._model,
-            "messages": messages,
-            "response_format": response_format,
-            "temperature": 0,
-            "max_tokens": MAX_OUTPUT_TOKENS,
-            # Prevent OpenRouter from silently routing to a provider that ignores
-            # the strict response-format parameter.
-            "provider": {"require_parameters": True},
-        }
+        payload = serialize_openrouter_request(
+            model=self._model,
+            messages=messages,
+            response_format=response_format,
+        )
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -175,32 +183,45 @@ class AiohttpOpenRouterTransport:
         try:
             async with (
                 aiohttp.ClientSession(timeout=timeout) as session,
-                session.post(self._endpoint, headers=headers, json=payload) as response,
+                session.post(self._endpoint, headers=headers, data=payload) as response,
             ):
                 raw_body = await response.text()
                 if response.status == 429:
                     raise AiExtractionError(
                         AiExtractionFailureCode.RATE_LIMITED,
                         status=response.status,
+                        provider_request_started=True,
                     )
                 if not 200 <= response.status < 300:
                     raise AiExtractionError(
                         AiExtractionFailureCode.PROVIDER_REQUEST_FAILED,
                         status=response.status,
+                        provider_request_started=True,
                     )
         except AiExtractionError:
             raise
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise AiExtractionError(AiExtractionFailureCode.PROVIDER_REQUEST_FAILED) from exc
+            raise AiExtractionError(
+                AiExtractionFailureCode.PROVIDER_REQUEST_FAILED,
+                provider_request_started=True,
+            ) from exc
 
         try:
             envelope = _OpenRouterEnvelope.model_validate_json(raw_body)
             choice = envelope.choices[0]
         except (ValidationError, IndexError) as exc:
-            raise AiExtractionError(AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE) from exc
+            raise AiExtractionError(
+                AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE,
+                provider_request_started=True,
+            ) from exc
 
         if choice.finish_reason != "stop" or choice.message.content is None:
-            raise AiExtractionError(AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE)
+            raise AiExtractionError(
+                AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE,
+                provider_request_started=True,
+                usage=envelope.usage,
+                model_name=envelope.model,
+            )
         return OpenRouterCompletion(
             content=choice.message.content,
             model=envelope.model,
@@ -220,6 +241,28 @@ def build_response_format() -> dict[str, object]:
             "schema": LlmRecipeFields.model_json_schema(),
         },
     }
+
+
+def serialize_openrouter_request(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    response_format: dict[str, object],
+) -> bytes:
+    """Serialize the exact compact UTF-8 request sent across the provider boundary."""
+
+    return json.dumps(
+        {
+            "model": model,
+            "messages": messages,
+            "response_format": response_format,
+            "temperature": 0,
+            "max_tokens": MAX_OUTPUT_TOKENS,
+            "provider": {"require_parameters": True},
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
 
 
 def build_extraction_messages(source_text: str) -> list[dict[str, str]]:
@@ -277,10 +320,20 @@ class AiRecipeExtractor:
             response_format=response_format,
         )
         latency_ms = round((time.perf_counter() - started) * 1_000)
-        candidate = candidate_from_model_content(
-            completion.content,
-            trusted_source_url=trusted_source_url,
-        )
+        try:
+            candidate = candidate_from_model_content(
+                completion.content,
+                trusted_source_url=trusted_source_url,
+            )
+        except AiExtractionError as exc:
+            raise AiExtractionError(
+                exc.code,
+                provider_request_started=True,
+                usage=completion.usage,
+                model_name=completion.model,
+                prompt_version=PROMPT_VERSION,
+                latency_ms=latency_ms,
+            ) from exc
         return AiExtractionResult(
             candidate=candidate,
             model=completion.model,

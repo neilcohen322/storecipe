@@ -7,6 +7,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from ingestion.auth import Auth0TokenVerifier, Principal, get_principal
 from ingestion.catalog_client import CatalogError, CatalogFailureCode
@@ -14,6 +15,7 @@ from ingestion.config import Settings
 from ingestion.import_models import MAX_SOURCE_URL_LENGTH
 from ingestion.main import app
 from ingestion.models import ImportJob, ImportStage, ImportStatus
+from ingestion.rate_limits import RateLimitDecision
 from ingestion.repositories.imports import ImportRepository
 
 
@@ -32,6 +34,16 @@ class StubSourceLookup:
         if self.error is not None:
             raise self.error
         return self.recipe_id
+
+
+class StubLimiter:
+    def __init__(self, decision: RateLimitDecision) -> None:
+        self.decision = decision
+        self.calls: list[tuple[str, str]] = []
+
+    async def hit(self, subject: str, operation: str) -> RateLimitDecision:
+        self.calls.append((subject, operation))
+        return self.decision
 
 
 def _url_payload(url: str = "https://example.com/recipes/soup") -> dict[str, str]:
@@ -112,6 +124,80 @@ async def test_url_import_returns_location_and_queued_job(api_client: AsyncClien
     assert response.status_code == 202
     assert response.headers["location"] == f"/v1/imports/{response.json()['jobId']}"
     assert response.json()["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_import_burst_rejection_returns_retry_metadata(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("ingestion.routes.imports.time.time", lambda: 1_800_000_000)
+    app.state.import_burst_limiter = StubLimiter(RateLimitDecision(False, 5, 0, 1_800_000_030))
+
+    response = await api_client.post("/v1/imports/url", json=_url_payload())
+
+    assert response.status_code == 429
+    assert response.json()["errorCategory"] == "import_burst_exceeded"
+    assert response.headers["Retry-After"] == "30"
+    assert response.headers["RateLimit-Limit"] == "5"
+    assert response.headers["RateLimit-Remaining"] == "0"
+    assert response.headers["RateLimit-Reset"] == "1800000030"
+
+
+@pytest.mark.asyncio
+async def test_import_burst_rejection_creates_no_job(api_client: AsyncClient) -> None:
+    app.state.import_burst_limiter = StubLimiter(RateLimitDecision(False, 5, 0, 1_800_000_030))
+
+    response = await api_client.post("/v1/imports/text", json=_text_payload())
+
+    assert response.status_code == 429
+    async with app.state.session_factory() as session:
+        jobs = (await session.scalars(select(ImportJob))).all()
+    assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_import_burst_allow_adds_headers_and_shares_user_bucket(
+    api_client: AsyncClient,
+) -> None:
+    limiter = StubLimiter(RateLimitDecision(True, 5, 3, 1_800_000_030))
+    app.state.import_burst_limiter = limiter
+
+    url_response = await api_client.post("/v1/imports/url", json=_url_payload())
+    text_response = await api_client.post("/v1/imports/text", json=_text_payload())
+
+    assert url_response.status_code == text_response.status_code == 202
+    assert url_response.headers["RateLimit-Limit"] == "5"
+    assert url_response.headers["RateLimit-Remaining"] == "3"
+    assert limiter.calls == [("auth0|owner-a", "import"), ("auth0|owner-a", "import")]
+
+
+@pytest.mark.asyncio
+async def test_import_burst_limiter_uses_distinct_authenticated_subjects(
+    api_client: AsyncClient,
+) -> None:
+    limiter = StubLimiter(RateLimitDecision(True, 5, 4, 1_800_000_030))
+    app.state.import_burst_limiter = limiter
+
+    await api_client.post("/v1/imports/url", json=_url_payload())
+
+    async def other_owner() -> Principal:
+        return await _principal_with("auth0|owner-b", frozenset({"recipes:read", "recipes:write"}))
+
+    app.dependency_overrides[get_principal] = other_owner
+    await api_client.post("/v1/imports/text", json=_text_payload())
+
+    assert limiter.calls == [("auth0|owner-a", "import"), ("auth0|owner-b", "import")]
+
+
+@pytest.mark.asyncio
+async def test_degraded_import_burst_decision_allows_submission(api_client: AsyncClient) -> None:
+    app.state.import_burst_limiter = StubLimiter(
+        RateLimitDecision(True, 5, 5, 1_800_000_030, degraded=True)
+    )
+
+    response = await api_client.post("/v1/imports/text", json=_text_payload())
+
+    assert response.status_code == 202
 
 
 @pytest.mark.asyncio

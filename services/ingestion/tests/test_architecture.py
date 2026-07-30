@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import ingestion
+from ingestion.models import AiDailyUsage, LlmInvocation
 
 ROUTES_DIR = Path(ingestion.__file__).parent / "routes"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -69,3 +70,49 @@ def test_duplicate_source_contract_is_explicit() -> None:
     assert "active_url_import_exists" in errors
     assert "recipe_source_exists" in errors
     assert "Active URL duplicate invariant" in ownership
+
+
+def test_usage_governance_environment_and_rate_limit_contracts_are_explicit() -> None:
+    environment = (ROOT / "contracts" / "environment.md").read_text(encoding="utf-8")
+    openapi = (ROOT / "contracts" / "openapi.yaml").read_text(encoding="utf-8")
+    errors = (ROOT / "contracts" / "errors.md").read_text(encoding="utf-8")
+
+    for variable in (
+        "INGESTION_IMPORT_BURST_REQUESTS",
+        "INGESTION_IMPORT_BURST_WINDOW_SECONDS",
+        "INGESTION_AI_DAILY_TOKEN_LIMIT",
+        "INGESTION_AI_INVOCATION_RESERVATION_TOKENS",
+        "STORECIPE_TEST_REDIS_URL",
+    ):
+        assert variable in environment
+
+    assert '"429"' in openapi
+    for header in ("Retry-After", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"):
+        assert header in openapi
+    assert "import_burst_exceeded" in errors
+
+
+def test_ai_budget_models_have_durable_keys() -> None:
+    assert tuple(column.name for column in AiDailyUsage.__table__.primary_key) == (
+        "owner_subject",
+        "budget_date_utc",
+    )
+    assert any(
+        constraint.name == "uq_llm_invocations_provider_operation"
+        for constraint in LlmInvocation.__table__.constraints
+    )
+    constraint_sql = {
+        str(constraint.sqltext)
+        for constraint in (
+            *AiDailyUsage.__table__.constraints,
+            *LlmInvocation.__table__.constraints,
+        )
+        if hasattr(constraint, "sqltext")
+    }
+    assert "reserved_tokens >= 0 AND consumed_tokens >= 0" in constraint_sql
+    assert "reserved_tokens >= 0" in constraint_sql
+    assert "input_tokens >= 0" in constraint_sql
+    assert "output_tokens >= 0" in constraint_sql
+    assert "total_tokens >= 0" in constraint_sql
+    assert "cost_microunits >= 0" in constraint_sql
+    assert "latency_ms >= 0" in constraint_sql

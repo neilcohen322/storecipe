@@ -185,3 +185,26 @@ async def test_extractor_composes_prompt_transport_validation_and_usage() -> Non
     assert result.latency_ms >= 0
     assert transport.messages is not None
     assert transport.response_format is not None
+
+
+@pytest.mark.asyncio
+async def test_paid_schema_failure_preserves_only_safe_accounting_metadata() -> None:
+    secret_marker = "private recipe and provider response"
+    extractor = AiRecipeExtractor(FakeTransport(f'{{"title":"{secret_marker}"}}'))
+
+    with pytest.raises(AiExtractionError) as captured:
+        await extractor.extract(
+            source_text="private source text",
+            trusted_source_url="https://recipes.example/lentils",
+        )
+
+    error = captured.value
+    assert error.code is AiExtractionFailureCode.SCHEMA_VALIDATION_FAILED
+    assert error.provider_request_started is True
+    assert error.usage is not None
+    assert error.usage.total_tokens == 450
+    assert error.model_name == "openai/gpt-5-nano"
+    assert error.prompt_version == "week5-exercise-v1"
+    assert error.latency_ms is not None
+    assert secret_marker not in str(error)
+    assert "private source text" not in str(error)

@@ -18,6 +18,7 @@ from ingestion.models import (
     ImportStage,
     ImportStatus,
 )
+from ingestion.repositories.budgets import AiBudgetRepository
 from ingestion.repositories.imports import ImportRepository
 from ingestion.telemetry import ImportEvent, emit_import_event, queue_import_event
 
@@ -47,6 +48,13 @@ class ImportReconciler:
 
     async def reconcile(self, *, now: datetime | None = None, limit: int = 100) -> int:
         current = now or datetime.now(UTC)
+        settled = await AiBudgetRepository(self._session).settle_expired_ambiguities(now=current)
+        if settled:
+            await self._session.commit()
+            emit_import_event(
+                logger,
+                ImportEvent(name="budget.ambiguity_settled", status="completed"),
+            )
         jobs = list(
             await self._session.scalars(
                 select(ImportJob)

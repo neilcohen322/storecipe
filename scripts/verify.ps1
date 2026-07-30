@@ -33,6 +33,12 @@ if ([string]::IsNullOrWhiteSpace($env:INGESTION_TEST_DATABASE_URL)) {
     Write-Host 'AVAILABLE: PostgreSQL integration checks can run with INGESTION_TEST_DATABASE_URL.'
 }
 
+if ([string]::IsNullOrWhiteSpace($env:STORECIPE_TEST_REDIS_URL)) {
+    Write-Host 'UNVERIFIED: Redis integration checks require STORECIPE_TEST_REDIS_URL.'
+} else {
+    Write-Host 'AVAILABLE: Redis integration checks can run with STORECIPE_TEST_REDIS_URL.'
+}
+
 if ($env:RUN_DOCKER_INTEGRATION -ne '1') {
     Write-Host 'UNVERIFIED: Docker integration checks require RUN_DOCKER_INTEGRATION=1.'
 } else {
