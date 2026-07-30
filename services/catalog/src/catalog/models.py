@@ -7,11 +7,13 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     MetaData,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -59,6 +61,12 @@ class Recipe(Base):
         CheckConstraint("prep_minutes IS NULL OR prep_minutes >= 0", name="nonnegative_prep"),
         CheckConstraint("cook_minutes IS NULL OR cook_minutes >= 0", name="nonnegative_cook"),
         CheckConstraint("total_minutes IS NULL OR total_minutes >= 0", name="nonnegative_total"),
+        Index(
+            "ix_recipes_user_source_fingerprint",
+            "user_id",
+            "source_fingerprint",
+            postgresql_where=text("source_fingerprint IS NOT NULL"),
+        ),
         {"schema": CATALOG_SCHEMA},
     )
 

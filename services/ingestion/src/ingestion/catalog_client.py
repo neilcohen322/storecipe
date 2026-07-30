@@ -15,6 +15,7 @@ from uuid import UUID
 import aiohttp
 from pydantic import SecretStr
 
+from ingestion.config import Settings
 from ingestion.import_models import RecipeImportCandidate
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
@@ -161,7 +162,8 @@ class CatalogClient:
         token_provider: CatalogTokenProvider,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self._endpoint = f"{base_url.rstrip('/')}/internal/recipes/imported"
+        self._create_endpoint = f"{base_url.rstrip('/')}/internal/recipes/imported"
+        self._source_lookup_endpoint = f"{base_url.rstrip('/')}/internal/recipes/source-lookup"
         self._token_provider = token_provider
         self._timeout_seconds = timeout_seconds
 
@@ -169,21 +171,21 @@ class CatalogClient:
         self,
         job_id: UUID,
         owner_subject: str,
+        source_fingerprint: str,
         candidate: RecipeImportCandidate,
     ) -> UUID:
         """Call Catalog once, with one forced refresh if its token is rejected."""
         payload = _catalog_payload(candidate)
         payload["ownerSubject"] = owner_subject
+        payload["sourceFingerprint"] = source_fingerprint
         payload["importJobId"] = str(job_id)
 
-        token = await self._token_provider.get_token()
-        status, recipe_id = await self._post_imported(token, payload)
-        if status == 401:
-            await self._token_provider.invalidate(token)
-            refreshed_token = await self._token_provider.get_token()
-            status, recipe_id = await self._post_imported(refreshed_token, payload)
+        status, body = await self._post_with_token_refresh(
+            self._create_endpoint, payload, {200, 201}
+        )
 
         if status in {200, 201}:
+            recipe_id = _response_uuid(body, "id")
             if recipe_id is None:
                 raise CatalogError(CatalogFailureCode.CATALOG_RESPONSE_INVALID, retryable=True)
             return recipe_id
@@ -193,18 +195,63 @@ class CatalogClient:
             status=status,
         )
 
-    async def _post_imported(self, token: str, payload: dict[str, Any]) -> tuple[int, UUID | None]:
+    async def find_existing_source(
+        self, owner_subject: str, source_fingerprint: str
+    ) -> UUID | None:
+        """Return the recipe already imported from this source, if Catalog has one."""
+        payload = {
+            "ownerSubject": owner_subject,
+            "sourceFingerprint": source_fingerprint,
+        }
+        status, body = await self._post_with_token_refresh(
+            self._source_lookup_endpoint, payload, {200}
+        )
+
+        if status == 200:
+            if body is None or "recipeId" not in body:
+                raise CatalogError(CatalogFailureCode.CATALOG_RESPONSE_INVALID, retryable=True)
+            recipe_id = _response_uuid(body, "recipeId")
+            if recipe_id is not None or body["recipeId"] is None:
+                return recipe_id
+            raise CatalogError(CatalogFailureCode.CATALOG_RESPONSE_INVALID, retryable=True)
+        raise CatalogError(
+            CatalogFailureCode.CATALOG_REQUEST_FAILED,
+            retryable=_catalog_failure_is_retryable(status),
+            status=status,
+        )
+
+    async def _post_with_token_refresh(
+        self,
+        endpoint: str,
+        payload: Mapping[str, Any],
+        success_statuses: set[int],
+    ) -> tuple[int, Mapping[str, Any] | None]:
+        token = await self._token_provider.get_token()
+        status, body = await self._post_authenticated(endpoint, token, payload, success_statuses)
+        if status != 401:
+            return status, body
+        await self._token_provider.invalidate(token)
+        refreshed_token = await self._token_provider.get_token()
+        return await self._post_authenticated(endpoint, refreshed_token, payload, success_statuses)
+
+    async def _post_authenticated(
+        self,
+        endpoint: str,
+        token: str,
+        payload: Mapping[str, Any],
+        success_statuses: set[int],
+    ) -> tuple[int, Mapping[str, Any] | None]:
         timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
         try:
             async with (
                 aiohttp.ClientSession(timeout=timeout) as session,
                 session.post(
-                    self._endpoint,
+                    endpoint,
                     headers={"Authorization": f"Bearer {token}"},
                     json=payload,
                 ) as response,
             ):
-                if response.status not in {200, 201}:
+                if response.status not in success_statuses:
                     return response.status, None
                 body = await _required_response_object(
                     response,
@@ -219,11 +266,22 @@ class CatalogClient:
                 retryable=True,
             ) from exc
 
-        raw_id = body.get("id")
-        try:
-            return 201, UUID(raw_id) if isinstance(raw_id, str) else None
-        except ValueError:
-            return 201, None
+        return response.status, body
+
+
+def build_catalog_client(settings: Settings) -> CatalogClient:
+    """Build the process-scoped Catalog boundary shared by API and worker."""
+
+    token_provider = CatalogTokenProvider(
+        token_url=settings.resolved_catalog_m2m_token_url,
+        client_id=settings.catalog_m2m_client_id,
+        client_secret=settings.catalog_m2m_client_secret,
+        audience=settings.catalog_m2m_audience,
+    )
+    return CatalogClient(
+        base_url=settings.catalog_api_url,
+        token_provider=token_provider,
+    )
 
 
 async def _optional_response_object(response: aiohttp.ClientResponse) -> Mapping[str, Any]:
@@ -255,6 +313,18 @@ def _token_failure_is_retryable(status: int, body: Mapping[str, Any]) -> bool:
 
 def _catalog_failure_is_retryable(status: int) -> bool:
     return status == 429 or 500 <= status <= 599
+
+
+def _response_uuid(body: Mapping[str, Any] | None, field: str) -> UUID | None:
+    if body is None:
+        return None
+    raw_id = body.get(field)
+    if raw_id is None:
+        return None
+    try:
+        return UUID(raw_id) if isinstance(raw_id, str) else None
+    except ValueError:
+        return None
 
 
 def _catalog_payload(candidate: RecipeImportCandidate) -> dict[str, Any]:

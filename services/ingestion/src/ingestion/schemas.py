@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
@@ -18,8 +19,14 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
 
+class DuplicatePolicy(StrEnum):
+    WARN = "warn"
+    ALLOW = "allow"
+
+
 class UrlImportRequest(ApiModel):
     url: HttpUrl
+    duplicate_policy: DuplicatePolicy = DuplicatePolicy.WARN
 
     @field_validator("url")
     @classmethod

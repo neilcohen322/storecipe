@@ -59,11 +59,17 @@ class Catalog:
     def __init__(self) -> None:
         self.calls = 0
         self.recipe_id = uuid4()
+        self.source_fingerprints: list[str] = []
 
     async def create_imported(
-        self, job_id: UUID, owner_subject: str, candidate: RecipeImportCandidate
+        self,
+        job_id: UUID,
+        owner_subject: str,
+        source_fingerprint: str,
+        candidate: RecipeImportCandidate,
     ) -> UUID:
         self.calls += 1
+        self.source_fingerprints.append(source_fingerprint)
         return self.recipe_id
 
 
@@ -74,10 +80,14 @@ class TransactionAwareCatalog(Catalog):
         self._session = session
 
     async def create_imported(
-        self, job_id: UUID, owner_subject: str, candidate: RecipeImportCandidate
+        self,
+        job_id: UUID,
+        owner_subject: str,
+        source_fingerprint: str,
+        candidate: RecipeImportCandidate,
     ) -> UUID:
         self.transaction_open_during_call = self._session.in_transaction()
-        return await super().create_imported(job_id, owner_subject, candidate)
+        return await super().create_imported(job_id, owner_subject, source_fingerprint, candidate)
 
 
 @pytest.mark.asyncio
@@ -110,6 +120,7 @@ async def test_pipeline_completes_catalog_handoff_after_deterministic_checkpoint
     assert job.status is ImportStatus.COMPLETED
     assert job.stage is ImportStage.COMPLETED
     assert job.catalog_recipe_id == catalog.recipe_id
+    assert catalog.source_fingerprints == ["a" * 64]
     assert catalog.transaction_open_during_call is False
     events = [json.loads(record.message) for record in caplog.records]
     assert any(

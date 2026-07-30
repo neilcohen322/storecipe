@@ -12,6 +12,7 @@ import ingestion
 
 ROUTES_DIR = Path(ingestion.__file__).parent / "routes"
 REPO_ROOT = Path(__file__).resolve().parents[3]
+ROOT = REPO_ROOT
 
 
 def _imported_modules(source: str) -> Iterator[str]:
@@ -55,3 +56,16 @@ def test_operations_docs_describe_split_redis_and_opt_in_recovery_checks() -> No
     assert "UNVERIFIED" in verifier
     assert "INGESTION_TEST_DATABASE_URL" in verifier
     assert "RUN_DOCKER_INTEGRATION" in verifier
+
+
+def test_duplicate_source_contract_is_explicit() -> None:
+    openapi = (ROOT / "contracts" / "openapi.yaml").read_text(encoding="utf-8")
+    errors = (ROOT / "contracts" / "errors.md").read_text(encoding="utf-8")
+    ownership = (ROOT / "contracts" / "ownership.md").read_text(encoding="utf-8")
+
+    assert "duplicatePolicy" in openapi
+    assert "existingJobId" in openapi
+    assert "existingRecipeId" in openapi
+    assert "active_url_import_exists" in errors
+    assert "recipe_source_exists" in errors
+    assert "Active URL duplicate invariant" in ownership

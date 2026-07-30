@@ -113,7 +113,7 @@ def build_import_runner() -> ImportRunner:
     """
 
     from ingestion.ai_extractor import AiohttpOpenRouterTransport, AiRecipeExtractor
-    from ingestion.catalog_client import CatalogClient, CatalogTokenProvider
+    from ingestion.catalog_client import build_catalog_client
     from ingestion.config import get_settings
     from ingestion.crypto import PayloadCipher
     from ingestion.database import create_engine
@@ -131,16 +131,7 @@ def build_import_runner() -> ImportRunner:
             model=settings.openrouter_model,
         )
     )
-    token_provider = CatalogTokenProvider(
-        token_url=settings.resolved_catalog_m2m_token_url,
-        client_id=settings.catalog_m2m_client_id,
-        client_secret=settings.catalog_m2m_client_secret,
-        audience=settings.catalog_m2m_audience,
-    )
-    catalog = CatalogClient(
-        base_url=settings.catalog_api_url,
-        token_provider=token_provider,
-    )
+    catalog = build_catalog_client(settings)
 
     async def run(job_id: UUID, dispatch_generation: int) -> None:
         engine = create_engine()

@@ -53,6 +53,11 @@ def _configure_payload_startup(
         payload_keyring=SecretStr(keyring),
         redis_url="redis://test",
         service_name="ingestion",
+        catalog_api_url="http://catalog.test",
+        resolved_catalog_m2m_token_url="http://auth.test/oauth/token",
+        catalog_m2m_client_id="test-client",
+        catalog_m2m_client_secret=SecretStr("test-secret"),
+        catalog_m2m_audience="https://catalog.test",
     )
     session = _FakeSession(retained_key_ids)
     monkeypatch.setattr(main, "get_settings", lambda: settings)

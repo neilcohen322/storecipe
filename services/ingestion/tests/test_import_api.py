@@ -1,7 +1,7 @@
 import base64
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
 import pytest
@@ -9,11 +9,29 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import AsyncClient
 
 from ingestion.auth import Auth0TokenVerifier, Principal, get_principal
+from ingestion.catalog_client import CatalogError, CatalogFailureCode
 from ingestion.config import Settings
 from ingestion.import_models import MAX_SOURCE_URL_LENGTH
 from ingestion.main import app
 from ingestion.models import ImportJob, ImportStage, ImportStatus
 from ingestion.repositories.imports import ImportRepository
+
+
+class StubSourceLookup:
+    def __init__(
+        self,
+        recipe_id: UUID | None = None,
+        error: CatalogError | None = None,
+    ) -> None:
+        self.recipe_id = recipe_id
+        self.error = error
+
+    async def find_existing_source(
+        self, owner_subject: str, source_fingerprint: str
+    ) -> UUID | None:
+        if self.error is not None:
+            raise self.error
+        return self.recipe_id
 
 
 def _url_payload(url: str = "https://example.com/recipes/soup") -> dict[str, str]:
@@ -94,6 +112,119 @@ async def test_url_import_returns_location_and_queued_job(api_client: AsyncClien
     assert response.status_code == 202
     assert response.headers["location"] == f"/v1/imports/{response.json()['jobId']}"
     assert response.json()["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_existing_recipe_source_warns_with_recipe_id(api_client: AsyncClient) -> None:
+    existing_recipe_id = uuid4()
+    app.state.source_lookup = StubSourceLookup(recipe_id=existing_recipe_id)
+
+    response = await api_client.post(
+        "/v1/imports/url",
+        json={"url": "https://example.com/soup"},
+    )
+
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["errorCategory"] == "recipe_source_exists"
+    assert response.json()["existingRecipeId"] == str(existing_recipe_id)
+
+
+@pytest.mark.asyncio
+async def test_allow_policy_accepts_an_existing_recipe_source(api_client: AsyncClient) -> None:
+    app.state.source_lookup = StubSourceLookup(recipe_id=uuid4())
+
+    response = await api_client.post(
+        "/v1/imports/url",
+        json={
+            "url": "https://example.com/soup",
+            "duplicatePolicy": "allow",
+        },
+    )
+
+    assert response.status_code == 202
+    assert response.headers["location"] == f"/v1/imports/{response.json()['jobId']}"
+
+
+@pytest.mark.asyncio
+async def test_allow_policy_cannot_bypass_an_active_url_import(api_client: AsyncClient) -> None:
+    created = await api_client.post(
+        "/v1/imports/url",
+        json={"url": "https://example.com/soup"},
+    )
+
+    response = await api_client.post(
+        "/v1/imports/url",
+        json={
+            "url": "https://example.com/soup",
+            "duplicatePolicy": "allow",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["errorCategory"] == "active_url_import_exists"
+    assert response.json()["existingJobId"] == created.json()["jobId"]
+
+
+@pytest.mark.asyncio
+async def test_default_source_lookup_unavailability_returns_503(
+    api_client: AsyncClient,
+) -> None:
+    app.state.source_lookup = StubSourceLookup(
+        error=CatalogError(
+            CatalogFailureCode.CATALOG_REQUEST_FAILED,
+            retryable=True,
+            status=503,
+        )
+    )
+
+    response = await api_client.post(
+        "/v1/imports/url",
+        json={"url": "https://example.com/soup"},
+    )
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["errorCategory"] == "source_lookup_unavailable"
+    assert "catalog" not in response.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_matching_idempotency_replay_precedes_a_later_source_warning(
+    api_client: AsyncClient,
+) -> None:
+    headers = {"Idempotency-Key": "source-warning-replay"}
+    created = await api_client.post(
+        "/v1/imports/url",
+        json={"url": "https://example.com/soup"},
+        headers=headers,
+    )
+    app.state.source_lookup = StubSourceLookup(recipe_id=uuid4())
+
+    replay = await api_client.post(
+        "/v1/imports/url",
+        json={"url": "https://example.com/soup"},
+        headers=headers,
+    )
+
+    assert created.status_code == 202
+    assert replay.status_code == 200
+    assert replay.headers["location"] == f"/v1/imports/{created.json()['jobId']}"
+    assert replay.json()["id"] == created.json()["jobId"]
+
+
+@pytest.mark.asyncio
+async def test_unknown_duplicate_policy_is_rejected(api_client: AsyncClient) -> None:
+    response = await api_client.post(
+        "/v1/imports/url",
+        json={
+            "url": "https://example.com/soup",
+            "duplicatePolicy": "ignore",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio

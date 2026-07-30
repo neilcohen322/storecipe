@@ -89,6 +89,14 @@ class ImportJob(Base):
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
+        Index(
+            "uq_import_jobs_owner_active_url_fingerprint",
+            "owner_subject",
+            "request_fingerprint",
+            unique=True,
+            postgresql_where=text("input_kind = 'url' AND status IN ('queued', 'processing')"),
+            sqlite_where=text("input_kind = 'url' AND status IN ('queued', 'processing')"),
+        ),
         CheckConstraint(
             "attempt_count >= 0 AND dispatch_count >= 0 AND receipt_count >= 0 "
             "AND fetch_count >= 0 AND provider_count >= 0 AND catalog_count >= 0 "

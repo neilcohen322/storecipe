@@ -19,7 +19,12 @@ async def test_fake_stack_issues_tokens_and_deduplicates_catalog_retries() -> No
         assert claims["aud"] == "https://storecipe.test"
 
         job_id = str(uuid4())
-        payload = {"importJobId": job_id, "ownerSubject": "auth0|week8", "title": "Soup"}
+        payload = {
+            "importJobId": job_id,
+            "ownerSubject": "auth0|week8",
+            "sourceFingerprint": "a" * 64,
+            "title": "Soup",
+        }
         request = asyncio.create_task(
             client.post(
                 "/internal/recipes/imported",

@@ -134,6 +134,20 @@ class ImportRepository:
         )
         return result
 
+    async def get_owned_active_url_job(
+        self, owner_subject: str, request_fingerprint: str, *, for_update: bool = False
+    ) -> ImportJob | None:
+        statement = select(ImportJob).where(
+            ImportJob.owner_subject == owner_subject,
+            ImportJob.request_fingerprint == request_fingerprint,
+            ImportJob.input_kind == ImportInputKind.URL,
+            ImportJob.status.in_((ImportStatus.QUEUED, ImportStatus.PROCESSING)),
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        result: ImportJob | None = await self.session.scalar(statement)
+        return result
+
     async def cancel_owned_queued_job(self, job_id: UUID, owner_subject: str) -> bool:
         """Cancel only a still-queued job, excluding catalog handoff atomically in SQL."""
 

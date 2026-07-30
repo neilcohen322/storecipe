@@ -101,7 +101,8 @@ async def create_imported(
     if authorization != f"Bearer {CATALOG_TOKEN}":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     job_id = payload.get("importJobId")
-    if not isinstance(job_id, str):
+    source_fingerprint = payload.get("sourceFingerprint")
+    if not isinstance(job_id, str) or not isinstance(source_fingerprint, str):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
     record = await _record_for(job_id)

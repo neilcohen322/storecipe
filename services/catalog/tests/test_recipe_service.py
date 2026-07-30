@@ -5,7 +5,7 @@ idempotency paths that the endpoint regression tests exercise only indirectly.
 """
 
 from collections.abc import AsyncIterator
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -43,6 +43,22 @@ def _recipe_create(title: str = "Weeknight Soup") -> RecipeCreate:
             "ingredients": [{"rawText": "1 cup water", "name": "water"}],
             "instructions": ["Boil the water."],
             "tags": ["Quick"],
+        }
+    )
+
+
+def _imported_recipe_create(
+    *, import_job_id: UUID, source_fingerprint: str
+) -> ImportedRecipeCreate:
+    return ImportedRecipeCreate.model_validate(
+        {
+            "title": "Imported soup",
+            "sourceUrl": "https://example.com/soup",
+            "sourceFingerprint": source_fingerprint,
+            "ingredients": [{"rawText": "1 cup water", "name": "water"}],
+            "instructions": ["Boil."],
+            "ownerSubject": SUBJECT,
+            "importJobId": str(import_job_id),
         }
     )
 
@@ -93,6 +109,7 @@ async def test_imported_recipe_is_idempotent(session: AsyncSession) -> None:
             "title": "Imported Stew",
             "ownerSubject": SUBJECT,
             "importJobId": str(job_id),
+            "sourceFingerprint": "c" * 64,
             "ingredients": [{"rawText": "2 carrots", "name": "carrot"}],
             "instructions": ["Simmer."],
             "tags": [],
@@ -109,3 +126,28 @@ async def test_imported_recipe_is_idempotent(session: AsyncSession) -> None:
     assert second_existed is True
     assert first_view.id == second_view.id
     assert second_view.title == "Imported Stew"
+
+
+@pytest.mark.asyncio
+async def test_imported_recipe_persists_and_finds_source_fingerprint(
+    session: AsyncSession,
+) -> None:
+    payload = _imported_recipe_create(
+        import_job_id=uuid4(),
+        source_fingerprint="a" * 64,
+    )
+    created, replayed = await recipe_service.create_imported_recipe(session, payload)
+
+    assert replayed is False
+    assert (
+        await recipe_service.find_owned_recipe_id_by_source(
+            session, payload.owner_subject, "a" * 64
+        )
+        == created.id
+    )
+    assert (
+        await recipe_service.find_owned_recipe_id_by_source(
+            session, "auth0|another-owner", "a" * 64
+        )
+        is None
+    )

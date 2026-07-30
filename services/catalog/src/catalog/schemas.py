@@ -19,6 +19,7 @@ class ApiModel(BaseModel):
 NonEmptyText = Annotated[str, Field(min_length=1)]
 Title = Annotated[str, Field(min_length=1, max_length=200)]
 TagName = Annotated[str, Field(min_length=1, max_length=64)]
+SourceFingerprint = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class IngredientInput(ApiModel):
@@ -43,6 +44,16 @@ class RecipeCreate(ApiModel):
 class ImportedRecipeCreate(RecipeCreate):
     owner_subject: Annotated[str, Field(min_length=1, max_length=255)]
     import_job_id: UUID
+    source_fingerprint: SourceFingerprint
+
+
+class SourceRecipeLookup(ApiModel):
+    owner_subject: Annotated[str, Field(min_length=1, max_length=255)]
+    source_fingerprint: SourceFingerprint
+
+
+class SourceRecipeMatch(ApiModel):
+    recipe_id: UUID | None
 
 
 class RecipePatch(ApiModel):

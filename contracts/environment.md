@@ -16,11 +16,11 @@
 | `OPENROUTER_API_KEY` | Worker | AI enabled | Secret model-provider credential |
 | `OPENROUTER_MODEL` | Worker | no | Pinned extraction model; defaults to `openai/gpt-5-nano` |
 | `AI_EXTRACTION_ENABLED` | Worker | no | AI kill switch; defaults false |
-| `CATALOG_API_URL` | Worker | yes | Catalog service base URL |
-| `CATALOG_M2M_TOKEN_URL` | Worker | no | OAuth token URL; defaults from `AUTH0_ISSUER` |
-| `CATALOG_M2M_CLIENT_ID` | Worker | catalog stage | M2M client ID |
-| `CATALOG_M2M_CLIENT_SECRET` | Worker | catalog stage | M2M client secret |
-| `CATALOG_M2M_AUDIENCE` | Worker | catalog stage | M2M token audience |
+| `CATALOG_API_URL` | Ingestion API/worker | yes | Catalog service base URL |
+| `CATALOG_M2M_TOKEN_URL` | Ingestion API/worker | no | OAuth token URL; defaults from `AUTH0_ISSUER` |
+| `CATALOG_M2M_CLIENT_ID` | Ingestion API/worker | source lookup/catalog stage | M2M client ID |
+| `CATALOG_M2M_CLIENT_SECRET` | Ingestion API/worker | source lookup/catalog stage | M2M client secret |
+| `CATALOG_M2M_AUDIENCE` | Ingestion API/worker | source lookup/catalog stage | M2M token audience |
 | `INGESTION_TEST_DATABASE_URL` | PostgreSQL integration tests | opt-in | Disposable migrated PostgreSQL DSN for concurrency and transaction checks |
 | `RUN_DOCKER_INTEGRATION` | Docker integration tests | opt-in | Set to `1` to build an isolated Compose project with deterministic local Auth and Catalog substitutes; the harness issues its own test token |
 

@@ -201,7 +201,9 @@ async def test_catalog_client_uses_catalog_aliases_and_job_id_as_the_idempotency
     async with app_server(app) as base_url:
         client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
         job_id = uuid4()
-        assert await client.create_imported(job_id, "auth0|owner", candidate()) == recipe_id
+        assert (
+            await client.create_imported(job_id, "auth0|owner", "a" * 64, candidate()) == recipe_id
+        )
 
     assert seen == {
         "authorization": "Bearer catalog-token",
@@ -218,9 +220,150 @@ async def test_catalog_client_uses_catalog_aliases_and_job_id_as_the_idempotency
             "instructions": ["Simmer."],
             "tags": ["Dinner"],
             "ownerSubject": "auth0|owner",
+            "sourceFingerprint": "a" * 64,
             "importJobId": str(job_id),
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_catalog_client_finds_existing_source() -> None:
+    """Omitting the lookup request or its fingerprint would miss an existing recipe."""
+
+    recipe_id = uuid4()
+
+    async def issue_token(_: web.Request) -> web.Response:
+        return web.json_response({"access_token": "catalog-token", "expires_in": 60})
+
+    async def lookup(request: web.Request) -> web.Response:
+        assert request.headers["Authorization"] == "Bearer catalog-token"
+        assert await request.json() == {
+            "ownerSubject": "auth0|owner",
+            "sourceFingerprint": "a" * 64,
+        }
+        return web.json_response({"recipeId": str(recipe_id)})
+
+    app = web.Application()
+    app.router.add_post("/oauth/token", issue_token)
+    app.router.add_post("/internal/recipes/source-lookup", lookup)
+
+    async with app_server(app) as base_url:
+        client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
+        assert await client.find_existing_source("auth0|owner", "a" * 64) == recipe_id
+
+
+@pytest.mark.asyncio
+async def test_catalog_client_returns_none_for_a_missing_source() -> None:
+    """Treating an empty lookup result as an error would block a new recipe import."""
+
+    async def issue_token(_: web.Request) -> web.Response:
+        return web.json_response({"access_token": "catalog-token", "expires_in": 60})
+
+    async def lookup(_: web.Request) -> web.Response:
+        return web.json_response({"recipeId": None})
+
+    app = web.Application()
+    app.router.add_post("/oauth/token", issue_token)
+    app.router.add_post("/internal/recipes/source-lookup", lookup)
+
+    async with app_server(app) as base_url:
+        client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
+        assert await client.find_existing_source("auth0|owner", "a" * 64) is None
+
+
+@pytest.mark.asyncio
+async def test_catalog_client_refreshes_once_for_a_source_lookup() -> None:
+    """Skipping a lookup refresh fails expired tokens; repeating it risks an auth loop."""
+
+    issued = 0
+    authorizations: list[str | None] = []
+    recipe_id = uuid4()
+
+    async def issue_token(_: web.Request) -> web.Response:
+        nonlocal issued
+        issued += 1
+        return web.json_response({"access_token": f"token-{issued}", "expires_in": 60})
+
+    async def lookup(request: web.Request) -> web.Response:
+        authorizations.append(request.headers.get("Authorization"))
+        if len(authorizations) == 1:
+            return web.Response(status=401)
+        return web.json_response({"recipeId": str(recipe_id)})
+
+    app = web.Application()
+    app.router.add_post("/oauth/token", issue_token)
+    app.router.add_post("/internal/recipes/source-lookup", lookup)
+
+    async with app_server(app) as base_url:
+        client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
+        assert await client.find_existing_source("auth0|owner", "a" * 64) == recipe_id
+
+    assert issued == 2
+    assert authorizations == ["Bearer token-1", "Bearer token-2"]
+
+
+@pytest.mark.asyncio
+async def test_catalog_client_retries_a_malformed_source_lookup_response() -> None:
+    """Treating an unreadable lookup response as terminal loses a recoverable import."""
+
+    async def issue_token(_: web.Request) -> web.Response:
+        return web.json_response({"access_token": "catalog-token", "expires_in": 60})
+
+    async def lookup(_: web.Request) -> web.Response:
+        return web.Response(status=200, text="not-json", content_type="text/plain")
+
+    app = web.Application()
+    app.router.add_post("/oauth/token", issue_token)
+    app.router.add_post("/internal/recipes/source-lookup", lookup)
+
+    async with app_server(app) as base_url:
+        client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
+        with pytest.raises(CatalogError, match="catalog_response_invalid") as captured:
+            await client.find_existing_source("auth0|owner", "a" * 64)
+
+    assert captured.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_catalog_client_rejects_a_source_lookup_response_without_recipe_id() -> None:
+    """Treating a missing result field as a miss would bypass duplicate protection."""
+
+    async def issue_token(_: web.Request) -> web.Response:
+        return web.json_response({"access_token": "catalog-token", "expires_in": 60})
+
+    async def lookup(_: web.Request) -> web.Response:
+        return web.json_response({"unexpected": "value"})
+
+    app = web.Application()
+    app.router.add_post("/oauth/token", issue_token)
+    app.router.add_post("/internal/recipes/source-lookup", lookup)
+
+    async with app_server(app) as base_url:
+        client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
+        with pytest.raises(CatalogError, match="catalog_response_invalid") as captured:
+            await client.find_existing_source("auth0|owner", "a" * 64)
+
+    assert captured.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_catalog_client_marks_source_lookup_503_retryable() -> None:
+    """Making an unavailable source lookup terminal would abandon a recoverable import."""
+
+    async def issue_token(_: web.Request) -> web.Response:
+        return web.json_response({"access_token": "catalog-token", "expires_in": 60})
+
+    app = web.Application()
+    app.router.add_post("/oauth/token", issue_token)
+    app.router.add_post("/internal/recipes/source-lookup", status_handler(503))
+
+    async with app_server(app) as base_url:
+        client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
+        with pytest.raises(CatalogError, match="catalog_request_failed") as captured:
+            await client.find_existing_source("auth0|owner", "a" * 64)
+
+    assert captured.value.retryable is True
+    assert captured.value.status == 503
 
 
 @pytest.mark.asyncio
@@ -248,7 +391,9 @@ async def test_catalog_client_refreshes_once_after_an_unauthorized_response() ->
 
     async with app_server(app) as base_url:
         client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
-        assert await client.create_imported(uuid4(), "auth0|owner", candidate()) == recipe_id
+        assert (
+            await client.create_imported(uuid4(), "auth0|owner", "a" * 64, candidate()) == recipe_id
+        )
 
     assert issued == 2
     assert authorizations == ["Bearer token-1", "Bearer token-2"]
@@ -281,7 +426,7 @@ async def test_catalog_client_treats_second_unauthorized_and_forbidden_as_termin
     async with app_server(app) as base_url:
         client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
         with pytest.raises(CatalogError, match="catalog_request_failed") as captured:
-            await client.create_imported(uuid4(), "auth0|owner", candidate())
+            await client.create_imported(uuid4(), "auth0|owner", "a" * 64, candidate())
 
     assert captured.value.retryable is False
     assert requests == (2 if status == 401 else 1)
@@ -303,7 +448,7 @@ async def test_catalog_client_marks_ambiguous_catalog_outcomes_retryable(status:
     async with app_server(app) as base_url:
         client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
         with pytest.raises(CatalogError, match="catalog_request_failed") as captured:
-            await client.create_imported(uuid4(), "auth0|owner", candidate())
+            await client.create_imported(uuid4(), "auth0|owner", "a" * 64, candidate())
 
     assert captured.value.retryable is True
     assert captured.value.status == status
@@ -335,7 +480,7 @@ async def test_catalog_client_marks_an_unanswered_post_retryable() -> None:
             timeout_seconds=0.01,
         )
         with pytest.raises(CatalogError, match="catalog_request_failed") as captured:
-            await client.create_imported(uuid4(), "auth0|owner", candidate())
+            await client.create_imported(uuid4(), "auth0|owner", "a" * 64, candidate())
         assert captured.value.retryable is True
         await started.wait()
         release.set()
@@ -358,6 +503,6 @@ async def test_catalog_client_marks_a_malformed_success_response_retryable() -> 
     async with app_server(app) as base_url:
         client = CatalogClient(base_url=base_url, token_provider=token_provider(base_url))
         with pytest.raises(CatalogError, match="catalog_response_invalid") as captured:
-            await client.create_imported(uuid4(), "auth0|owner", candidate())
+            await client.create_imported(uuid4(), "auth0|owner", "a" * 64, candidate())
 
     assert captured.value.retryable is True

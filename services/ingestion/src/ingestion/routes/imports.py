@@ -7,12 +7,17 @@ from fastapi.responses import JSONResponse
 
 from ingestion.auth import Principal, require_scopes
 from ingestion.crypto import PayloadCipher
+from ingestion.problems import PROBLEM_TYPE_BASE, problem_response
 from ingestion.schemas import ImportAccepted, ImportJobView, TextImportRequest, UrlImportRequest
 from ingestion.services.imports import (
+    ActiveUrlImportExists,
+    ExistingRecipeSource,
     IdempotencyConflict,
     ImportNotCancellable,
     ImportNotFound,
     ImportService,
+    SourceLookup,
+    SourceLookupUnavailable,
 )
 
 router = APIRouter(prefix="/v1/imports", tags=["imports"])
@@ -32,9 +37,11 @@ async def get_session(request: Request) -> AsyncIterator[Any]:
 
 def _service(request: Request, session: Any) -> ImportService:
     cipher: PayloadCipher = request.app.state.payload_cipher
+    source_lookup: SourceLookup = request.app.state.source_lookup
     return ImportService(
         session,
         cipher,
+        source_lookup=source_lookup,
         deadline_seconds=getattr(request.app.state, "import_deadline_seconds", 900),
     )
 
@@ -66,15 +73,50 @@ async def submit_url(
     principal: WritePrincipal,
     session: Annotated[Any, Depends(get_session)],
     idempotency_key: IdempotencyKey = None,
-) -> ImportAccepted | ImportJobView:
+) -> ImportAccepted | ImportJobView | Response:
     service = _service(request, session)
     try:
-        result = await service.submit_url(principal.subject, str(payload.url), idempotency_key)
+        result = await service.submit_url(
+            principal.subject,
+            str(payload.url),
+            idempotency_key,
+            payload.duplicate_policy,
+        )
     except IdempotencyConflict as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Idempotency key is already used for a different request.",
         ) from exc
+    except ActiveUrlImportExists as exc:
+        return problem_response(
+            request,
+            status.HTTP_409_CONFLICT,
+            detail="This URL is already being imported.",
+            problem_type=f"{PROBLEM_TYPE_BASE}/active-url-import-exists",
+            extra={
+                "errorCategory": "active_url_import_exists",
+                "existingJobId": str(exc.job.id),
+            },
+        )
+    except ExistingRecipeSource as exc:
+        return problem_response(
+            request,
+            status.HTTP_409_CONFLICT,
+            detail="The source URL is already associated with a saved recipe.",
+            problem_type=f"{PROBLEM_TYPE_BASE}/recipe-source-exists",
+            extra={
+                "errorCategory": "recipe_source_exists",
+                "existingRecipeId": str(exc.recipe_id),
+            },
+        )
+    except SourceLookupUnavailable:
+        return problem_response(
+            request,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Saved recipe source lookup is temporarily unavailable.",
+            problem_type=f"{PROBLEM_TYPE_BASE}/source-lookup-unavailable",
+            extra={"errorCategory": "source_lookup_unavailable"},
+        )
     response.headers["Location"] = f"/v1/imports/{result.job.id}"
     if result.replayed:
         response.status_code = status.HTTP_200_OK

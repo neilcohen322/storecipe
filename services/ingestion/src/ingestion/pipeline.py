@@ -53,7 +53,11 @@ class ModelExtractor(Protocol):
 
 class CatalogGateway(Protocol):
     async def create_imported(
-        self, job_id: UUID, owner_subject: str, candidate: RecipeImportCandidate
+        self,
+        job_id: UUID,
+        owner_subject: str,
+        source_fingerprint: str,
+        candidate: RecipeImportCandidate,
     ) -> UUID: ...
 
 
@@ -634,7 +638,12 @@ class ImportPipeline:
         candidate = RecipeImportCandidate.model_validate_json(candidate_payload)
         await self._commit()
         try:
-            recipe_id = await catalog.create_imported(job_id, job.owner_subject, candidate)
+            recipe_id = await catalog.create_imported(
+                job_id,
+                job.owner_subject,
+                job.request_fingerprint,
+                candidate,
+            )
         except CatalogError as error:
             category = error.code.value
             await self._repository.fail_catalog_attempt(

@@ -21,7 +21,7 @@ from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.pipeline import ImportAdapters, ImportPipeline
 from ingestion.reconciler import ImportReconciler
 from ingestion.repositories.imports import ImportRepository
-from ingestion.services.imports import ImportService
+from ingestion.services.imports import ActiveUrlImportExists, ImportService
 from ingestion.worker import _renew_lease_loop
 
 pytestmark = pytest.mark.integration
@@ -107,6 +107,44 @@ async def test_concurrent_same_owner_key_creates_one_job_and_dispatch() -> None:
             assert (job_count, dispatch_count) == (1, 1)
             await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_owner_url_creates_one_active_job() -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|active-url|{uuid4()}"
+    url = "https://recipes.example/soup"
+    cipher = make_test_cipher()
+
+    async def submit() -> tuple[str, str]:
+        async with factory() as session:
+            try:
+                result = await ImportService(session, cipher).submit_url(owner, url)
+                return "created", str(result.job.id)
+            except ActiveUrlImportExists as error:
+                return "active", str(error.job.id)
+
+    try:
+        first, second = await asyncio.gather(submit(), submit())
+        assert {first[0], second[0]} == {"created", "active"}
+        assert first[1] == second[1]
+
+        async with factory.begin() as session:
+            job_count = await session.scalar(
+                select(func.count()).select_from(ImportJob).where(ImportJob.owner_subject == owner)
+            )
+            dispatch_count = await session.scalar(
+                select(func.count())
+                .select_from(ImportDispatch)
+                .join(ImportJob)
+                .where(ImportJob.owner_subject == owner)
+            )
+            assert (job_count, dispatch_count) == (1, 1)
+    finally:
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
         await engine.dispose()
 
 

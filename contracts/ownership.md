@@ -14,3 +14,12 @@
 Both services use one PostgreSQL instance but separate schemas and database roles.
 Neither service reads or writes the other service's tables. The worker creates a
 recipe only through the M2M-protected catalog endpoint.
+
+## Active URL duplicate invariant
+
+Ingestion owns active URL import-job uniqueness for a user and rejects a duplicate
+active job even when the caller sets `duplicatePolicy: allow`. Catalog owns current
+recipe-source existence for a user and exposes it only through the M2M-only
+`POST /internal/recipes/source-lookup` endpoint; this endpoint is excluded from
+the public proxy. When the default Catalog lookup is unavailable, Ingestion returns
+`503` instead of bypassing the check.

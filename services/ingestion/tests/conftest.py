@@ -12,6 +12,11 @@ from ingestion.main import app
 from ingestion.models import Base
 
 
+class MissingSourceLookup:
+    async def find_existing_source(self, owner_subject: str, source_fingerprint: str) -> None:
+        return None
+
+
 @pytest_asyncio.fixture
 async def api_client() -> AsyncIterator[AsyncClient]:
     engine = create_async_engine(
@@ -34,6 +39,7 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     app.state.payload_cipher = PayloadCipher.from_keyring(
         active_key_id="test", keyring=f"test={keyring}"
     )
+    app.state.source_lookup = MissingSourceLookup()
     app.state.token_verifier = Auth0TokenVerifier(
         Settings(payload_active_key_id="test", payload_keyring=f"test={keyring}")
     )

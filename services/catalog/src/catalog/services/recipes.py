@@ -2,6 +2,7 @@
 
 import base64
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import Select, and_, or_, select
@@ -83,12 +84,14 @@ async def _new_recipe(
     payload: RecipeCreate,
     *,
     import_job_id: UUID | None = None,
+    source_fingerprint: str | None = None,
 ) -> Recipe:
     return Recipe(
         user_id=user.id,
         import_job_id=import_job_id,
         title=payload.title,
         source_url=str(payload.source_url) if payload.source_url is not None else None,
+        source_fingerprint=source_fingerprint,
         servings=payload.servings,
         prep_minutes=payload.prep_minutes,
         cook_minutes=payload.cook_minutes,
@@ -139,6 +142,23 @@ async def get_owned_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID
     if recipe is None:
         raise RecipeNotFound(recipe_id)
     return recipe
+
+
+async def find_owned_recipe_id_by_source(
+    session: AsyncSession, owner_subject: str, source_fingerprint: str
+) -> UUID | None:
+    return cast(
+        UUID | None,
+        await session.scalar(
+            select(Recipe.id)
+            .join(User, User.id == Recipe.user_id)
+            .where(
+                User.auth_subject == owner_subject,
+                Recipe.source_fingerprint == source_fingerprint,
+            )
+            .limit(1)
+        ),
+    )
 
 
 async def _reload_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID) -> Recipe:
@@ -298,6 +318,7 @@ async def create_imported_recipe(
         user,
         payload,
         import_job_id=payload.import_job_id,
+        source_fingerprint=payload.source_fingerprint,
     )
     user.catalog_version += 1
     session.add(recipe)

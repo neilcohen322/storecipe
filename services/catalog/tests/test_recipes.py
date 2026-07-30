@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -8,7 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from catalog.auth import Principal, get_principal
 from catalog.database import get_session
 from catalog.main import app
-from catalog.models import Base
+from catalog.models import Base, Recipe, User
 
 
 @pytest_asyncio.fixture
@@ -34,12 +35,14 @@ async def api_client() -> AsyncIterator[AsyncClient]:
 
     app.dependency_overrides[get_session] = test_session
     app.dependency_overrides[get_principal] = test_principal
+    app.state.catalog_test_session_factory = session_factory
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
     finally:
         app.dependency_overrides.clear()
+        del app.state.catalog_test_session_factory
         await engine.dispose()
 
 
@@ -126,6 +129,7 @@ async def test_internal_import_requires_m2m_scope_and_replays_first_recipe(
         **recipe_payload(),
         "ownerSubject": "auth0|import-owner",
         "importJobId": "5aac13b6-08f1-48fa-852f-fb1e2f7daf52",
+        "sourceFingerprint": "a" * 64,
     }
 
     assert (await api_client.post("/internal/recipes/imported", json=payload)).status_code == 403
@@ -147,3 +151,54 @@ async def test_internal_import_requires_m2m_scope_and_replays_first_recipe(
     assert first.status_code == 201
     assert replay.status_code == 200
     assert replay.json() == first.json()
+
+
+@pytest.mark.asyncio
+async def test_internal_source_lookup_requires_m2m_scope_and_tracks_recipe_deletion(
+    api_client: AsyncClient,
+) -> None:
+    payload = {
+        "ownerSubject": "auth0|lookup-owner",
+        "sourceFingerprint": "b" * 64,
+    }
+    assert (
+        await api_client.post("/internal/recipes/source-lookup", json=payload)
+    ).status_code == 403
+
+    async def m2m_principal() -> Principal:
+        return Principal(
+            subject="auth0-m2m-client",
+            scopes=frozenset({"recipes:internal:create"}),
+            claims={},
+        )
+
+    app.dependency_overrides[get_principal] = m2m_principal
+    assert (await api_client.post("/internal/recipes/source-lookup", json=payload)).json() == {
+        "recipeId": None
+    }
+
+    recipe_id = UUID("10000000-0000-0000-0000-000000000001")
+    async with app.state.catalog_test_session_factory() as session:
+        session.add(
+            Recipe(
+                id=recipe_id,
+                user=User(auth_subject="auth0|lookup-owner"),
+                title="Stored soup",
+                source_fingerprint="b" * 64,
+            )
+        )
+        await session.commit()
+
+    assert (await api_client.post("/internal/recipes/source-lookup", json=payload)).json() == {
+        "recipeId": "10000000-0000-0000-0000-000000000001"
+    }
+
+    async with app.state.catalog_test_session_factory() as session:
+        recipe = await session.get(Recipe, recipe_id)
+        assert recipe is not None
+        await session.delete(recipe)
+        await session.commit()
+
+    assert (await api_client.post("/internal/recipes/source-lookup", json=payload)).json() == {
+        "recipeId": None
+    }

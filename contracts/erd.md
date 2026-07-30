@@ -81,3 +81,5 @@ erDiagram
 
 `catalog_version` is incremented in the same catalog transaction as recipe/rating
 changes. Catalog enforces unique `(user_id, import_job_id)` for replay safety.
+Ingestion owns active URL import-job uniqueness; Catalog owns current recipe-source
+existence for each user.
