@@ -19,7 +19,7 @@ from catalog.schemas import (
     RecipeView,
 )
 from catalog.services.errors import InvalidCursor, InvalidFilter, RecipeNotFound
-from catalog.services.users import resolve_user
+from catalog.services.users import advance_catalog_version, resolve_user
 
 
 def _recipe_query() -> Select[tuple[Recipe]]:
@@ -176,8 +176,8 @@ async def _reload_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID) 
 async def create_recipe(session: AsyncSession, subject: str, payload: RecipeCreate) -> RecipeView:
     user = await resolve_user(session, subject)
     recipe = await _new_recipe(session, user, payload)
-    user.catalog_version += 1
     session.add(recipe)
+    await advance_catalog_version(session, user.id)
     await session.commit()
     loaded = await _reload_recipe(session, user.id, recipe.id)
     return _recipe_view(loaded, user.id)
@@ -281,7 +281,7 @@ async def update_recipe(
     if "tags" in payload.model_fields_set and payload.tags is not None:
         recipe.recipe_tags = await _build_recipe_tags(session, payload.tags)
 
-    user.catalog_version += 1
+    await advance_catalog_version(session, user.id)
     await session.commit()
     loaded = await _reload_recipe(session, user.id, recipe.id)
     return _recipe_view(loaded, user.id)
@@ -291,7 +291,7 @@ async def delete_recipe(session: AsyncSession, subject: str, recipe_id: UUID) ->
     user = await resolve_user(session, subject)
     recipe = await get_owned_recipe(session, user.id, recipe_id)
     await session.delete(recipe)
-    user.catalog_version += 1
+    await advance_catalog_version(session, user.id)
     await session.commit()
 
 
@@ -320,9 +320,9 @@ async def create_imported_recipe(
         import_job_id=payload.import_job_id,
         source_fingerprint=payload.source_fingerprint,
     )
-    user.catalog_version += 1
     session.add(recipe)
     try:
+        await advance_catalog_version(session, user.id)
         await session.commit()
     except IntegrityError:
         # A concurrent replay may win the unique (user_id, import_job_id)

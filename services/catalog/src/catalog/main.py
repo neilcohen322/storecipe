@@ -10,6 +10,7 @@ from catalog.config import get_settings
 from catalog.database import create_engine, create_session_factory
 from catalog.mcp_server import create_mcp_server
 from catalog.problems import install_problem_details, problem_response
+from catalog.recommendation_cache import RecommendationCache, create_redis_client
 from catalog.routes.health import router as health_router
 from catalog.routes.internal_recipes import router as internal_recipes_router
 from catalog.routes.ratings import router as ratings_router
@@ -56,11 +57,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = create_engine()
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.token_verifier = token_verifier
+    runtime_settings = get_settings()
+    app.state.redis_timeout_seconds = runtime_settings.redis_timeout_seconds
+    app.state.redis = create_redis_client(
+        runtime_settings.redis_url,
+        timeout_seconds=runtime_settings.redis_timeout_seconds,
+    )
+    app.state.recommendation_cache = RecommendationCache(
+        app.state.redis,
+        ttl_seconds=runtime_settings.recommendation_cache_ttl_seconds,
+        redis_timeout_seconds=runtime_settings.redis_timeout_seconds,
+    )
     try:
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
     finally:
-        await app.state.engine.dispose()
+        try:
+            await app.state.redis.aclose()
+        finally:
+            await app.state.engine.dispose()
 
 
 app = FastAPI(

@@ -1287,6 +1287,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
+    { name = "redis" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1300,6 +1301,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10,<2.12" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
+    { name = "redis", specifier = ">=6.2,<7" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.41,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<0.36" },
 ]

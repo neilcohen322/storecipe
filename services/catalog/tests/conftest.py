@@ -4,6 +4,54 @@ import pytest
 from fastapi.testclient import TestClient
 
 from catalog.main import app
+from catalog.recommendation_cache import RecommendationCache
+
+
+class FakeRedis:
+    """In-memory cache client for route tests that bypass the ASGI lifespan."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    async def set(self, key: str, value: str, ex: int) -> bool:
+        self.values[key] = value
+        return True
+
+    async def delete(self, key: str) -> int:
+        self.values.pop(key, None)
+        return 1
+
+    async def ping(self) -> bool:
+        return True
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.fixture
+def recommendation_cache_state() -> Iterator[FakeRedis]:
+    """Provide cache state to ASGITransport clients, which do not run lifespan."""
+    state = app.state._state
+    missing = object()
+    previous_redis = state.get("redis", missing)
+    previous_cache = state.get("recommendation_cache", missing)
+    redis = FakeRedis()
+    app.state.redis = redis
+    app.state.recommendation_cache = RecommendationCache(redis)
+    try:
+        yield redis
+    finally:
+        if previous_redis is missing:
+            del state["redis"]
+        else:
+            state["redis"] = previous_redis
+        if previous_cache is missing:
+            del state["recommendation_cache"]
+        else:
+            state["recommendation_cache"] = previous_cache
 
 
 @pytest.fixture(scope="session")

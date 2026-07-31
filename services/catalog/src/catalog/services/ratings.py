@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from catalog.models import Rating, User
 from catalog.schemas import RatingView
 from catalog.services.recipes import get_owned_recipe
-from catalog.services.users import resolve_user
+from catalog.services.users import advance_catalog_version, resolve_user
 
 
 async def put_rating(
@@ -25,8 +25,8 @@ async def put_rating(
     else:
         rating.value = value
 
-    user.catalog_version += 1
     try:
+        await advance_catalog_version(session, user_id)
         await session.commit()
     except IntegrityError:
         await session.rollback()
@@ -35,7 +35,7 @@ async def put_rating(
         if rating is None or reloaded_user is None:
             raise
         rating.value = value
-        reloaded_user.catalog_version += 1
+        await advance_catalog_version(session, user_id)
         await session.commit()
     return RatingView(value=rating.value)
 
@@ -48,5 +48,5 @@ async def delete_rating(session: AsyncSession, subject: str, recipe_id: UUID) ->
     )
     if rating is not None:
         await session.delete(rating)
-        user.catalog_version += 1
+        await advance_catalog_version(session, user.id)
         await session.commit()

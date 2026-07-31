@@ -3,6 +3,9 @@
 | Variable | Consumer | Required when | Purpose |
 |---|---|---:|---|
 | `CATALOG_DATABASE_URL` | Catalog | yes | Catalog-role PostgreSQL DSN |
+| `CATALOG_REDIS_URL` | Catalog | no | Optional recommendation-cache Redis URL; defaults to `redis://localhost:6379` |
+| `CATALOG_REDIS_TIMEOUT_SECONDS` | Catalog | no | Shared Redis connect/command deadline in seconds; defaults to 1 and is bounded above by 10 |
+| `CATALOG_RECOMMENDATION_CACHE_TTL_SECONDS` | Catalog | no | Recommendation-cache TTL in seconds; defaults to 1,800 and is bounded from 60 to 86,400 |
 | `INGESTION_DATABASE_URL` | Ingestion/worker | yes | Ingestion-role PostgreSQL DSN |
 | `INGESTION_REDIS_URL` | Ingestion API | yes | Readiness, locks, and rate limiting |
 | `INGESTION_CELERY_BROKER_URL` | Worker/dispatcher | yes | Dedicated persistent, `noeviction` Celery Redis broker |
@@ -26,6 +29,7 @@
 | `CATALOG_M2M_CLIENT_SECRET` | Ingestion API/worker | source lookup/catalog stage | M2M client secret |
 | `CATALOG_M2M_AUDIENCE` | Ingestion API/worker | source lookup/catalog stage | M2M token audience |
 | `INGESTION_TEST_DATABASE_URL` | PostgreSQL integration tests | opt-in | Disposable migrated PostgreSQL DSN for concurrency and transaction checks |
+| `CATALOG_TEST_DATABASE_URL` | PostgreSQL integration tests | opt-in | Disposable migrated PostgreSQL DSN for Catalog version-concurrency checks |
 | `STORECIPE_TEST_REDIS_URL` | Redis integration tests | opt-in | Disposable Redis DSN for rate-limit and AI usage-governance checks |
 | `RUN_DOCKER_INTEGRATION` | Docker integration tests | opt-in | Set to `1` to build an isolated Compose project with deterministic local Auth and Catalog substitutes; the harness issues its own test token |
 

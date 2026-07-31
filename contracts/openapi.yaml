@@ -109,8 +109,24 @@ paths:
   /v1/recommendations:
     post:
       operationId: recommendRecipes
+      description: >-
+        Requires the `recipes:read` scope. This endpoint returns deterministic,
+        structured recommendation scores; natural-language interpretation and prose
+        explanation belong to the MCP host, not this endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RecommendationRequest"}
       responses:
-        "200": {description: Deterministically ranked recipes}
+        "200":
+          description: Deterministically ranked recipes
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecommendationResponse"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
@@ -277,6 +293,65 @@ components:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
   schemas:
+    RecommendationRequest:
+      type: object
+      properties:
+        query: {type: [string, "null"], maxLength: 200, default: null}
+        mustIncludeIngredients:
+          type: array
+          maxItems: 32
+          default: []
+          items: {type: string, minLength: 1, maxLength: 200}
+        availableIngredients:
+          type: array
+          maxItems: 64
+          default: []
+          items: {type: string, minLength: 1, maxLength: 200}
+        maxTotalMinutes: {type: [integer, "null"], minimum: 0, default: null}
+        requiredTags:
+          type: array
+          maxItems: 16
+          default: []
+          items: {type: string, minLength: 1, maxLength: 64}
+        includeAlreadyRated: {type: boolean, default: false}
+        limit: {type: integer, minimum: 1, maximum: 20, default: 10}
+    RecommendationScoreComponents:
+      type: object
+      required:
+        - ingredientCoverage
+        - positivePreference
+        - timeCompatibility
+        - queryTagMatch
+        - negativePreferencePenalty
+        - previouslyRatedPenalty
+      properties:
+        ingredientCoverage: {type: number}
+        positivePreference: {type: number}
+        timeCompatibility: {type: number}
+        queryTagMatch: {type: number}
+        negativePreferencePenalty: {type: number}
+        previouslyRatedPenalty: {type: number}
+    RecommendationItem:
+      type: object
+      required: [recipeId, score, components]
+      properties:
+        recipeId: {type: string, format: uuid}
+        score: {type: number}
+        components: {$ref: "#/components/schemas/RecommendationScoreComponents"}
+        missingIngredients:
+          type: array
+          items: {type: string}
+          default: []
+    RecommendationResponse:
+      type: object
+      required: [request, catalogVersion, items]
+      properties:
+        request: {$ref: "#/components/schemas/RecommendationRequest"}
+        catalogVersion: {type: integer, minimum: 0}
+        items:
+          type: array
+          maxItems: 20
+          items: {$ref: "#/components/schemas/RecommendationItem"}
     RatingInput:
       type: object
       required: [value]

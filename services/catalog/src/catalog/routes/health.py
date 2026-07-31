@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -16,7 +17,15 @@ async def liveness() -> dict[str, str]:
 @router.get("/health/ready")
 async def readiness(request: Request) -> dict[str, Any]:
     engine = request.app.state.engine
-    if not await health_service.check_postgres(engine):
+    redis = request.app.state.redis
+    postgres_ok, redis_ok = await asyncio.gather(
+        health_service.check_postgres(engine),
+        health_service.check_redis(
+            redis,
+            timeout_seconds=request.app.state.redis_timeout_seconds,
+        ),
+    )
+    if not postgres_ok:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="dependency unavailable: postgres",
@@ -24,5 +33,8 @@ async def readiness(request: Request) -> dict[str, Any]:
     return {
         "status": "ok",
         "service": get_settings().service_name,
-        "dependencies": {"postgres": "ok"},
+        "dependencies": {
+            "postgres": "ok",
+            "redis_cache": "ok" if redis_ok else "degraded",
+        },
     }
