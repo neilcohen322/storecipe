@@ -4,6 +4,8 @@ from decimal import Decimal
 import pytest
 
 from ingestion.ai_extractor import (
+    DEFAULT_OPENROUTER_MODEL,
+    AiohttpOpenRouterTransport,
     AiExtractionError,
     AiExtractionFailureCode,
     AiRecipeExtractor,
@@ -61,6 +63,13 @@ class FakeTransport:
                 cost=Decimal("0.000075"),
             ),
         )
+
+
+def test_openrouter_transport_defaults_to_gpt_5p6_luna() -> None:
+    transport = AiohttpOpenRouterTransport(api_key="test-key")
+
+    assert DEFAULT_OPENROUTER_MODEL == "openai/gpt-5.6-luna"
+    assert transport._model == "openai/gpt-5.6-luna"
 
 
 def _schema_property_names(value: object) -> set[str]:

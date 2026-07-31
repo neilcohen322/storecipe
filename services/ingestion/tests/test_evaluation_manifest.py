@@ -7,6 +7,12 @@ from ingestion.import_models import RecipeImportCandidate
 ROOT = Path(__file__).parents[3]
 
 
+def test_model_evaluation_matrix_includes_gpt_5p6_luna() -> None:
+    matrix = json.loads((ROOT / "evaluation/imports/models.json").read_text("utf-8"))
+
+    assert "openai/gpt-5.6-luna" in {model["id"] for model in matrix["models"]}
+
+
 def test_extraction_evaluation_seed_is_balanced_and_valid() -> None:
     manifest = json.loads((ROOT / "evaluation/imports/cases.json").read_text("utf-8"))
     cases = manifest["cases"]

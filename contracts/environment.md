@@ -21,7 +21,7 @@
 | `AUTH0_JWKS_URL` | APIs/MCP | no | Optional JWKS override; defaults to `<issuer>/.well-known/jwks.json` |
 | `MCP_RESOURCE_URL` | Catalog | MCP enabled | Canonical HTTPS MCP resource identifier |
 | `OPENROUTER_API_KEY` | Worker | AI enabled | Secret model-provider credential |
-| `OPENROUTER_MODEL` | Worker | no | Pinned extraction model; defaults to `openai/gpt-5-nano` |
+| `OPENROUTER_MODEL` | Worker | no | Pinned extraction model; defaults to `openai/gpt-5.6-luna` |
 | `AI_EXTRACTION_ENABLED` | Worker | no | AI kill switch; defaults false |
 | `CATALOG_API_URL` | Ingestion API/worker | yes | Catalog service base URL |
 | `CATALOG_M2M_TOKEN_URL` | Ingestion API/worker | no | OAuth token URL; defaults from `AUTH0_ISSUER` |

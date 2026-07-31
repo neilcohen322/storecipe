@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ingestion.import_models import MAX_PG_INT, RecipeImportCandidate
 
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_OPENROUTER_MODEL = "openai/gpt-5-nano"
+DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.6-luna"
 PROMPT_VERSION = "week5-exercise-v1"
 MAX_OUTPUT_TOKENS = 1_200
 REQUEST_TIMEOUT_SECONDS = 30.0
