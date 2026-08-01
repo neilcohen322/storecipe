@@ -3,7 +3,7 @@ info:
   title: Storecipe public API contract
   version: 0.3.0
   description: >-
-    Public contract for recipes, ratings, private search, and imports. The internal
+    Public contract for recipes, ratings, deterministic recipe queries, and imports. The internal
     `POST /internal/recipes/source-lookup` endpoint is M2M-only and is excluded
     from the public proxy.
 servers:
@@ -13,24 +13,90 @@ security:
 paths:
   /v1/recipes:
     get:
-      operationId: searchRecipes
+      operationId: queryRecipes
       description: Requires the `recipes:read` scope.
       parameters:
-        - {name: query, in: query, schema: {type: string, minLength: 1, maxLength: 200}}
-        - {name: tag, in: query, schema: {type: string, minLength: 1, maxLength: 64}}
-        - {name: maxTotalMinutes, in: query, schema: {type: integer, minimum: 0}}
-        - {name: minRating, in: query, schema: {type: integer, minimum: 1, maximum: 5}}
-        - {name: cursor, in: query, schema: {type: string, maxLength: 512}}
+        - {name: text, in: query, schema: {type: [string, "null"], maxLength: 200}}
+        - name: requiredIngredient
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 32
+            items: {type: string, minLength: 1, maxLength: 200}
+        - name: availableIngredient
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 64
+            items: {type: string, minLength: 1, maxLength: 200}
+        - name: requiredTag
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 16
+            items: {type: string, minLength: 1, maxLength: 64}
+        - name: preferredTag
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 16
+            items: {type: string, minLength: 1, maxLength: 64}
+        - {name: maxTotalMinutes, in: query, schema: {type: [integer, "null"], minimum: 0}}
+        - {name: minRating, in: query, schema: {type: [integer, "null"], minimum: 1, maximum: 5}}
+        - name: ratingState
+          in: query
+          schema: {type: string, enum: [any, rated, unrated], default: any}
+        - name: sort
+          in: query
+          style: form
+          explode: true
+          description: Ordered sort precedence. The service appends its private recipeId tie-breaker.
+          examples:
+            ratingFirst:
+              value: [rating:desc, totalMinutes:asc]
+            coverageFirst:
+              value: [ingredientCoverage:desc, rating:desc, totalMinutes:asc]
+          schema:
+            type: array
+            maxItems: 6
+            items:
+              type: string
+              enum:
+                - ingredientCoverage:asc
+                - ingredientCoverage:desc
+                - tagCoverage:asc
+                - tagCoverage:desc
+                - rating:asc
+                - rating:desc
+                - totalMinutes:asc
+                - totalMinutes:desc
+                - createdAt:asc
+                - createdAt:desc
+                - updatedAt:asc
+                - updatedAt:desc
+                - title:asc
+                - title:desc
+        - {name: cursor, in: query, schema: {type: [string, "null"], maxLength: 1024}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
       responses:
         "200":
           description: User-owned recipes
           content:
             application/json:
-              schema: {$ref: "#/components/schemas/RecipePage"}
+              schema: {$ref: "#/components/schemas/RecipeQueryPage"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "422": {$ref: "#/components/responses/ValidationError"}
+        "409": {$ref: "#/components/responses/StaleRecipeQueryCursor"}
+        "414": {$ref: "#/components/responses/UriTooLong"}
     post:
       operationId: createRecipe
       description: Requires the `recipes:write` scope.
@@ -106,27 +172,6 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
-  /v1/recommendations:
-    post:
-      operationId: recommendRecipes
-      description: >-
-        Requires the `recipes:read` scope. This endpoint returns deterministic,
-        structured recommendation scores; natural-language interpretation and prose
-        explanation belong to the MCP host, not this endpoint.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: "#/components/schemas/RecommendationRequest"}
-      responses:
-        "200":
-          description: Deterministically ranked recipes
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/RecommendationResponse"}
-        "401": {$ref: "#/components/responses/Unauthorized"}
-        "403": {$ref: "#/components/responses/Forbidden"}
-        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
@@ -273,11 +318,28 @@ components:
       content:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
+    UriTooLong:
+      description: Raw query string exceeds 6144 bytes
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
     Conflict:
       description: Request conflicts with durable resource state
       content:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
+    StaleRecipeQueryCursor:
+      description: The catalog changed after the referenced recipe-query page was read.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/stale_recipe_query_cursor
+            title: Conflict
+            status: 409
+            detail: Recipe query cursor is stale.
+            request_id: 01JEXAMPLESTALECURSOR
+            errorCategory: stale_recipe_query_cursor
     ImportBurstExceeded:
       description: Import submission burst limit exceeded; retry after the indicated interval.
       headers:
@@ -293,65 +355,6 @@ components:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
   schemas:
-    RecommendationRequest:
-      type: object
-      properties:
-        query: {type: [string, "null"], maxLength: 200, default: null}
-        mustIncludeIngredients:
-          type: array
-          maxItems: 32
-          default: []
-          items: {type: string, minLength: 1, maxLength: 200}
-        availableIngredients:
-          type: array
-          maxItems: 64
-          default: []
-          items: {type: string, minLength: 1, maxLength: 200}
-        maxTotalMinutes: {type: [integer, "null"], minimum: 0, default: null}
-        requiredTags:
-          type: array
-          maxItems: 16
-          default: []
-          items: {type: string, minLength: 1, maxLength: 64}
-        includeAlreadyRated: {type: boolean, default: false}
-        limit: {type: integer, minimum: 1, maximum: 20, default: 10}
-    RecommendationScoreComponents:
-      type: object
-      required:
-        - ingredientCoverage
-        - positivePreference
-        - timeCompatibility
-        - queryTagMatch
-        - negativePreferencePenalty
-        - previouslyRatedPenalty
-      properties:
-        ingredientCoverage: {type: number}
-        positivePreference: {type: number}
-        timeCompatibility: {type: number}
-        queryTagMatch: {type: number}
-        negativePreferencePenalty: {type: number}
-        previouslyRatedPenalty: {type: number}
-    RecommendationItem:
-      type: object
-      required: [recipeId, score, components]
-      properties:
-        recipeId: {type: string, format: uuid}
-        score: {type: number}
-        components: {$ref: "#/components/schemas/RecommendationScoreComponents"}
-        missingIngredients:
-          type: array
-          items: {type: string}
-          default: []
-    RecommendationResponse:
-      type: object
-      required: [request, catalogVersion, items]
-      properties:
-        request: {$ref: "#/components/schemas/RecommendationRequest"}
-        catalogVersion: {type: integer, minimum: 0}
-        items:
-          type: array
-          maxItems: 20
-          items: {$ref: "#/components/schemas/RecommendationItem"}
     RatingInput:
       type: object
       required: [value]
@@ -428,11 +431,30 @@ components:
         name: {type: string, minLength: 1, maxLength: 200}
         quantity: {type: [number, "null"], minimum: 0}
         unit: {type: [string, "null"], minLength: 1, maxLength: 64}
-    RecipePage:
+    RecipeMatch:
+      type: object
+      required: [ingredientCoverage, missingIngredients, tagCoverage, matchedPreferredTags, missingPreferredTags]
+      properties:
+        ingredientCoverage: {type: [number, "null"], minimum: 0, maximum: 1}
+        missingIngredients: {type: array, items: {type: string}}
+        tagCoverage: {type: [number, "null"], minimum: 0, maximum: 1}
+        matchedPreferredTags: {type: array, items: {type: string}}
+        missingPreferredTags: {type: array, items: {type: string}}
+    RecipeQueryItem:
+      type: object
+      required: [recipe, match]
+      properties:
+        recipe: {$ref: "#/components/schemas/Recipe"}
+        match:
+          description: Factual match details; null unless availableIngredient or preferredTag is supplied.
+          anyOf:
+            - {$ref: "#/components/schemas/RecipeMatch"}
+            - {type: "null"}
+    RecipeQueryPage:
       type: object
       required: [items, nextCursor]
       properties:
-        items: {type: array, items: {$ref: "#/components/schemas/Recipe"}}
+        items: {type: array, items: {$ref: "#/components/schemas/RecipeQueryItem"}}
         nextCursor: {type: [string, "null"]}
     ImportAccepted:
       type: object

@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from catalog.main import app
-from catalog.recommendation_cache import RecommendationCache
+from catalog.recipe_query_cache import RecipeQueryCache
 
 
 class FakeRedis:
@@ -32,15 +32,15 @@ class FakeRedis:
 
 
 @pytest.fixture
-def recommendation_cache_state() -> Iterator[FakeRedis]:
+def recipe_query_cache_state() -> Iterator[FakeRedis]:
     """Provide cache state to ASGITransport clients, which do not run lifespan."""
     state = app.state._state
     missing = object()
     previous_redis = state.get("redis", missing)
-    previous_cache = state.get("recommendation_cache", missing)
+    previous_cache = state.get("recipe_query_cache", missing)
     redis = FakeRedis()
     app.state.redis = redis
-    app.state.recommendation_cache = RecommendationCache(redis)
+    app.state.recipe_query_cache = RecipeQueryCache(redis)
     try:
         yield redis
     finally:
@@ -49,9 +49,9 @@ def recommendation_cache_state() -> Iterator[FakeRedis]:
         else:
             state["redis"] = previous_redis
         if previous_cache is missing:
-            del state["recommendation_cache"]
+            del state["recipe_query_cache"]
         else:
-            state["recommendation_cache"] = previous_cache
+            state["recipe_query_cache"] = previous_cache
 
 
 @pytest.fixture(scope="session")

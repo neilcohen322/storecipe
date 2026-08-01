@@ -15,7 +15,7 @@ from catalog.models import Base
 from catalog.schemas import ImportedRecipeCreate, RecipeCreate
 from catalog.services import ratings as rating_service
 from catalog.services import recipes as recipe_service
-from catalog.services.errors import InvalidCursor, InvalidFilter, RecipeNotFound
+from catalog.services.errors import RecipeNotFound
 
 SUBJECT = "auth0|chef"
 
@@ -79,18 +79,6 @@ async def test_delete_missing_recipe_raises_not_found(session: AsyncSession) -> 
 async def test_put_rating_on_missing_recipe_raises_not_found(session: AsyncSession) -> None:
     with pytest.raises(RecipeNotFound):
         await rating_service.put_rating(session, SUBJECT, uuid4(), 5)
-
-
-@pytest.mark.asyncio
-async def test_list_rejects_malformed_cursor(session: AsyncSession) -> None:
-    with pytest.raises(InvalidCursor):
-        await recipe_service.list_recipes(session, SUBJECT, cursor="not-a-cursor")
-
-
-@pytest.mark.asyncio
-async def test_list_rejects_whitespace_only_query(session: AsyncSession) -> None:
-    with pytest.raises(InvalidFilter):
-        await recipe_service.list_recipes(session, SUBJECT, query="   ")
 
 
 @pytest.mark.asyncio

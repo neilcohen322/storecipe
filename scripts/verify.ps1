@@ -27,6 +27,12 @@ Invoke-Step 'mypy' { uv run mypy services/catalog/src services/ingestion/src }
 Invoke-Step 'pytest' { uv run pytest }
 Invoke-Step 'openapi contract' { uv run openapi-spec-validator contracts/openapi.yaml }
 
+if ([string]::IsNullOrWhiteSpace($env:CATALOG_TEST_DATABASE_URL)) {
+    Write-Host 'UNVERIFIED: Catalog PostgreSQL integration checks require CATALOG_TEST_DATABASE_URL.'
+} else {
+    Write-Host 'AVAILABLE: Catalog PostgreSQL integration checks can run with CATALOG_TEST_DATABASE_URL.'
+}
+
 if ([string]::IsNullOrWhiteSpace($env:INGESTION_TEST_DATABASE_URL)) {
     Write-Host 'UNVERIFIED: PostgreSQL integration checks require INGESTION_TEST_DATABASE_URL.'
 } else {

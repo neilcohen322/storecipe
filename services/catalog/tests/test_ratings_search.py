@@ -15,9 +15,9 @@ from catalog.models import Base, Rating, User
 
 
 @pytest_asyncio.fixture
-async def catalog_client() -> AsyncIterator[
-    tuple[AsyncClient, dict[str, str], async_sessionmaker[AsyncSession]]
-]:
+async def catalog_client(
+    recipe_query_cache_state: object,
+) -> AsyncIterator[tuple[AsyncClient, dict[str, str], async_sessionmaker[AsyncSession]]]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         execution_options={"schema_translate_map": {"catalog": None}},
@@ -153,7 +153,7 @@ async def test_put_rating_recovers_when_a_concurrent_insert_wins(
 
 
 @pytest.mark.asyncio
-async def test_private_search_filters_and_cursor_pagination(
+async def test_recipe_query_filters_and_cursor_pagination(
     catalog_client: tuple[AsyncClient, dict[str, str], async_sessionmaker[AsyncSession]],
 ) -> None:
     client, identity, _session_factory = catalog_client
@@ -169,17 +169,23 @@ async def test_private_search_filters_and_cursor_pagination(
     await client.put(f"/v1/recipes/{created['curry']['id']}/rating", json={"value": 5})
     await client.put(f"/v1/recipes/{created['bowl']['id']}/rating", json={"value": 2})
 
-    ingredient_search = await client.get("/v1/recipes", params={"query": "CHICKPEAS"})
-    assert [item["id"] for item in ingredient_search.json()["items"]] == [created["curry"]["id"]]
+    ingredient_search = await client.get("/v1/recipes", params=[("text", "CHICKPEAS")])
+    assert [item["recipe"]["id"] for item in ingredient_search.json()["items"]] == [
+        created["curry"]["id"]
+    ]
 
     filtered = await client.get(
         "/v1/recipes",
-        params={"tag": " dinner ", "maxTotalMinutes": 40, "minRating": 4},
+        params=[
+            ("requiredTag", " dinner "),
+            ("maxTotalMinutes", "40"),
+            ("minRating", "4"),
+        ],
     )
-    assert [item["id"] for item in filtered.json()["items"]] == [created["curry"]["id"]]
+    assert [item["recipe"]["id"] for item in filtered.json()["items"]] == [created["curry"]["id"]]
 
-    literal = await client.get("/v1/recipes", params={"query": "%"})
-    assert [item["id"] for item in literal.json()["items"]] == [created["literal"]["id"]]
+    literal = await client.get("/v1/recipes", params=[("text", "%")])
+    assert [item["recipe"]["id"] for item in literal.json()["items"]] == [created["literal"]["id"]]
 
     seen: list[str] = []
     cursor: str | None = None
@@ -188,7 +194,7 @@ async def test_private_search_filters_and_cursor_pagination(
         if cursor is not None:
             params["cursor"] = cursor
         page = (await client.get("/v1/recipes", params=params)).json()
-        seen.extend(item["id"] for item in page["items"])
+        seen.extend(item["recipe"]["id"] for item in page["items"])
         cursor = page["nextCursor"]
         if cursor is None:
             break
@@ -201,11 +207,39 @@ async def test_private_search_filters_and_cursor_pagination(
         json=recipe_payload("Secret Saffron", "saffron", total_minutes=20, tags=["private"]),
     )
     identity["subject"] = "auth0|owner-a"
-    assert (await client.get("/v1/recipes", params={"query": "saffron"})).json()["items"] == []
+    assert (await client.get("/v1/recipes", params={"text": "saffron"})).json()["items"] == []
 
     invalid_cursor = await client.get("/v1/recipes", params={"cursor": "not-a-cursor"})
     assert invalid_cursor.status_code == 422
     assert invalid_cursor.headers["content-type"] == "application/problem+json"
 
-    blank_query = await client.get("/v1/recipes", params={"query": "   "})
-    assert blank_query.status_code == 422
+    blank_query = await client.get("/v1/recipes", params={"text": "   "})
+    assert blank_query.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_recipe_query_stale_cursor_returns_documented_category(
+    catalog_client: tuple[AsyncClient, dict[str, str], async_sessionmaker[AsyncSession]],
+) -> None:
+    client, _identity, _session_factory = catalog_client
+    first = (
+        await client.post(
+            "/v1/recipes",
+            json=recipe_payload("First", "lentils", total_minutes=20, tags=[]),
+        )
+    ).json()
+    await client.post(
+        "/v1/recipes",
+        json=recipe_payload("Second", "beans", total_minutes=30, tags=[]),
+    )
+    first_page = await client.get("/v1/recipes", params={"limit": 1})
+    cursor = first_page.json()["nextCursor"]
+    assert cursor is not None
+
+    await client.put(f"/v1/recipes/{first['id']}/rating", json={"value": 5})
+    response = await client.get("/v1/recipes", params={"limit": 1, "cursor": cursor})
+
+    assert response.status_code == 409
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["type"].endswith("/stale_recipe_query_cursor")
+    assert response.json()["errorCategory"] == "stale_recipe_query_cursor"

@@ -41,6 +41,7 @@ erDiagram
     int position
     string raw_text
     string name
+    string normalized_name
     decimal quantity "nullable"
     string unit "nullable"
   }

@@ -10,7 +10,7 @@ from catalog.models import User
 
 
 async def advance_catalog_version(session: AsyncSession, user_id: UUID) -> int:
-    """Atomically advance and return a user's recommendation-cache version."""
+    """Atomically advance and return a user's recipe-query cache version."""
     with session.no_autoflush:
         version = await session.scalar(
             update(User)

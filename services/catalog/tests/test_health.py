@@ -1,5 +1,7 @@
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,17 +18,31 @@ from catalog.main import app
 from catalog.services import health as health_service
 
 
-def test_recommendation_cache_defaults() -> None:
+def test_recipe_query_cache_ttl_environment_name_is_consistent() -> None:
+    root = Path(__file__).resolve().parents[3]
+    new_name = "CATALOG_RECIPE_QUERY_CACHE_TTL_SECONDS"
+    expected_occurrences = {
+        ".env.example": 1,
+        "compose.yaml": 2,
+        "contracts/environment.md": 1,
+    }
+
+    for relative_path, expected_count in expected_occurrences.items():
+        content = (root / relative_path).read_text()
+        assert content.count(new_name) == expected_count
+
+
+def test_recipe_query_cache_defaults() -> None:
     settings = Settings()
 
     assert settings.redis_url == "redis://localhost:6379"
-    assert settings.recommendation_cache_ttl_seconds == 1800
+    assert settings.recipe_query_cache_ttl_seconds == 1800
     assert settings.redis_timeout_seconds == 1.0
 
 
-def test_recommendation_cache_ttl_is_bounded() -> None:
+def test_recipe_query_cache_ttl_is_bounded() -> None:
     with pytest.raises(ValidationError):
-        Settings(recommendation_cache_ttl_seconds=59)
+        Settings(recipe_query_cache_ttl_seconds=59)
 
 
 def test_readiness_reports_optional_cache_degradation(
@@ -103,12 +119,12 @@ async def test_redis_close_failure_does_not_prevent_engine_disposal(
     engine = _FakeEngine()
     settings = SimpleNamespace(
         redis_url="redis://test",
-        recommendation_cache_ttl_seconds=1800,
+        recipe_query_cache_ttl_seconds=1800,
         redis_timeout_seconds=1.0,
     )
 
     @asynccontextmanager
-    async def no_op_mcp_lifespan(_: object):
+    async def no_op_mcp_lifespan(_: object) -> AsyncIterator[None]:
         yield
 
     def closing_redis(redis_url: str, *, timeout_seconds: float) -> _ClosingRedis:
@@ -126,7 +142,7 @@ async def test_redis_close_failure_does_not_prevent_engine_disposal(
     with pytest.raises(RedisError, match="Redis stopped"):
         async with main.lifespan(application):
             assert application.state.redis is not None
-            assert application.state.recommendation_cache is not None
+            assert application.state.recipe_query_cache is not None
 
     assert engine.disposed
 

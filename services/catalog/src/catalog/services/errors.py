@@ -26,6 +26,13 @@ class InvalidCursor(CatalogError):
         super().__init__("Invalid pagination cursor.")
 
 
+class StaleRecipeQueryCursor(CatalogError):
+    """A valid query cursor belongs to an older catalog version."""
+
+    def __init__(self) -> None:
+        super().__init__("Recipe query cursor is stale.")
+
+
 class InvalidFilter(CatalogError):
     """A text filter contained only whitespace."""
 

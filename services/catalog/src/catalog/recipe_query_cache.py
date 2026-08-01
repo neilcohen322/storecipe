@@ -10,11 +10,7 @@ from pydantic import Field, ValidationError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from catalog.recommendations import (
-    RecommendationRequest,
-    RecommendationResponse,
-    recommendation_request_hash,
-)
+from catalog.recipe_queries import RecipeQueryPage, RecipeQueryRequest, recipe_query_hash
 from catalog.schemas import ApiModel
 
 logger = logging.getLogger(__name__)
@@ -51,16 +47,18 @@ class CacheReadOutcome(str, Enum):
 @dataclass(frozen=True)
 class CacheRead:
     outcome: CacheReadOutcome
-    value: RecommendationResponse | None
+    value: RecipeQueryPage | None
 
 
 class CacheEnvelope(ApiModel):
     schema_version: Literal[1] = 1
     request_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    result: RecommendationResponse
+    catalog_version: Annotated[int, Field(ge=0)]
+    request: RecipeQueryRequest
+    result: RecipeQueryPage
 
 
-class RecommendationCache:
+class RecipeQueryCache:
     def __init__(
         self,
         redis: RedisClient,
@@ -72,13 +70,13 @@ class RecommendationCache:
         self._redis_timeout_seconds = redis_timeout_seconds
 
     def key(self, user_id: UUID, catalog_version: int, request_hash: str) -> str:
-        return f"recommendations:{user_id}:{catalog_version}:{request_hash}"
+        return f"recipe_queries:{user_id}:{catalog_version}:{request_hash}"
 
     async def get(
-        self, user_id: UUID, catalog_version: int, request: RecommendationRequest
+        self, user_id: UUID, catalog_version: int, request: RecipeQueryRequest
     ) -> CacheRead:
         started_at = time.perf_counter()
-        expected_hash = recommendation_request_hash(request)
+        expected_hash = recipe_query_hash(request)
         key = self.key(user_id, catalog_version, expected_hash)
         try:
             async with asyncio.timeout(self._redis_timeout_seconds):
@@ -96,10 +94,10 @@ class RecommendationCache:
             envelope = CacheEnvelope.model_validate_json(cached)
             if (
                 envelope.request_hash != expected_hash
-                or envelope.result.catalog_version != catalog_version
-                or envelope.result.request != request
+                or envelope.catalog_version != catalog_version
+                or envelope.request != request
             ):
-                raise ValueError("Cached recommendation does not match the request")
+                raise ValueError("Cached recipe query does not match the request")
         except (ValidationError, ValueError, TypeError):
             await self._delete_invalid(key)
             return self._read_outcome(CacheReadOutcome.INVALID, started_at)
@@ -111,13 +109,18 @@ class RecommendationCache:
         self,
         user_id: UUID,
         catalog_version: int,
-        request: RecommendationRequest,
-        response: RecommendationResponse,
+        request: RecipeQueryRequest,
+        page: RecipeQueryPage,
     ) -> bool:
         started_at = time.perf_counter()
-        request_hash = recommendation_request_hash(request)
+        request_hash = recipe_query_hash(request)
         key = self.key(user_id, catalog_version, request_hash)
-        envelope = CacheEnvelope(request_hash=request_hash, result=response)
+        envelope = CacheEnvelope(
+            request_hash=request_hash,
+            catalog_version=catalog_version,
+            request=request,
+            result=page,
+        )
         try:
             async with asyncio.timeout(self._redis_timeout_seconds):
                 await self._redis.set(
@@ -143,7 +146,7 @@ class RecommendationCache:
 
     def _emit(self, event: str, started_at: float) -> None:
         logger.info(
-            "recommendation_cache.%s",
+            "recipe_query_cache.%s",
             event,
             extra={
                 "outcome": event,

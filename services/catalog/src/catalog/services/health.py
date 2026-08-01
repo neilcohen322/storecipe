@@ -20,7 +20,7 @@ async def check_postgres(engine: AsyncEngine) -> bool:
 
 
 async def check_redis(redis: Redis, *, timeout_seconds: float = 1.0) -> bool:
-    """Return whether the optional recommendation cache is available."""
+    """Return whether the optional recipe-query cache is available."""
     try:
         async with asyncio.timeout(timeout_seconds):
             await redis.ping()

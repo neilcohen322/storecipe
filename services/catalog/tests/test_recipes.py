@@ -3,17 +3,19 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
+from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from catalog.auth import Principal, get_principal
 from catalog.database import get_session
 from catalog.main import app
-from catalog.models import Base, Recipe, User
+from catalog.models import Base, Ingredient, Recipe, User
 
 
 @pytest_asyncio.fixture
-async def api_client() -> AsyncIterator[AsyncClient]:
+async def api_client(recipe_query_cache_state: object) -> AsyncIterator[AsyncClient]:
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         execution_options={"schema_translate_map": {"catalog": None}},
@@ -64,8 +66,180 @@ def recipe_payload() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
+async def test_recipe_query_returns_structured_page_with_repeated_parameters(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post(
+        "/v1/recipes",
+        json=recipe_payload(),
+    )
+    assert response.status_code == 201
+    recipe_id = response.json()["id"]
+
+    filtered = await api_client.get(
+        "/v1/recipes",
+        params=[
+            ("availableIngredient", "chickpeas"),
+            ("availableIngredient", "onion"),
+            ("requiredTag", "dinner"),
+            ("sort", "ingredientCoverage:desc"),
+            ("sort", "rating:desc"),
+            ("sort", "totalMinutes:asc"),
+            ("limit", "10"),
+        ],
+    )
+
+    assert filtered.status_code == 200
+    body = filtered.json()
+    assert [item["recipe"]["id"] for item in body["items"]] == [recipe_id]
+    assert body["items"][0]["match"]["ingredientCoverage"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_recipe_query_accepts_repeated_required_ingredients_and_preferred_tags(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post(
+        "/v1/recipes",
+        json=recipe_payload(),
+    )
+    assert response.status_code == 201
+    recipe_id = response.json()["id"]
+
+    filtered = await api_client.get(
+        "/v1/recipes",
+        params=[
+            ("requiredIngredient", "CHICKPEAS"),
+            ("requiredIngredient", " onion "),
+            ("preferredTag", "DINNER"),
+            ("preferredTag", "SPICY"),
+        ],
+    )
+
+    assert filtered.status_code == 200
+    body = filtered.json()
+    assert [item["recipe"]["id"] for item in body["items"]] == [recipe_id]
+    assert body["items"][0]["match"]["matchedPreferredTags"] == ["dinner", "spicy"]
+    assert body["items"][0]["match"]["missingPreferredTags"] == []
+
+
+@pytest.mark.asyncio
+async def test_recipe_query_accepts_empty_query(api_client: AsyncClient) -> None:
+    response = await api_client.get("/v1/recipes")
+
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "nextCursor": None}
+
+
+@pytest.mark.asyncio
+async def test_recipe_query_returns_null_match_without_context(api_client: AsyncClient) -> None:
+    created = await api_client.post("/v1/recipes", json=recipe_payload())
+    assert created.status_code == 201
+
+    response = await api_client.get("/v1/recipes")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["match"] is None
+
+
+@pytest.mark.asyncio
+async def test_recipe_query_rejects_invalid_parameters_as_problem_details(
+    api_client: AsyncClient,
+) -> None:
+    invalid_queries = [
+        [("sort", "rating:desc"), ("sort", "rating:asc")],
+        [("sort", "ingredientCoverage:desc")],
+        [("minRating", "4"), ("ratingState", "unrated")],
+        [("sort", "recipeId:asc")],
+        [("unexpected", "value")],
+    ]
+
+    for params in invalid_queries:
+        response = await api_client.get("/v1/recipes", params=params)
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+
+
+@pytest.mark.asyncio
+async def test_recipe_query_rejects_oversized_raw_query_before_validation(
+    api_client: AsyncClient,
+) -> None:
+    raw_query = "unexpected=" + ("a" * (6145 - len("unexpected=")))
+
+    response = await api_client.get(f"/v1/recipes?{raw_query}")
+
+    assert len(raw_query.encode("utf-8")) == 6145
+    assert response.status_code == 414
+    assert response.headers["content-type"] == "application/problem+json"
+
+
+@pytest.mark.asyncio
+async def test_recipe_collection_requires_recipes_read_scope(api_client: AsyncClient) -> None:
+    async def write_only_principal() -> Principal:
+        return Principal(
+            subject="auth0|default-user",
+            scopes=frozenset({"recipes:write"}),
+            claims={},
+        )
+
+    app.dependency_overrides[get_principal] = write_only_principal
+    response = await api_client.get("/v1/recipes")
+
+    assert response.status_code == 403
+    assert response.headers["content-type"] == "application/problem+json"
+
+
+def test_recipe_collection_requires_authentication(client: TestClient) -> None:
+    response = client.get("/v1/recipes")
+
+    assert response.status_code == 401
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["detail"] == "Authentication required."
+    assert "resource_metadata=" in response.headers["www-authenticate"]
+
+
+@pytest.mark.asyncio
+async def test_recipe_ingredient_normalized_name_on_create(api_client: AsyncClient) -> None:
+    response = await api_client.post(
+        "/v1/recipes",
+        json={
+            **recipe_payload(),
+            "ingredients": [
+                {
+                    "rawText": "  Cafe\u0301   Beans ",
+                    "name": "  Cafe\u0301   Beans ",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201
+    recipe_id = UUID(response.json()["id"])
+
+    async with app.state.catalog_test_session_factory() as session:
+        ingredient = await session.scalar(
+            select(Ingredient).where(Ingredient.recipe_id == recipe_id)
+        )
+        assert ingredient is not None
+        assert ingredient.name == "Cafe\u0301   Beans"
+        assert ingredient.normalized_name == "café beans"
+
+
+@pytest.mark.asyncio
 async def test_recipe_crud_round_trip(api_client: AsyncClient) -> None:
-    created_response = await api_client.post("/v1/recipes", json=recipe_payload())
+    created_response = await api_client.post(
+        "/v1/recipes",
+        json={
+            **recipe_payload(),
+            "ingredients": [
+                {
+                    "rawText": "  Cafe\u0301   Beans ",
+                    "name": "  Cafe\u0301   Beans ",
+                    "quantity": 400,
+                    "unit": "g",
+                }
+            ],
+        },
+    )
     assert created_response.status_code == 201
     created = created_response.json()
     recipe_id = created["id"]
@@ -73,18 +247,49 @@ async def test_recipe_crud_round_trip(api_client: AsyncClient) -> None:
     assert created["tags"] == ["dinner", "spicy"]
     assert created["ingredients"][0]["quantity"] == 400.0
 
-    list_response = await api_client.get("/v1/recipes", params={"query": "curry", "tag": "DINNER"})
+    async with app.state.catalog_test_session_factory() as session:
+        ingredient = await session.scalar(
+            select(Ingredient).where(Ingredient.recipe_id == UUID(recipe_id))
+        )
+        assert ingredient is not None
+        assert ingredient.name == "Cafe\u0301   Beans"
+        assert ingredient.normalized_name == "café beans"
+
+    list_response = await api_client.get(
+        "/v1/recipes",
+        params=[("text", "curry"), ("requiredTag", "DINNER")],
+    )
     assert list_response.status_code == 200
-    assert [item["id"] for item in list_response.json()["items"]] == [recipe_id]
+    assert [item["recipe"]["id"] for item in list_response.json()["items"]] == [recipe_id]
 
     update_response = await api_client.patch(
         f"/v1/recipes/{recipe_id}",
-        json={"title": "Fast Chickpea Curry", "totalMinutes": 30, "tags": ["quick"]},
+        json={
+            "title": "Fast Chickpea Curry",
+            "totalMinutes": 30,
+            "tags": ["quick"],
+            "ingredients": [
+                {
+                    "rawText": "  Cafe\u0301   Beans ",
+                    "name": "  Cafe\u0301   Beans ",
+                    "quantity": 250,
+                    "unit": "g",
+                }
+            ],
+        },
     )
     assert update_response.status_code == 200
     assert update_response.json()["title"] == "Fast Chickpea Curry"
     assert update_response.json()["totalMinutes"] == 30
     assert update_response.json()["tags"] == ["quick"]
+
+    async with app.state.catalog_test_session_factory() as session:
+        ingredient = await session.scalar(
+            select(Ingredient).where(Ingredient.recipe_id == UUID(recipe_id))
+        )
+        assert ingredient is not None
+        assert ingredient.name == "Cafe\u0301   Beans"
+        assert ingredient.normalized_name == "café beans"
 
     get_response = await api_client.get(f"/v1/recipes/{recipe_id}")
     assert get_response.status_code == 200

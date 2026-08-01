@@ -3,9 +3,9 @@
 | Variable | Consumer | Required when | Purpose |
 |---|---|---:|---|
 | `CATALOG_DATABASE_URL` | Catalog | yes | Catalog-role PostgreSQL DSN |
-| `CATALOG_REDIS_URL` | Catalog | no | Optional recommendation-cache Redis URL; defaults to `redis://localhost:6379` |
+| `CATALOG_REDIS_URL` | Catalog | no | Optional recipe-query cache Redis URL; defaults to `redis://localhost:6379` |
 | `CATALOG_REDIS_TIMEOUT_SECONDS` | Catalog | no | Shared Redis connect/command deadline in seconds; defaults to 1 and is bounded above by 10 |
-| `CATALOG_RECOMMENDATION_CACHE_TTL_SECONDS` | Catalog | no | Recommendation-cache TTL in seconds; defaults to 1,800 and is bounded from 60 to 86,400 |
+| `CATALOG_RECIPE_QUERY_CACHE_TTL_SECONDS` | Catalog | no | Recipe-query cache TTL in seconds; defaults to 1,800 and is bounded from 60 to 86,400 |
 | `INGESTION_DATABASE_URL` | Ingestion/worker | yes | Ingestion-role PostgreSQL DSN |
 | `INGESTION_REDIS_URL` | Ingestion API | yes | Readiness, locks, and rate limiting |
 | `INGESTION_CELERY_BROKER_URL` | Worker/dispatcher | yes | Dedicated persistent, `noeviction` Celery Redis broker |

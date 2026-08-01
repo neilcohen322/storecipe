@@ -13,11 +13,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from catalog.models import Recipe, User
-from catalog.recommendation_cache import CacheReadOutcome, RecommendationCache
-from catalog.recommendations import RecommendationRequest, RecommendationResponse
+from catalog.recipe_queries import RecipeQueryPage, RecipeQueryRequest
+from catalog.recipe_query_cache import CacheReadOutcome, RecipeQueryCache
 from catalog.schemas import RecipePatch
 from catalog.services import ratings as rating_service
 from catalog.services import recipes as recipe_service
+from catalog.services.users import advance_catalog_version
 
 pytestmark = pytest.mark.integration
 
@@ -74,7 +75,7 @@ async def test_overlapping_mutations_advance_twice_and_stale_cache_key_misses(
     first_session = factory()
     second_session = factory()
     real_commit = AsyncSession.commit
-    real_rating_advance = rating_service.advance_catalog_version
+    real_rating_advance = advance_catalog_version
 
     async def controlled_commit(session: AsyncSession) -> None:
         if session is first_session:
@@ -121,14 +122,10 @@ async def test_overlapping_mutations_advance_twice_and_stale_cache_key_misses(
             )
         assert first_version == 1
 
-        request = RecommendationRequest()
-        response = RecommendationResponse(
-            request=request,
-            catalog_version=first_version,
-            items=[],
-        )
-        cache = RecommendationCache(MemoryRedis())
-        assert await cache.set(user_id, first_version, request, response)
+        request = RecipeQueryRequest()
+        page = RecipeQueryPage(items=[])
+        cache = RecipeQueryCache(MemoryRedis())
+        assert await cache.set(user_id, first_version, request, page)
 
         await asyncio.wait_for(second_commit_reached.wait(), timeout=1)
         allow_second_commit.set()

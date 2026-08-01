@@ -1,24 +1,23 @@
-"""Recipe workflows: queries, transactions, and serialization to view schemas."""
+"""Recipe workflows: transactions and serialization to view schemas."""
 
-import base64
-from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import Select, and_, or_, select
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from catalog.models import Ingredient, Instruction, Rating, Recipe, RecipeTag, Tag, User
+from catalog.models import Ingredient, Instruction, Recipe, RecipeTag, Tag, User
+from catalog.recipe_queries import normalize_query_text
 from catalog.schemas import (
     ImportedRecipeCreate,
+    IngredientInput,
     RecipeCreate,
-    RecipePage,
     RecipePatch,
     RecipeView,
 )
-from catalog.services.errors import InvalidCursor, InvalidFilter, RecipeNotFound
+from catalog.services.errors import RecipeNotFound
 from catalog.services.users import advance_catalog_version, resolve_user
 
 
@@ -32,39 +31,19 @@ def _recipe_query() -> Select[tuple[Recipe]]:
 
 
 def _normalize_tags(tags: list[str]) -> list[str]:
-    return sorted({" ".join(tag.split()).lower() for tag in tags if tag.strip()})
+    normalized_tags = (normalize_query_text(tag) for tag in tags)
+    return sorted({tag for tag in normalized_tags if tag})
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def _encode_cursor(recipe: Recipe) -> str:
-    created_at = recipe.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=UTC)
-    raw = f"{created_at.isoformat()}|{recipe.id}".encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        raw = base64.urlsafe_b64decode(padded.encode()).decode()
-        timestamp, recipe_id = raw.rsplit("|", 1)
-        created_at = datetime.fromisoformat(timestamp)
-        if created_at.tzinfo is None:
-            raise ValueError("cursor timestamp must include a timezone")
-        return created_at, UUID(recipe_id)
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise InvalidCursor() from exc
-
-
-def _nonblank_filter(value: str, name: str) -> str:
-    normalized = value.strip()
-    if not normalized:
-        raise InvalidFilter(name)
-    return normalized
+def _build_ingredients(ingredients: list[IngredientInput]) -> list[Ingredient]:
+    return [
+        Ingredient(
+            position=position,
+            normalized_name=normalize_query_text(ingredient.name),
+            **ingredient.model_dump(),
+        )
+        for position, ingredient in enumerate(ingredients)
+    ]
 
 
 async def _build_recipe_tags(session: AsyncSession, tags: list[str]) -> list[RecipeTag]:
@@ -96,10 +75,7 @@ async def _new_recipe(
         prep_minutes=payload.prep_minutes,
         cook_minutes=payload.cook_minutes,
         total_minutes=payload.total_minutes,
-        ingredients=[
-            Ingredient(position=position, **ingredient.model_dump())
-            for position, ingredient in enumerate(payload.ingredients)
-        ],
+        ingredients=_build_ingredients(payload.ingredients),
         instructions=[
             Instruction(position=position, text=text)
             for position, text in enumerate(payload.instructions)
@@ -183,65 +159,6 @@ async def create_recipe(session: AsyncSession, subject: str, payload: RecipeCrea
     return _recipe_view(loaded, user.id)
 
 
-async def list_recipes(
-    session: AsyncSession,
-    subject: str,
-    *,
-    query: str | None = None,
-    tag: str | None = None,
-    max_total_minutes: int | None = None,
-    min_rating: int | None = None,
-    cursor: str | None = None,
-    limit: int = 20,
-) -> RecipePage:
-    user = await resolve_user(session, subject)
-    statement = _recipe_query().where(Recipe.user_id == user.id)
-    if query:
-        pattern = f"%{_escape_like(_nonblank_filter(query, 'query'))}%"
-        statement = statement.where(
-            or_(
-                Recipe.title.ilike(pattern, escape="\\"),
-                Recipe.ingredients.any(
-                    or_(
-                        Ingredient.name.ilike(pattern, escape="\\"),
-                        Ingredient.raw_text.ilike(pattern, escape="\\"),
-                    )
-                ),
-            )
-        )
-    if tag:
-        normalized_tag = " ".join(_nonblank_filter(tag, "tag").split()).lower()
-        statement = statement.where(
-            Recipe.recipe_tags.any(RecipeTag.tag.has(Tag.name == normalized_tag))
-        )
-    if max_total_minutes is not None:
-        statement = statement.where(
-            Recipe.total_minutes.is_not(None),
-            Recipe.total_minutes <= max_total_minutes,
-        )
-    if min_rating is not None:
-        statement = statement.where(
-            Recipe.ratings.any(and_(Rating.user_id == user.id, Rating.value >= min_rating))
-        )
-    if cursor is not None:
-        cursor_created_at, cursor_id = _decode_cursor(cursor)
-        statement = statement.where(
-            or_(
-                Recipe.created_at < cursor_created_at,
-                and_(Recipe.created_at == cursor_created_at, Recipe.id < cursor_id),
-            )
-        )
-    statement = statement.order_by(Recipe.created_at.desc(), Recipe.id.desc()).limit(limit + 1)
-    recipes = list((await session.scalars(statement)).unique())
-    has_more = len(recipes) > limit
-    page = recipes[:limit]
-    next_cursor = _encode_cursor(page[-1]) if has_more and page else None
-    return RecipePage(
-        items=[_recipe_view(recipe, user.id) for recipe in page],
-        next_cursor=next_cursor,
-    )
-
-
 async def get_recipe(session: AsyncSession, subject: str, recipe_id: UUID) -> RecipeView:
     user = await resolve_user(session, subject)
     recipe = await get_owned_recipe(session, user.id, recipe_id)
@@ -269,10 +186,9 @@ async def update_recipe(
         setattr(recipe, field, value)
 
     if "ingredients" in payload.model_fields_set and payload.ingredients is not None:
-        recipe.ingredients = [
-            Ingredient(position=position, **ingredient.model_dump())
-            for position, ingredient in enumerate(payload.ingredients)
-        ]
+        recipe.ingredients.clear()
+        await session.flush()
+        recipe.ingredients = _build_ingredients(payload.ingredients)
     if "instructions" in payload.model_fields_set and payload.instructions is not None:
         recipe.instructions = [
             Instruction(position=position, text=text)

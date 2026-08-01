@@ -1,17 +1,46 @@
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
+from pydantic import ConfigDict, Field
 
 from catalog.auth import Principal, require_scopes
 from catalog.database import SessionDependency
-from catalog.schemas import RecipeCreate, RecipePage, RecipePatch, RecipeView
+from catalog.recipe_queries import RecipeQueryPage, RecipeQueryRequest
+from catalog.schemas import RecipeCreate, RecipePatch, RecipeView
+from catalog.services import recipe_queries as recipe_query_service
 from catalog.services import recipes as recipe_service
 
 router = APIRouter(prefix="/v1/recipes", tags=["recipes"])
 
 ReadPrincipal = Annotated[Principal, Depends(require_scopes("recipes:read"))]
 WritePrincipal = Annotated[Principal, Depends(require_scopes("recipes:write"))]
+
+
+class RecipeQueryParameters(RecipeQueryRequest):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    text: Annotated[str | None, Field(max_length=200)] = None
+    required_ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=32, alias="requiredIngredient"
+    )
+    available_ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=64, alias="availableIngredient"
+    )
+    required_tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=16, alias="requiredTag"
+    )
+    preferred_tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=16, alias="preferredTag"
+    )
+    max_total_minutes: int | None = Field(default=None, ge=0, alias="maxTotalMinutes")
+    min_rating: int | None = Field(default=None, ge=1, le=5, alias="minRating")
+    rating_state: Literal["any", "rated", "unrated"] = Field(default="any", alias="ratingState")
+    sort: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=6
+    )
+    cursor: Annotated[str | None, Field(max_length=1024)] = None
+    limit: Annotated[int, Field(ge=1, le=100)] = 20
 
 
 @router.post("", response_model=RecipeView, status_code=status.HTTP_201_CREATED)
@@ -23,26 +52,16 @@ async def create_recipe(
     return await recipe_service.create_recipe(session, principal.subject, payload)
 
 
-@router.get("", response_model=RecipePage)
-async def list_recipes(
+@router.get("", response_model=RecipeQueryPage)
+async def query_recipes(
+    request: Request,
     session: SessionDependency,
     principal: ReadPrincipal,
-    query: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
-    tag: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
-    max_total_minutes: Annotated[int | None, Query(alias="maxTotalMinutes", ge=0)] = None,
-    min_rating: Annotated[int | None, Query(alias="minRating", ge=1, le=5)] = None,
-    cursor: Annotated[str | None, Query(max_length=512)] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-) -> RecipePage:
-    return await recipe_service.list_recipes(
-        session,
-        principal.subject,
-        query=query,
-        tag=tag,
-        max_total_minutes=max_total_minutes,
-        min_rating=min_rating,
-        cursor=cursor,
-        limit=limit,
+    parameters: Annotated[RecipeQueryParameters, Query()],
+) -> RecipeQueryPage:
+    query = RecipeQueryRequest.model_validate(parameters.model_dump())
+    return await recipe_query_service.query_recipes(
+        session, principal.subject, query, request.app.state.recipe_query_cache
     )
 
 

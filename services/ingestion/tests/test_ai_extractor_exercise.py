@@ -5,9 +5,9 @@ import pytest
 
 from ingestion.ai_extractor import (
     DEFAULT_OPENROUTER_MODEL,
-    AiohttpOpenRouterTransport,
     AiExtractionError,
     AiExtractionFailureCode,
+    AiohttpOpenRouterTransport,
     AiRecipeExtractor,
     OpenRouterCompletion,
     OpenRouterUsage,

@@ -112,6 +112,7 @@ class Ingredient(Base):
         UniqueConstraint("recipe_id", "position", name="uq_ingredients_recipe_position"),
         CheckConstraint("position >= 0", name="nonnegative_position"),
         CheckConstraint("quantity IS NULL OR quantity >= 0", name="nonnegative_quantity"),
+        Index("ix_ingredients_normalized_name_recipe", "normalized_name", "recipe_id"),
         {"schema": CATALOG_SCHEMA},
     )
 
@@ -122,6 +123,7 @@ class Ingredient(Base):
     position: Mapped[int]
     raw_text: Mapped[str] = mapped_column(Text)
     name: Mapped[str] = mapped_column(String(200))
+    normalized_name: Mapped[str] = mapped_column(String(200))
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

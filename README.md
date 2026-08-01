@@ -59,6 +59,11 @@ pnpm run web
 powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify.ps1
 ```
 
+External integration checks are opt-in. Set `CATALOG_TEST_DATABASE_URL` only to a
+disposable PostgreSQL database: the Catalog integration module applies all migrations
+to that target. Set `STORECIPE_TEST_REDIS_URL` only to an isolated Redis instance.
+When either variable is unset, its integration checks report explicit skips.
+
 ## Contract-first rule
 
 The files under [`contracts/`](contracts/) are the authoritative cross-service
@@ -72,3 +77,15 @@ Recipe and MCP endpoints require an Auth0 access token whose issuer and audience
 require `recipes:write`. Leaving Auth0 unset is safe for local infrastructure checks:
 health endpoints remain available, while protected endpoints return `401`.
 Rating mutations require the separate `ratings:write` scope.
+
+## Deterministic recipe queries
+
+`GET /v1/recipes` is the authenticated collection-read endpoint. Repeat
+`requiredIngredient`, `preferredTag`, and the other ingredient/tag context parameters
+to provide sets; repeat `sort` to provide an ordered precedence list such as
+`sort=rating:desc&sort=totalMinutes:asc`. Catalog applies those explicit filters and
+sorts, places missing values last, and appends `recipeId ASC` as a deterministic final
+tie-breaker.
+
+Catalog does not infer preferences or predict enjoyment. In Week 11, the LLM will
+choose the filters and sort priorities supplied to this endpoint.

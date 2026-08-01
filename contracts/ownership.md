@@ -4,7 +4,7 @@
 |---|---|---|
 | Recipes, ingredients, steps, tags | Catalog | Catalog REST/application layer |
 | Ratings and `catalog_version` | Catalog | Catalog REST/application layer |
-| Search and recommendations | Catalog | Catalog REST or MCP |
+| Deterministic recipe queries and query cache | Catalog | Catalog REST or MCP |
 | MCP endpoint and tools | Catalog | Direct application calls; ingestion REST for imports |
 | Import jobs and state machine | Ingestion | Ingestion REST |
 | URL/text extraction telemetry | Ingestion | No direct database access by catalog |
