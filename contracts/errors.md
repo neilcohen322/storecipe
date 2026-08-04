@@ -18,6 +18,68 @@ HTTP APIs use `application/problem+json` following RFC 9457. Every error has:
 and `errors` are optional. Internal exceptions are logged with the same request ID
 but never returned to clients.
 
+## REST-backed MCP gateway
+
+The standalone MCP gateway is an adapter, not a second domain-error authority. It
+makes one direct Catalog REST request per tool invocation, forwards only safe,
+allowlisted outcomes, and never echoes tokens, subjects, idempotency keys, recipe
+bodies, internal URLs, headers, SQL, stack traces, or unknown problem fields.
+
+The public MCP resource advertises exactly these scopes:
+
+| Tool | Scope |
+|---|---|
+| `query_recipes` | `recipes:read` |
+| `get_recipe` | `recipes:read` |
+| `create_recipe` | `recipes:write` |
+| `rate_recipe` | `ratings:write` |
+
+The gateway verifies the bearer token, issuer, audience/resource, signature/JWKS,
+expiry, structure, and required tool scope. It then forwards the same raw bearer
+token to Catalog, which verifies it again and applies REST authorization and
+ownership. A missing scope returns a complete MCP challenge in
+`_meta["mcp/www_authenticate"]`, including the metadata URL, exact required scope,
+`error="insufficient_scope"`, and a concise description. For example:
+
+```text
+Bearer resource_metadata="https://mcp.example/.well-known/oauth-protected-resource/mcp", error="insufficient_scope", error_description="The access token lacks a required scope.", scope="recipes:write"
+```
+
+Catalog outcomes map to safe MCP results as follows:
+
+| Catalog outcome | MCP category/result | Retry guidance |
+|---|---|---|
+| `401` | Authentication challenge / `authentication_required` | Reauthorize; do not retry the same token |
+| `403` | Scope challenge / `insufficient_scope` | Reauthorize with the exact tool scope |
+| `404` | `recipe_not_found` | Not retryable without changing the resource or identity |
+| `409` + `idempotency_conflict` | `idempotency_conflict` | Fix the key/payload pair |
+| `409` + `stale_recipe_query_cursor` | `stale_recipe_query_cursor` | Start a fresh query without the stale cursor |
+| `422` | `invalid_input` or `invalid_query` | Correct the structured arguments |
+| `429` | `catalog_rate_limited` | Retry only after a bounded `Retry-After`, when supplied |
+| timeout, connect/pool failure, malformed success, or `5xx` | `temporary_catalog_failure` | Retry may be appropriate; the gateway itself does not retry |
+
+MCP tool failures are structured safe results with `isError=true`; successful typed
+results retain their output schemas. The gateway has no import tools, recommendation
+tools, or server-side LLM call path. Import and import-status errors remain owned by
+Ingestion's REST contract. Gateway rate limiting is limited to deployment/edge
+controls; no new per-operation limiter is hidden inside the adapter.
+
+## Catalog recipe-creation idempotency
+
+Public `POST /v1/recipes` requires an `Idempotency-Key` header of 8--128 ASCII
+characters matching `^[A-Za-z0-9._:-]+$`. The key is scoped to the authenticated
+user and is stored with a canonical payload hash in Catalog's transaction.
+
+| Request state | HTTP result |
+|---|---|
+| First user/key/payload use | `201 Created` with the new recipe |
+| Exact replay for the same user/key/payload | `200 OK` with the original recipe |
+| Same user/key with different validated content | `409 Conflict` with `errorCategory: idempotency_conflict` |
+
+The recipe, catalog-version increment, and idempotency record commit atomically.
+Different users may reuse the same key independently. The gateway forwards the key
+and keeps no durable retry state, so replicas remain interchangeable.
+
 ## Duplicate URL import conflicts
 
 `POST /v1/imports/url` returns `409 Conflict` with one of the following RFC 9457

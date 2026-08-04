@@ -1,0 +1,16 @@
+meta {
+  name: MCP gateway readiness
+  type: http
+  seq: 6
+}
+get {
+  url: {{mcp_url}}/health/ready
+  body: none
+  auth: none
+}
+
+tests {
+  test("MCP gateway dependencies are ready", function () {
+    expect(res.status).to.equal(200);
+  });
+}

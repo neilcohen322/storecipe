@@ -1,0 +1,16 @@
+meta {
+  name: MCP gateway liveness
+  type: http
+  seq: 5
+}
+get {
+  url: {{mcp_url}}/health/live
+  body: none
+  auth: none
+}
+
+tests {
+  test("MCP gateway is alive", function () {
+    expect(res.status).to.equal(200);
+  });
+}

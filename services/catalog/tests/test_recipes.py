@@ -66,11 +66,67 @@ def recipe_payload() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
+async def test_public_recipe_create_replays_and_conflicts_by_idempotency_key(
+    api_client: AsyncClient,
+) -> None:
+    key = "catalog-http-key"
+    payload = recipe_payload()
+
+    first = await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": key},
+        json=payload,
+    )
+    replay = await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": key},
+        json=payload,
+    )
+    conflict_payload = {**payload, "title": "Different"}
+    conflict = await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": key},
+        json=conflict_payload,
+    )
+
+    assert (first.status_code, replay.status_code, conflict.status_code) == (201, 200, 409)
+    assert first.json()["id"] == replay.json()["id"]
+    assert conflict.json()["errorCategory"] == "idempotency_conflict"
+    assert key not in conflict.text
+    assert "Different" not in conflict.text
+
+
+@pytest.mark.asyncio
+async def test_public_recipe_create_rejects_invalid_idempotency_keys_without_leaking_input(
+    api_client: AsyncClient,
+) -> None:
+    payload = recipe_payload()
+    invalid_headers = [
+        ({}, None),
+        ({"Idempotency-Key": "short"}, "short"),
+        ({"Idempotency-Key": "x" * 129}, "x" * 129),
+        ({"Idempotency-Key": "contains space"}, "contains space"),
+        ({"Idempotency-Key": "slash/value"}, "slash/value"),
+        ({"Idempotency-Key": b"\xc3\xa9" * 8}, "\u00e9" * 8),
+    ]
+
+    for headers, key in invalid_headers:
+        response = await api_client.post("/v1/recipes", headers=headers, json=payload)
+
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+        if key is not None:
+            assert key not in response.text
+        assert payload["title"] not in response.text
+
+
+@pytest.mark.asyncio
 async def test_recipe_query_returns_structured_page_with_repeated_parameters(
     api_client: AsyncClient,
 ) -> None:
     response = await api_client.post(
         "/v1/recipes",
+        headers={"Idempotency-Key": "query-structured-key"},
         json=recipe_payload(),
     )
     assert response.status_code == 201
@@ -101,6 +157,7 @@ async def test_recipe_query_accepts_repeated_required_ingredients_and_preferred_
 ) -> None:
     response = await api_client.post(
         "/v1/recipes",
+        headers={"Idempotency-Key": "query-required-key"},
         json=recipe_payload(),
     )
     assert response.status_code == 201
@@ -133,7 +190,9 @@ async def test_recipe_query_accepts_empty_query(api_client: AsyncClient) -> None
 
 @pytest.mark.asyncio
 async def test_recipe_query_returns_null_match_without_context(api_client: AsyncClient) -> None:
-    created = await api_client.post("/v1/recipes", json=recipe_payload())
+    created = await api_client.post(
+        "/v1/recipes", headers={"Idempotency-Key": "query-empty-match-key"}, json=recipe_payload()
+    )
     assert created.status_code == 201
 
     response = await api_client.get("/v1/recipes")
@@ -202,6 +261,7 @@ def test_recipe_collection_requires_authentication(client: TestClient) -> None:
 async def test_recipe_ingredient_normalized_name_on_create(api_client: AsyncClient) -> None:
     response = await api_client.post(
         "/v1/recipes",
+        headers={"Idempotency-Key": "ingredient-normalized-key"},
         json={
             **recipe_payload(),
             "ingredients": [
@@ -228,6 +288,7 @@ async def test_recipe_ingredient_normalized_name_on_create(api_client: AsyncClie
 async def test_recipe_crud_round_trip(api_client: AsyncClient) -> None:
     created_response = await api_client.post(
         "/v1/recipes",
+        headers={"Idempotency-Key": "crud-round-trip-key"},
         json={
             **recipe_payload(),
             "ingredients": [
@@ -312,7 +373,13 @@ async def test_recipe_ownership_is_enforced_as_not_found(api_client: AsyncClient
         )
 
     app.dependency_overrides[get_principal] = principal_for_request
-    created = (await api_client.post("/v1/recipes", json=recipe_payload())).json()
+    created = (
+        await api_client.post(
+            "/v1/recipes",
+            headers={"Idempotency-Key": "ownership-key"},
+            json=recipe_payload(),
+        )
+    ).json()
 
     current_subject = "auth0|owner-b"
     assert (await api_client.get(f"/v1/recipes/{created['id']}")).status_code == 404

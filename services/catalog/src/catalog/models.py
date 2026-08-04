@@ -51,6 +51,9 @@ class User(Base):
     ratings: Mapped[list["Rating"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    recipe_creation_idempotency_records: Mapped[list["RecipeCreationIdempotency"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Recipe(Base):
@@ -104,6 +107,31 @@ class Recipe(Base):
     ratings: Mapped[list["Rating"]] = relationship(
         back_populates="recipe", cascade="all, delete-orphan"
     )
+    recipe_creation_idempotency: Mapped["RecipeCreationIdempotency | None"] = relationship(
+        back_populates="recipe", cascade="all, delete-orphan", single_parent=True
+    )
+
+
+class RecipeCreationIdempotency(Base):
+    __tablename__ = "recipe_creation_idempotency"
+    __table_args__ = (
+        UniqueConstraint("recipe_id"),
+        CheckConstraint("length(payload_hash) = 64", name="payload_hash_length"),
+        {"schema": CATALOG_SCHEMA},
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey(f"{CATALOG_SCHEMA}.users.id", ondelete="CASCADE"), primary_key=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    recipe_id: Mapped[UUID] = mapped_column(
+        ForeignKey(f"{CATALOG_SCHEMA}.recipes.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    user: Mapped[User] = relationship(back_populates="recipe_creation_idempotency_records")
+    recipe: Mapped[Recipe] = relationship(back_populates="recipe_creation_idempotency")
 
 
 class Ingredient(Base):

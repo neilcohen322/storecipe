@@ -66,7 +66,7 @@ services:
       AUTH0_ISSUER: ${AUTH0_ISSUER:-}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-}
       AUTH0_JWKS_URL: ${AUTH0_JWKS_URL:-}
-      MCP_RESOURCE_URL: ${MCP_RESOURCE_URL:-http://localhost:8000/mcp}
+      MCP_RESOURCE_URL: ${MCP_RESOURCE_URL:-http://localhost/mcp}
     ports:
       - "${CATALOG_PORT:-8000}:8000"
     depends_on:
@@ -74,6 +74,33 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: services/mcp_gateway/Dockerfile
+    environment:
+      MCP_CATALOG_API_URL: ${MCP_CATALOG_API_URL:-http://catalog-api:8000}
+      MCP_CATALOG_MAX_RESPONSE_BYTES: ${MCP_CATALOG_MAX_RESPONSE_BYTES:-2097152}
+      MCP_CONNECT_TIMEOUT_SECONDS: ${MCP_CONNECT_TIMEOUT_SECONDS:-5}
+      MCP_POOL_TIMEOUT_SECONDS: ${MCP_POOL_TIMEOUT_SECONDS:-5}
+      MCP_READ_TIMEOUT_SECONDS: ${MCP_READ_TIMEOUT_SECONDS:-10}
+      MCP_WRITE_TIMEOUT_SECONDS: ${MCP_WRITE_TIMEOUT_SECONDS:-10}
+      AUTH0_ISSUER: ${AUTH0_ISSUER:-}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-}
+      AUTH0_JWKS_URL: ${AUTH0_JWKS_URL:-}
+      MCP_RESOURCE_URL: ${MCP_RESOURCE_URL:-http://localhost/mcp}
+    ports:
+      - "${MCP_PORT:-8002}:8002"
+    depends_on:
+      catalog-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/ready')"]
       interval: 10s
       timeout: 3s
       retries: 10

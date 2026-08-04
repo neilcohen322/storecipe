@@ -9,13 +9,17 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from catalog.models import Base
+from catalog.models import Base, Recipe, RecipeCreationIdempotency, User
+from catalog.recipe_creation_idempotency import recipe_payload_hash
 from catalog.schemas import ImportedRecipeCreate, RecipeCreate
 from catalog.services import ratings as rating_service
 from catalog.services import recipes as recipe_service
-from catalog.services.errors import RecipeNotFound
+from catalog.services.errors import IdempotencyConflict, RecipeNotFound
+from catalog.services.users import resolve_user
 
 SUBJECT = "auth0|chef"
 
@@ -87,6 +91,135 @@ async def test_create_and_get_roundtrip(session: AsyncSession) -> None:
     fetched = await recipe_service.get_recipe(session, SUBJECT, created.id)
     assert fetched.title == "Weeknight Soup"
     assert fetched.tags == ["quick"]
+
+
+@pytest.mark.asyncio
+async def test_idempotent_create_replays_original_recipe(session: AsyncSession) -> None:
+    key = "550e8400-e29b-41d4-a716-446655440000"
+    first, first_replayed = await recipe_service.create_recipe_idempotently(
+        session, SUBJECT, key, _recipe_create()
+    )
+    replay, replayed = await recipe_service.create_recipe_idempotently(
+        session, SUBJECT, key, _recipe_create()
+    )
+
+    assert not first_replayed
+    assert replayed
+    assert replay.id == first.id
+    assert await session.scalar(select(func.count(Recipe.id))) == 1
+    user = await session.scalar(select(User).where(User.auth_subject == SUBJECT))
+    assert user is not None and user.catalog_version == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_reuse_with_different_payload_conflicts(
+    session: AsyncSession,
+) -> None:
+    key = "550e8400-e29b-41d4-a716-446655440000"
+    await recipe_service.create_recipe_idempotently(session, SUBJECT, key, _recipe_create("Soup"))
+
+    with pytest.raises(IdempotencyConflict):
+        await recipe_service.create_recipe_idempotently(
+            session, SUBJECT, key, _recipe_create("Stew")
+        )
+
+
+@pytest.mark.asyncio
+async def test_same_idempotency_key_is_isolated_between_subjects(
+    session: AsyncSession,
+) -> None:
+    key = "550e8400-e29b-41d4-a716-446655440000"
+    first, _ = await recipe_service.create_recipe_idempotently(
+        session, SUBJECT, key, _recipe_create()
+    )
+    second, _ = await recipe_service.create_recipe_idempotently(
+        session, "auth0|another-chef", key, _recipe_create()
+    )
+
+    assert second.id != first.id
+    assert await session.scalar(select(func.count(Recipe.id))) == 2
+    users = list(await session.scalars(select(User).order_by(User.auth_subject)))
+    assert [user.catalog_version for user in users] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_idempotent_create_recovers_winner_after_unique_conflict(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = await resolve_user(session, SUBJECT)
+    user_id = user.id
+    payload = _recipe_create("Winner payload")
+    key = "550e8400-e29b-41d4-a716-446655440000"
+    real_commit = AsyncSession.commit
+    real_rollback = AsyncSession.rollback
+    winner_id: UUID | None = None
+    conflict = IntegrityError("idempotency conflict", {}, Exception("duplicate key"))
+
+    async def fail_commit(current: AsyncSession) -> None:
+        if current is session:
+            raise conflict
+        await real_commit(current)
+
+    async def rollback_and_persist_winner(current: AsyncSession) -> None:
+        nonlocal winner_id
+        await real_rollback(current)
+        if current is session and winner_id is None:
+            winner = Recipe(user_id=user_id, title=payload.title)
+            current.add(winner)
+            await current.flush()
+            winner_id = winner.id
+            current.add(
+                RecipeCreationIdempotency(
+                    user_id=user_id,
+                    idempotency_key=key,
+                    payload_hash=recipe_payload_hash(payload),
+                    recipe_id=winner.id,
+                )
+            )
+            await real_commit(current)
+
+    monkeypatch.setattr(AsyncSession, "commit", fail_commit)
+    monkeypatch.setattr(AsyncSession, "rollback", rollback_and_persist_winner)
+
+    recovered, recovered_replayed = await recipe_service.create_recipe_idempotently(
+        session, SUBJECT, key, payload
+    )
+
+    assert recovered_replayed
+    assert recovered.id == winner_id
+    replay, replayed = await recipe_service.create_recipe_idempotently(
+        session, SUBJECT, key, payload
+    )
+    assert replayed
+    assert replay.id == winner_id
+
+
+@pytest.mark.asyncio
+async def test_idempotent_create_reraises_integrity_error_without_winner(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await resolve_user(session, SUBJECT)
+    conflict = IntegrityError("unrelated integrity failure", {}, Exception("check failed"))
+    real_commit = AsyncSession.commit
+
+    async def fail_commit(current: AsyncSession) -> None:
+        if current is session:
+            raise conflict
+        await real_commit(current)
+
+    monkeypatch.setattr(AsyncSession, "commit", fail_commit)
+
+    with pytest.raises(IntegrityError) as raised:
+        await recipe_service.create_recipe_idempotently(
+            session,
+            SUBJECT,
+            "550e8400-e29b-41d4-a716-446655440000",
+            _recipe_create(),
+        )
+
+    assert raised.value is conflict
 
 
 @pytest.mark.asyncio

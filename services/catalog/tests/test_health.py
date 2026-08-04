@@ -1,6 +1,4 @@
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -113,7 +111,7 @@ class _ClosingRedis:
 
 
 @pytest.mark.asyncio
-async def test_redis_close_failure_does_not_prevent_engine_disposal(
+async def test_catalog_shutdown_redis_failure_does_not_prevent_engine_disposal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine = _FakeEngine()
@@ -122,10 +120,6 @@ async def test_redis_close_failure_does_not_prevent_engine_disposal(
         recipe_query_cache_ttl_seconds=1800,
         redis_timeout_seconds=1.0,
     )
-
-    @asynccontextmanager
-    async def no_op_mcp_lifespan(_: object) -> AsyncIterator[None]:
-        yield
 
     def closing_redis(redis_url: str, *, timeout_seconds: float) -> _ClosingRedis:
         assert redis_url == "redis://test"
@@ -136,7 +130,6 @@ async def test_redis_close_failure_does_not_prevent_engine_disposal(
     monkeypatch.setattr(main, "create_engine", lambda: engine)
     monkeypatch.setattr(main, "create_session_factory", lambda _: object())
     monkeypatch.setattr(main, "create_redis_client", closing_redis)
-    monkeypatch.setattr(main.mcp_app.router, "lifespan_context", no_op_mcp_lifespan)
 
     application = FastAPI()
     with pytest.raises(RedisError, match="Redis stopped"):
@@ -213,6 +206,7 @@ def test_recipe_routes_report_insufficient_scope(client: TestClient) -> None:
     try:
         response = client.post(
             "/v1/recipes",
+            headers={"Idempotency-Key": "scope-check-key"},
             json={"title": "No permission", "ingredients": [], "instructions": []},
         )
     finally:

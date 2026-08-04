@@ -9,7 +9,7 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["services/catalog", "services/ingestion"]
+members = ["services/catalog", "services/ingestion", "services/mcp_gateway"]
 
 [dependency-groups]
 dev = [
@@ -25,7 +25,11 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-q --strict-markers --import-mode=importlib"
-testpaths = ["services/catalog/tests", "services/ingestion/tests"]
+testpaths = [
+    "services/catalog/tests",
+    "services/ingestion/tests",
+    "services/mcp_gateway/tests",
+]
 markers = [
     "integration: requires an explicitly configured PostgreSQL integration database",
     "docker: requires the explicitly enabled local Docker integration stack",
@@ -35,7 +39,7 @@ markers = [
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-src = ["services/catalog/src", "services/ingestion/src"]
+src = ["services/catalog/src", "services/ingestion/src", "services/mcp_gateway/src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
@@ -44,6 +48,7 @@ select = ["E", "F", "I", "B", "UP", "ASYNC"]
 python_version = "3.13"
 strict = true
 warn_unreachable = true
+files = ["services/catalog/src", "services/ingestion/src", "services/mcp_gateway/src"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]

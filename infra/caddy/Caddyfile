@@ -14,13 +14,13 @@
     }
 
     # MCP clients discover OAuth metadata at the public resource origin and
-    # connect to the Catalog-owned Streamable HTTP endpoint.
+    # connect to the standalone gateway's Streamable HTTP endpoint.
     handle /.well-known/oauth-protected-resource* {
-        reverse_proxy catalog-api:8000
+        reverse_proxy mcp-gateway:8002
     }
 
     handle /mcp* {
-        reverse_proxy catalog-api:8000
+        reverse_proxy mcp-gateway:8002
     }
 
     # The internal catalog route is intentionally not proxied.

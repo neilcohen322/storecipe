@@ -1,7 +1,7 @@
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from pydantic import ConfigDict, Field
 
 from catalog.auth import Principal, require_scopes
@@ -15,6 +15,15 @@ router = APIRouter(prefix="/v1/recipes", tags=["recipes"])
 
 ReadPrincipal = Annotated[Principal, Depends(require_scopes("recipes:read"))]
 WritePrincipal = Annotated[Principal, Depends(require_scopes("recipes:write"))]
+RecipeCreateIdempotencyKey = Annotated[
+    str,
+    Header(
+        alias="Idempotency-Key",
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+]
 
 
 class RecipeQueryParameters(RecipeQueryRequest):
@@ -46,10 +55,17 @@ class RecipeQueryParameters(RecipeQueryRequest):
 @router.post("", response_model=RecipeView, status_code=status.HTTP_201_CREATED)
 async def create_recipe(
     payload: RecipeCreate,
+    response: Response,
     session: SessionDependency,
     principal: WritePrincipal,
+    idempotency_key: RecipeCreateIdempotencyKey,
 ) -> RecipeView:
-    return await recipe_service.create_recipe(session, principal.subject, payload)
+    view, replayed = await recipe_service.create_recipe_idempotently(
+        session, principal.subject, idempotency_key, payload
+    )
+    if replayed:
+        response.status_code = status.HTTP_200_OK
+    return view
 
 
 @router.get("", response_model=RecipeQueryPage)

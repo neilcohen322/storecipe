@@ -1,5 +1,4 @@
 from functools import lru_cache
-from urllib.parse import urlsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,9 +22,6 @@ class Settings(BaseSettings):
     auth0_issuer: str = Field(default="", validation_alias="AUTH0_ISSUER")
     auth0_audience: str = Field(default="", validation_alias="AUTH0_AUDIENCE")
     auth0_jwks_url: str = Field(default="", validation_alias="AUTH0_JWKS_URL")
-    mcp_resource_url: str = Field(
-        default="http://localhost:8000/mcp", validation_alias="MCP_RESOURCE_URL"
-    )
 
     @property
     def resolved_jwks_url(self) -> str:
@@ -37,13 +33,7 @@ class Settings(BaseSettings):
 
     @property
     def resource_metadata_url(self) -> str:
-        parsed = urlsplit(self.mcp_resource_url)
-        if not parsed.scheme or not parsed.netloc:
-            return "/.well-known/oauth-protected-resource"
-        resource_path = parsed.path.rstrip("/")
-        return (
-            f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-protected-resource{resource_path}"
-        )
+        return "/.well-known/oauth-protected-resource"
 
 
 @lru_cache

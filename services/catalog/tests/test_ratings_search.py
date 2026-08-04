@@ -73,6 +73,7 @@ async def test_rating_upsert_delete_validation_and_ownership(
     created = (
         await client.post(
             "/v1/recipes",
+            headers={"Idempotency-Key": "rating-upsert-key"},
             json=recipe_payload("Chickpea Curry", "chickpeas", total_minutes=35, tags=["dinner"]),
         )
     ).json()
@@ -116,6 +117,7 @@ async def test_put_rating_recovers_when_a_concurrent_insert_wins(
     created = (
         await client.post(
             "/v1/recipes",
+            headers={"Idempotency-Key": "rating-concurrent-key"},
             json=recipe_payload("Concurrent Curry", "lentils", total_minutes=25, tags=[]),
         )
     ).json()
@@ -163,7 +165,13 @@ async def test_recipe_query_filters_and_cursor_pagination(
         "literal": recipe_payload("100% Good Toast", "bread", total_minutes=10, tags=["Breakfast"]),
     }
     created = {
-        name: (await client.post("/v1/recipes", json=payload)).json()
+        name: (
+            await client.post(
+                "/v1/recipes",
+                headers={"Idempotency-Key": f"query-{name}-key"},
+                json=payload,
+            )
+        ).json()
         for name, payload in recipes.items()
     }
     await client.put(f"/v1/recipes/{created['curry']['id']}/rating", json={"value": 5})
@@ -204,6 +212,7 @@ async def test_recipe_query_filters_and_cursor_pagination(
     identity["subject"] = "auth0|owner-b"
     await client.post(
         "/v1/recipes",
+        headers={"Idempotency-Key": "query-private-key"},
         json=recipe_payload("Secret Saffron", "saffron", total_minutes=20, tags=["private"]),
     )
     identity["subject"] = "auth0|owner-a"
@@ -225,11 +234,13 @@ async def test_recipe_query_stale_cursor_returns_documented_category(
     first = (
         await client.post(
             "/v1/recipes",
+            headers={"Idempotency-Key": "cursor-first-key"},
             json=recipe_payload("First", "lentils", total_minutes=20, tags=[]),
         )
     ).json()
     await client.post(
         "/v1/recipes",
+        headers={"Idempotency-Key": "cursor-second-key"},
         json=recipe_payload("Second", "beans", total_minutes=30, tags=[]),
     )
     first_page = await client.get("/v1/recipes", params={"limit": 1})

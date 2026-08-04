@@ -1,15 +1,76 @@
-# Service ownership
+# Service ownership and public gateway boundary
+
+The public MCP surface has one stable resource URL. Caddy exposes `/mcp` and the
+protected-resource metadata route to the standalone `mcp-gateway`; the gateway calls
+Catalog through its documented REST/OpenAPI contract:
+
+```text
+MCP host (ChatGPT, Claude, or another compatible client)
+  -> public HTTPS + Auth0 bearer token
+  -> mcp-gateway: Streamable HTTP, OAuth metadata, tool contracts
+  -> private HTTP + the same raw bearer token
+  -> Catalog REST: authorization, ownership, validation, transactions, persistence
+  -> PostgreSQL
+```
+
+The gateway does not import `catalog`, call Catalog Python services, access
+PostgreSQL/Redis, or accept a user ID, token, host, scheme, path, or service URL as a
+tool argument. The MCP host's model supplies structured arguments; Storecipe makes no
+server-side LLM request.
 
 | Concern | Owner | Other services interact through |
 |---|---|---|
 | Recipes, ingredients, steps, tags | Catalog | Catalog REST/application layer |
 | Ratings and `catalog_version` | Catalog | Catalog REST/application layer |
-| Deterministic recipe queries and query cache | Catalog | Catalog REST or MCP |
-| MCP endpoint and tools | Catalog | Direct application calls; ingestion REST for imports |
+| Deterministic recipe queries and query cache | Catalog | `GET /v1/recipes` |
+| Public MCP endpoint, OAuth metadata, and Streamable HTTP transport | MCP gateway | Public HTTPS; Caddy routes `/mcp*` |
+| MCP tool schemas and REST-to-MCP adaptation | MCP gateway | Catalog OpenAPI/REST; future service REST contracts |
+| Access-token verification at the public boundary | MCP gateway, then Catalog | Auth0 issuer, audience, signature/JWKS, expiry, and subject checks |
+| User identity and ownership authorization | Catalog | Verified raw bearer token on every Catalog REST call |
+| Recipe-creation idempotency records and `201`/`200`/`409` outcomes | Catalog | `POST /v1/recipes` with `Idempotency-Key` |
 | Import jobs and state machine | Ingestion | Ingestion REST |
 | URL/text extraction telemetry | Ingestion | No direct database access by catalog |
 | Background work | Ingestion worker | Celery via a dedicated persistent Redis broker |
 | Dispatch recovery and retention | Ingestion dispatcher/reconciler | Ingestion PostgreSQL schema |
+
+## The four MCP tools
+
+These are the complete public tool surface. Tool names, scopes, annotations, and
+Catalog operations are closed-world contracts; adding a Catalog endpoint does not
+implicitly add an MCP tool.
+
+| Tool | Direct Catalog REST call | Required scope | Annotations |
+|---|---|---|---|
+| `query_recipes` | `GET /v1/recipes` | `recipes:read` | read-only, idempotent, non-destructive, closed-world |
+| `get_recipe` | `GET /v1/recipes/{recipe_id}` | `recipes:read` | read-only, idempotent, non-destructive, closed-world |
+| `create_recipe` | `POST /v1/recipes` + `Idempotency-Key` | `recipes:write` | write, idempotent, non-destructive, closed-world |
+| `rate_recipe` | `PUT /v1/recipes/{recipe_id}/rating` | `ratings:write` | write, idempotent, destructive, closed-world |
+
+`query_recipes` preserves repeated ingredient/tag parameters and ordered repeated
+`sort` parameters; opaque cursors pass through unchanged. `create_recipe` receives
+structured recipe content and treats `sourceUrl` as metadata only. The gateway does
+not fetch URLs or text, and it exposes no import, import-status, recommendation,
+update, delete, or server-side LLM tools.
+
+## Authentication, rate limits, and future aggregation
+
+The gateway verifies the Auth0 bearer token and the exact tool scope before invoking a
+handler. It derives identity only from the verified subject and forwards the same raw
+bearer token in the `Authorization` header to Catalog. Catalog verifies the token a
+second time and independently enforces its REST scope and ownership rules. Only
+`recipes:read`, `recipes:write`, and `ratings:write` are advertised; the internal
+`recipes:internal:create` scope is never advertised to MCP clients.
+
+Public HTTPS/deployment controls are the rate-limiting boundary for gateway traffic.
+The gateway introduces no operation-specific limiter and makes one Catalog request
+per tool invocation with no hidden automatic retry. Catalog and Ingestion retain
+their own service-level protections: bounded query/pagination inputs, Catalog
+database/cache limits, and the existing Ingestion import burst limit. A Catalog
+`429` crosses the REST boundary as a safe retryable MCP `catalog_rate_limited` error.
+
+Future Storecipe services may add tools behind this same gateway by publishing
+authenticated REST contracts. That is aggregation at the gateway's HTTP boundary,
+not shared database access or in-process calls between microservices.
 
 Both services use one PostgreSQL instance but separate schemas and database roles.
 Neither service reads or writes the other service's tables. The worker creates a

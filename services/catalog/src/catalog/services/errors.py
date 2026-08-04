@@ -19,6 +19,13 @@ class RecipeNotFound(CatalogError):
         super().__init__(f"Recipe {recipe_id} not found.")
 
 
+class IdempotencyConflict(CatalogError):
+    """A key was already used for different recipe content."""
+
+    def __init__(self) -> None:
+        super().__init__("Idempotency key was already used for different recipe content.")
+
+
 class InvalidCursor(CatalogError):
     """A pagination cursor could not be decoded."""
 

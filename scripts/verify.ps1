@@ -23,9 +23,24 @@ function Invoke-Step {
 Invoke-Step 'uv sync (frozen)' { uv sync --all-packages --group dev --frozen }
 Invoke-Step 'ruff lint' { uv run ruff check . --exclude evaluation/notebooks/recipe_model_selection.ipynb }
 Invoke-Step 'ruff format check' { uv run ruff format --check . --exclude evaluation/notebooks/recipe_model_selection.ipynb }
-Invoke-Step 'mypy' { uv run mypy services/catalog/src services/ingestion/src }
+Invoke-Step 'mypy' { uv run mypy services/catalog/src services/ingestion/src services/mcp_gateway/src }
 Invoke-Step 'pytest' { uv run pytest }
+Invoke-Step 'gateway deployment contract' { uv run pytest services/mcp_gateway/tests/test_deployment_contract.py -q }
+Invoke-Step 'gateway health contract' { uv run pytest services/mcp_gateway/tests/test_health.py -q }
+# The gateway health contract covers /health/ready and /health/live.
 Invoke-Step 'openapi contract' { uv run openapi-spec-validator contracts/openapi.yaml }
+
+if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Host 'UNVERIFIED: Docker Compose checks require the docker CLI.'
+} else {
+    Invoke-Step 'docker compose config' { docker compose config --quiet }
+    docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'UNVERIFIED: Docker daemon is unavailable; mcp-gateway image build skipped.'
+    } else {
+        Invoke-Step 'docker compose build mcp-gateway' { docker compose build mcp-gateway }
+    }
+}
 
 if ([string]::IsNullOrWhiteSpace($env:CATALOG_TEST_DATABASE_URL)) {
     Write-Host 'UNVERIFIED: Catalog PostgreSQL integration checks require CATALOG_TEST_DATABASE_URL.'

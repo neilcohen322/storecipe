@@ -100,6 +100,8 @@ paths:
     post:
       operationId: createRecipe
       description: Requires the `recipes:write` scope.
+      parameters:
+        - {$ref: "#/components/parameters/RecipeCreateIdempotencyKey"}
       requestBody:
         required: true
         content:
@@ -111,8 +113,14 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Recipe"}
+        "200":
+          description: Existing idempotent recipe replay
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Recipe"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/IdempotencyConflict"}
         "422": {$ref: "#/components/responses/ValidationError"}
   /v1/recipes/{recipeId}:
     parameters:
@@ -291,6 +299,11 @@ components:
       in: header
       required: false
       schema: {type: string, minLength: 1, maxLength: 255}
+    RecipeCreateIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$'}
   responses:
     Unauthorized:
       description: Missing or invalid access token
@@ -328,6 +341,18 @@ components:
       content:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
+    IdempotencyConflict:
+      description: Idempotency key was already used for different recipe content
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/idempotency_conflict
+            title: Conflict
+            status: 409
+            detail: Idempotency key was already used for different recipe content.
+            request_id: 01JEXAMPLEIDEMPOTENCY
+            errorCategory: idempotency_conflict
     StaleRecipeQueryCursor:
       description: The catalog changed after the referenced recipe-query page was read.
       content:
@@ -370,7 +395,7 @@ components:
       required: [title, ingredients, instructions]
       properties:
         title: {type: string, minLength: 1, maxLength: 200}
-        sourceUrl: {type: [string, "null"], format: uri}
+        sourceUrl: {type: [string, "null"], format: uri, minLength: 1, maxLength: 2083, pattern: '^https?://[^/?#]+(?:[/?#].*)?$', description: 'HTTP(S) URL with a host; Catalog normalizes a host-only URL with a trailing slash.'}
         servings: {type: [integer, "null"], minimum: 1}
         prepMinutes: {type: [integer, "null"], minimum: 0}
         cookMinutes: {type: [integer, "null"], minimum: 0}
@@ -392,7 +417,7 @@ components:
       minProperties: 1
       properties:
         title: {type: string, minLength: 1, maxLength: 200}
-        sourceUrl: {type: [string, "null"], format: uri}
+        sourceUrl: {type: [string, "null"], format: uri, minLength: 1, maxLength: 2083, pattern: '^https?://[^/?#]+(?:[/?#].*)?$', description: 'HTTP(S) URL with a host; Catalog normalizes a host-only URL with a trailing slash.'}
         servings: {type: [integer, "null"], minimum: 1}
         prepMinutes: {type: [integer, "null"], minimum: 0}
         cookMinutes: {type: [integer, "null"], minimum: 0}
@@ -414,7 +439,7 @@ components:
       properties:
         id: {type: string, format: uuid}
         title: {type: string, minLength: 1, maxLength: 200}
-        sourceUrl: {type: [string, "null"], format: uri}
+        sourceUrl: {type: [string, "null"], format: uri, minLength: 1, maxLength: 2083, pattern: '^https?://[^/?#]+(?:[/?#].*)?$', description: 'HTTP(S) URL with a host; Catalog normalizes a host-only URL with a trailing slash.'}
         servings: {type: [integer, "null"], minimum: 1}
         prepMinutes: {type: [integer, "null"], minimum: 0}
         cookMinutes: {type: [integer, "null"], minimum: 0}

@@ -2,16 +2,27 @@
 
 Storecipe is an AI-assisted personal recipe platform for storing, rating, searching,
 and importing recipes. It provides user-owned recipe management, Auth0 JWT
-authorization, private search and filtering, and an authenticated MCP boundary.
+authorization, private search and filtering, and one authenticated REST-backed MCP
+gateway.
 
 ## Architecture
 
-- **Catalog API:** recipes, ratings, private search, and authenticated MCP access.
+- **MCP gateway (`mcp-gateway`):** one public Streamable HTTP `/mcp` endpoint, OAuth
+  discovery, and exactly four tools backed by Catalog REST.
+- **Catalog API:** recipes, ratings, private search, ownership, idempotent creation,
+  and PostgreSQL persistence; it does not host MCP transport.
 - **Ingestion API/worker:** asynchronous recipe-import and extraction infrastructure.
 - **Ingestion dispatcher/reconciler:** durable outbox publication, lease recovery, and retention.
 - **PostgreSQL:** authoritative data, separated into catalog and ingestion schemas/roles.
 - **Redis:** disposable cache/rate-limit Redis plus a dedicated persistent Celery broker Redis.
 - **Expo:** universal client shell for web and native applications.
+
+The public flow is `MCP host -> public HTTPS/Caddy -> mcp-gateway -> private HTTP /
+v1 Catalog REST -> PostgreSQL`. The gateway has no database, Redis, ORM, or Catalog
+implementation dependency. It verifies the Auth0 token and tool scope, forwards the
+same raw bearer token, and Catalog verifies it again before applying REST authorization
+and ownership. This boundary can later aggregate tools backed by other microservices'
+REST contracts without exposing their topology or sharing their storage.
 
 See [`contracts/ownership.md`](contracts/ownership.md) and
 [`contracts/erd.md`](contracts/erd.md) before adding domain logic.
@@ -40,11 +51,12 @@ Then verify:
 ```powershell
 Invoke-RestMethod http://localhost:8000/health/ready
 Invoke-RestMethod http://localhost:8001/health/ready
+Invoke-RestMethod http://localhost:8002/health/ready
 docker compose exec ingestion-api python -m ingestion.smoke
 ```
 
 Alternatively, open the [`bruno/`](bruno/) collection, select the `local`
-environment, and run its four health requests.
+environment, and run its six health requests.
 
 Run the Expo web shell in a separate terminal:
 
@@ -72,11 +84,31 @@ together. Secrets belong in `.env`, which Git ignores.
 
 ## Protected endpoints
 
-Recipe and MCP endpoints require an Auth0 access token whose issuer and audience match
-`AUTH0_ISSUER` and `AUTH0_AUDIENCE`. Recipe reads require `recipes:read`; mutations
-require `recipes:write`. Leaving Auth0 unset is safe for local infrastructure checks:
-health endpoints remain available, while protected endpoints return `401`.
-Rating mutations require the separate `ratings:write` scope.
+Recipe, Catalog REST, and MCP endpoints require an Auth0 access token whose issuer and
+audience match `AUTH0_ISSUER` and `AUTH0_AUDIENCE`. The gateway exposes exactly four
+tools: `query_recipes` and `get_recipe` use `recipes:read`, `create_recipe` uses
+`recipes:write`, and `rate_recipe` uses `ratings:write`. The gateway verifies the
+token/scope first and Catalog verifies the same raw bearer token again. Leaving Auth0
+unset is safe for local infrastructure checks: health endpoints remain available,
+while protected endpoints return `401`.
+
+The MCP host's model chooses when to call these tools and supplies structured recipe
+content. Storecipe makes no server-side LLM request. The gateway does not expose URL
+or text import, import-status, recommendation, update, or delete tools; `sourceUrl`
+on `create_recipe` is metadata and is not fetched.
+
+## REST-backed recipe creation
+
+`create_recipe` calls `POST /v1/recipes` with a required `Idempotency-Key`. Catalog
+stores the key and canonical payload hash transactionally and returns `201 Created`
+for the first user/key/payload, `200 OK` for an exact replay, and `409 Conflict` with
+`idempotency_conflict` when the same user/key is reused with different validated
+content. The gateway does not keep retry state or perform hidden retries.
+
+Public HTTPS/deployment controls are the gateway rate-limiting boundary. Catalog and
+Ingestion retain their own bounded query, cache, and import-burst protections; Week 11
+does not add an operation-specific limiter inside the gateway. A Catalog `429` is
+reported to MCP as a safe retryable `catalog_rate_limited` result.
 
 ## Deterministic recipe queries
 
@@ -87,5 +119,6 @@ to provide sets; repeat `sort` to provide an ordered precedence list such as
 sorts, places missing values last, and appends `recipeId ASC` as a deterministic final
 tie-breaker.
 
-Catalog does not infer preferences or predict enjoyment. In Week 11, the LLM will
-choose the filters and sort priorities supplied to this endpoint.
+Catalog does not infer preferences or predict enjoyment. The MCP host's model may
+choose the filters and sort priorities supplied to this endpoint; no LLM runs inside
+Storecipe services.

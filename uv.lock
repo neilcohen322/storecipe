@@ -6,6 +6,7 @@ requires-python = "==3.13.*"
 members = [
     "storecipe-catalog",
     "storecipe-ingestion",
+    "storecipe-mcp-gateway",
     "storecipe-workspace",
 ]
 
@@ -1283,7 +1284,6 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi" },
-    { name = "mcp" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -1297,7 +1297,6 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "asyncpg", specifier = ">=0.30,<0.31" },
     { name = "fastapi", specifier = ">=0.116,<0.117" },
-    { name = "mcp", specifier = ">=1.26,<2" },
     { name = "pydantic", specifier = ">=2.10,<2.12" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
@@ -1345,6 +1344,31 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.41,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<0.36" },
     { name = "yarl", specifier = ">=1.22,<2" },
+]
+
+[[package]]
+name = "storecipe-mcp-gateway"
+version = "0.1.0"
+source = { editable = "services/mcp_gateway" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.116,<0.117" },
+    { name = "httpx", specifier = ">=0.28,<0.29" },
+    { name = "mcp", specifier = ">=1.26,<2" },
+    { name = "pydantic", specifier = ">=2.10,<2.12" },
+    { name = "pydantic-settings", specifier = ">=2.10,<3" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10,<3" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<0.36" },
 ]
 
 [[package]]

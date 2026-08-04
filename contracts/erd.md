@@ -1,12 +1,18 @@
-# Minimal data model
+# Minimal data model and gateway boundary
 
 This is the logical data contract. Physical changes are managed through Alembic
 revisions; IDs are UUIDs and timestamps are timezone-aware.
+
+The standalone `services/mcp_gateway` service is deliberately absent from this
+diagram. It is stateless and has no PostgreSQL, Redis, ORM, or Catalog implementation
+access. It adapts MCP calls to the Catalog REST contract; Catalog remains the data
+owner.
 
 ```mermaid
 erDiagram
   USER ||--o{ RECIPE : owns
   USER ||--o{ RATING : gives
+  USER ||--o{ RECIPE_CREATION_IDEMPOTENCY : keys
   USER ||--o{ IMPORT_JOB : starts
   USER ||--o{ AI_DAILY_USAGE : budgets
   USER ||--o{ LLM_INVOCATION : consumes
@@ -16,6 +22,7 @@ erDiagram
   RECIPE ||--o{ RECIPE_TAG : classified
   TAG ||--o{ RECIPE_TAG : applies
   RECIPE ||--o| RATING : receives
+  RECIPE ||--o| RECIPE_CREATION_IDEMPOTENCY : replays
   IMPORT_JOB ||--o| RECIPE : creates
 
   USER {
@@ -34,6 +41,13 @@ erDiagram
     int prep_minutes "nullable"
     int cook_minutes "nullable"
     int total_minutes "nullable"
+  }
+  RECIPE_CREATION_IDEMPOTENCY {
+    uuid user_id PK,FK
+    string idempotency_key PK
+    string payload_hash
+    uuid recipe_id UK,FK
+    datetime created_at
   }
   INGREDIENT {
     uuid id PK
@@ -95,8 +109,17 @@ erDiagram
   }
 ```
 
-`catalog_version` is incremented in the same catalog transaction as recipe/rating
-changes. Catalog enforces unique `(user_id, import_job_id)` for replay safety.
+`catalog_version` is incremented in the same Catalog transaction as recipe/rating
+changes. Catalog enforces unique `(user_id, import_job_id)` for import replay safety.
+
+Public recipe creation also writes one `RECIPE_CREATION_IDEMPOTENCY` row in the same
+transaction as the recipe and catalog-version increment. Its composite primary key
+scopes an `Idempotency-Key` to one user, its SHA-256 `payload_hash` distinguishes an
+exact replay from a conflicting reuse, and its unique `recipe_id` prevents one
+creation record from being attached to multiple recipes. Deleting the user or recipe
+cascades the record. This table is owned by Catalog; the gateway keeps no retry or
+idempotency state.
+
 Ingestion owns active URL import-job uniqueness; Catalog owns current recipe-source
 existence for each user.
 

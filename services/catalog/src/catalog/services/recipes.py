@@ -8,7 +8,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from catalog.models import Ingredient, Instruction, Recipe, RecipeTag, Tag, User
+from catalog.models import (
+    Ingredient,
+    Instruction,
+    Recipe,
+    RecipeCreationIdempotency,
+    RecipeTag,
+    Tag,
+    User,
+)
+from catalog.recipe_creation_idempotency import recipe_payload_hash
 from catalog.recipe_queries import normalize_query_text
 from catalog.schemas import (
     ImportedRecipeCreate,
@@ -17,7 +26,7 @@ from catalog.schemas import (
     RecipePatch,
     RecipeView,
 )
-from catalog.services.errors import RecipeNotFound
+from catalog.services.errors import IdempotencyConflict, RecipeNotFound
 from catalog.services.users import advance_catalog_version, resolve_user
 
 
@@ -149,14 +158,65 @@ async def _reload_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID) 
     return recipe
 
 
-async def create_recipe(session: AsyncSession, subject: str, payload: RecipeCreate) -> RecipeView:
-    user = await resolve_user(session, subject)
-    recipe = await _new_recipe(session, user, payload)
-    session.add(recipe)
+async def _finalize_new_recipe(session: AsyncSession, user: User, recipe: Recipe) -> RecipeView:
+    await session.flush()
     await advance_catalog_version(session, user.id)
     await session.commit()
     loaded = await _reload_recipe(session, user.id, recipe.id)
     return _recipe_view(loaded, user.id)
+
+
+async def create_recipe(session: AsyncSession, subject: str, payload: RecipeCreate) -> RecipeView:
+    user = await resolve_user(session, subject)
+    recipe = await _new_recipe(session, user, payload)
+    session.add(recipe)
+    return await _finalize_new_recipe(session, user, recipe)
+
+
+async def create_recipe_idempotently(
+    session: AsyncSession,
+    subject: str,
+    idempotency_key: str,
+    payload: RecipeCreate,
+) -> tuple[RecipeView, bool]:
+    user = await resolve_user(session, subject)
+    user_id = user.id
+    payload_hash = recipe_payload_hash(payload)
+    existing = await session.get(
+        RecipeCreationIdempotency,
+        (user_id, idempotency_key),
+    )
+    if existing is not None:
+        if existing.payload_hash != payload_hash:
+            raise IdempotencyConflict()
+        recipe = await get_owned_recipe(session, user_id, existing.recipe_id)
+        return _recipe_view(recipe, user_id), True
+
+    recipe = await _new_recipe(session, user, payload)
+    session.add(recipe)
+    try:
+        await session.flush()
+        session.add(
+            RecipeCreationIdempotency(
+                user_id=user_id,
+                idempotency_key=idempotency_key,
+                payload_hash=payload_hash,
+                recipe_id=recipe.id,
+            )
+        )
+        return await _finalize_new_recipe(session, user, recipe), False
+    except IntegrityError:
+        await session.rollback()
+        winner = await session.get(
+            RecipeCreationIdempotency,
+            (user_id, idempotency_key),
+        )
+        if winner is None:
+            raise
+        if winner.payload_hash != payload_hash:
+            raise IdempotencyConflict() from None
+        winning_recipe = await get_owned_recipe(session, user_id, winner.recipe_id)
+        return _recipe_view(winning_recipe, user_id), True
 
 
 async def get_recipe(session: AsyncSession, subject: str, recipe_id: UUID) -> RecipeView:

@@ -56,6 +56,6 @@ def recipe_query_cache_state() -> Iterator[FakeRedis]:
 
 @pytest.fixture(scope="session")
 def client() -> Iterator[TestClient]:
-    """Keep the production-style, single-run MCP lifespan for the test session."""
+    """Keep the production-style, single-run Catalog lifespan for the test session."""
     with TestClient(app) as test_client:
         yield test_client

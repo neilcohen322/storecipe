@@ -17,9 +17,16 @@
 | `INGESTION_PAYLOAD_ACTIVE_KEY_ID` | Ingestion/worker | yes | Key ID used for new encrypted payload writes |
 | `INGESTION_PAYLOAD_KEYRING` | Ingestion/worker | yes | Secret `key-id=base64-key` mapping for retained payloads |
 | `AUTH0_ISSUER` | APIs/MCP | protected routes | Expected JWT issuer |
-| `AUTH0_AUDIENCE` | APIs/MCP | protected routes | Canonical Storecipe API resource |
+| `AUTH0_AUDIENCE` | APIs/MCP | protected routes | Canonical Storecipe API resource; distinct from the public MCP resource URL |
 | `AUTH0_JWKS_URL` | APIs/MCP | no | Optional JWKS override; defaults to `<issuer>/.well-known/jwks.json` |
-| `MCP_RESOURCE_URL` | Catalog | MCP enabled | Canonical HTTPS MCP resource identifier |
+| `MCP_PORT` | Compose | no | Optional host port mapped to the gateway's internal port `8002` |
+| `MCP_CATALOG_API_URL` | MCP gateway | yes | Trusted Catalog REST base URL; defaults to `http://catalog-api:8000` |
+| `MCP_CATALOG_MAX_RESPONSE_BYTES` | MCP gateway | no | Maximum Catalog response size; defaults to 2,097,152 bytes |
+| `MCP_CONNECT_TIMEOUT_SECONDS` | MCP gateway | no | Catalog connection timeout; defaults to 5 seconds and is bounded from 0.1 to 30 |
+| `MCP_POOL_TIMEOUT_SECONDS` | MCP gateway | no | Catalog connection-pool acquisition timeout; defaults to 5 seconds and is bounded from 0.1 to 30 |
+| `MCP_READ_TIMEOUT_SECONDS` | MCP gateway | no | Catalog response-read timeout; defaults to 10 seconds and is bounded from 0.1 to 30 |
+| `MCP_WRITE_TIMEOUT_SECONDS` | MCP gateway | no | Catalog request-write timeout; defaults to 10 seconds and is bounded from 0.1 to 30 |
+| `MCP_RESOURCE_URL` | MCP gateway | protected routes | Canonical public HTTPS MCP gateway resource identifier, normally the Caddy `/mcp` route |
 | `OPENROUTER_API_KEY` | Worker | AI enabled | Secret model-provider credential |
 | `OPENROUTER_MODEL` | Worker | no | Pinned extraction model; defaults to `openai/gpt-5.6-luna` |
 | `AI_EXTRACTION_ENABLED` | Worker | no | AI kill switch; defaults false |

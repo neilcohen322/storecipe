@@ -3,13 +3,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
 
 from catalog.auth import Auth0TokenVerifier
 from catalog.config import get_settings
 from catalog.database import create_engine, create_session_factory
-from catalog.mcp_server import create_mcp_server
 from catalog.problems import PROBLEM_TYPE_BASE, install_problem_details, problem_response
 from catalog.recipe_query_cache import RecipeQueryCache, create_redis_client
 from catalog.routes.health import router as health_router
@@ -18,6 +16,7 @@ from catalog.routes.ratings import router as ratings_router
 from catalog.routes.recipes import router as recipes_router
 from catalog.services.errors import (
     CatalogError,
+    IdempotencyConflict,
     InvalidCursor,
     InvalidFilter,
     RecipeNotFound,
@@ -26,25 +25,14 @@ from catalog.services.errors import (
 
 settings = get_settings()
 token_verifier = Auth0TokenVerifier(settings)
-mcp_server = create_mcp_server(settings, token_verifier)
-mcp_app = mcp_server.streamable_http_app()
-
-
-async def mcp_http_problem(request: Request, exc: Exception) -> Response:
-    """Keep the mounted MCP fallback consistent with the REST error contract."""
-    if not isinstance(exc, StarletteHTTPException):  # pragma: no cover - handler is typed
-        raise exc
-    detail = exc.detail if isinstance(exc.detail, str) else None
-    return problem_response(request, exc.status_code, detail=detail, headers=exc.headers)
-
-
-mcp_app.add_exception_handler(StarletteHTTPException, mcp_http_problem)
 
 
 def _status_for(exc: CatalogError) -> int:
     if isinstance(exc, RecipeNotFound):
         return status.HTTP_404_NOT_FOUND
     if isinstance(exc, StaleRecipeQueryCursor):
+        return status.HTTP_409_CONFLICT
+    if isinstance(exc, IdempotencyConflict):
         return status.HTTP_409_CONFLICT
     if isinstance(exc, InvalidCursor | InvalidFilter):
         return status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -59,13 +47,15 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
     problem_type = (
         f"{PROBLEM_TYPE_BASE}/stale_recipe_query_cursor"
         if isinstance(exc, StaleRecipeQueryCursor)
+        else f"{PROBLEM_TYPE_BASE}/idempotency_conflict"
+        if isinstance(exc, IdempotencyConflict)
         else None
     )
-    extra: dict[str, object] | None = (
-        {"errorCategory": "stale_recipe_query_cursor"}
-        if isinstance(exc, StaleRecipeQueryCursor)
-        else None
-    )
+    extra: dict[str, object] | None = None
+    if isinstance(exc, StaleRecipeQueryCursor):
+        extra = {"errorCategory": "stale_recipe_query_cursor"}
+    elif isinstance(exc, IdempotencyConflict):
+        extra = {"errorCategory": "idempotency_conflict"}
     return problem_response(
         request,
         _status_for(exc),
@@ -94,8 +84,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         redis_timeout_seconds=runtime_settings.redis_timeout_seconds,
     )
     try:
-        async with mcp_app.router.lifespan_context(mcp_app):
-            yield
+        yield
     finally:
         try:
             await app.state.redis.aclose()
@@ -106,7 +95,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Storecipe Catalog API",
     version="0.3.0",
-    description="Recipe catalog, deterministic recipe query contract, and MCP boundary.",
+    description="Recipe catalog and deterministic recipe query contract.",
     lifespan=lifespan,
 )
 
@@ -128,8 +117,3 @@ app.include_router(recipes_router)
 app.include_router(ratings_router)
 app.include_router(internal_recipes_router)
 app.include_router(health_router)
-
-
-# Mount last so REST and health routes retain priority while the SDK serves
-# /mcp and /.well-known/oauth-protected-resource/mcp on the same deployment.
-app.mount("/", mcp_app)
