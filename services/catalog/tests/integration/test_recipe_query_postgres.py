@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from catalog.models import Ingredient, Rating, Recipe, RecipeTag, Tag, User
 from catalog.recipe_queries import RecipeQueryRequest, normalize_query_text
@@ -57,11 +58,14 @@ async def migrate_database(url: str) -> None:
             os.environ["CATALOG_DATABASE_URL"] = previous_url
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture
 async def postgres_engine() -> AsyncIterator[AsyncEngine]:
+    # Function-scoped + NullPool: module-scoped engines break under
+    # pytest-asyncio's per-test event loops ("Event loop is closed" /
+    # asyncpg "another operation is in progress").
     url = database_url()
     await migrate_database(url)
-    engine = create_async_engine(url, pool_size=5, max_overflow=0)
+    engine = create_async_engine(url, poolclass=NullPool)
     try:
         yield engine
     finally:

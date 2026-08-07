@@ -56,8 +56,9 @@ async def migrate_database(url: str) -> None:
             os.environ["CATALOG_DATABASE_URL"] = previous_url
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture
 async def postgres_engine() -> AsyncIterator[AsyncEngine]:
+    # Function-scoped engine: module scope fights pytest-asyncio's per-test loops.
     url = database_url()
     await migrate_database(url)
     engine = create_async_engine(url, poolclass=NullPool)
