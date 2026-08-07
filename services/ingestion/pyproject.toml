@@ -17,9 +17,13 @@ dependencies = [
     "pyjwt[crypto]>=2.10,<3",
     "redis>=6.2,<7",
     "sqlalchemy[asyncio]>=2.0.41,<3",
+    "storecipe-auth",
     "uvicorn[standard]>=0.35,<0.36",
     "yarl>=1.22,<2",
 ]
+
+[tool.uv.sources]
+storecipe-auth = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

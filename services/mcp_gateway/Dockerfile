@@ -8,11 +8,13 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # Install third-party dependencies from manifests only, so this layer is
 # invalidated by lockfile changes, not source edits.
 COPY pyproject.toml uv.lock ./
+COPY packages/storecipe_auth/pyproject.toml packages/storecipe_auth/pyproject.toml
 COPY services/catalog/pyproject.toml services/catalog/pyproject.toml
 COPY services/ingestion/pyproject.toml services/ingestion/pyproject.toml
 COPY services/mcp_gateway/pyproject.toml services/mcp_gateway/pyproject.toml
 RUN uv sync --frozen --no-dev --no-install-workspace --package storecipe-mcp-gateway
 
+COPY packages/storecipe_auth packages/storecipe_auth
 COPY services/mcp_gateway services/mcp_gateway
 RUN uv sync --frozen --no-dev --package storecipe-mcp-gateway
 RUN addgroup --system app && adduser --system --ingroup app app \

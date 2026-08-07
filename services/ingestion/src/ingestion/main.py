@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from ingestion.auth import Auth0TokenVerifier
+from ingestion.auth import build_token_verifier
 from ingestion.catalog_client import build_catalog_client
 from ingestion.config import get_settings
 from ingestion.crypto import PayloadCipher
@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_factory = session_factory
     app.state.payload_cipher = cipher
     app.state.import_deadline_seconds = getattr(settings, "import_deadline_seconds", 900)
-    app.state.token_verifier = Auth0TokenVerifier(settings)
+    app.state.token_verifier = build_token_verifier(settings)
     app.state.source_lookup = build_catalog_client(settings)
     app.state.redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.import_burst_limiter = RedisBurstLimiter.from_redis_url(

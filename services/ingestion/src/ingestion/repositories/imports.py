@@ -25,6 +25,7 @@ from ingestion.models import (
     ImportStatus,
     ProviderAttempt,
 )
+from ingestion.orchestration import DEFAULT_LEASE_SECONDS
 
 if TYPE_CHECKING:
     from ingestion.orchestration import LeaseToken
@@ -637,7 +638,7 @@ class ImportRepository:
         owner: str,
         dispatch_generation: int,
         *,
-        lease_seconds: int,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> "LeaseToken | None":
         """Close a worker receipt and atomically claim a currently unleased dispatch."""
 
@@ -707,7 +708,9 @@ class ImportRepository:
             expires_at=cast(datetime, claimed_row.lease_expires_at),
         )
 
-    async def renew_lease(self, token: "LeaseToken", *, lease_seconds: int) -> "LeaseToken":
+    async def renew_lease(
+        self, token: "LeaseToken", *, lease_seconds: int = DEFAULT_LEASE_SECONDS
+    ) -> "LeaseToken":
         """Extend a live lease without changing its fencing generation."""
 
         self._validate_lease_seconds(lease_seconds)

@@ -94,9 +94,12 @@ async def test_auth0_verifier_validates_a_signed_token_and_extracts_scopes() -> 
         auth0_audience="https://api.storecipe.example",
         auth0_jwks_url="https://tenant.example/.well-known/jwks.json",
     )
-    verifier = Auth0TokenVerifier(settings)
-    verifier._jwk_client = SimpleNamespace(  # noqa: SLF001 - verifies the JWT boundary offline.
-        get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private_key.public_key())
+    verifier = Auth0TokenVerifier(
+        settings,
+        audience=settings.auth0_audience,
+        jwk_client=SimpleNamespace(
+            get_signing_key_from_jwt=lambda _: SimpleNamespace(key=private_key.public_key())
+        ),
     )
     token = jwt.encode(
         {

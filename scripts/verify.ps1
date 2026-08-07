@@ -23,7 +23,7 @@ function Invoke-Step {
 Invoke-Step 'uv sync (frozen)' { uv sync --all-packages --group dev --frozen }
 Invoke-Step 'ruff lint' { uv run ruff check . --exclude evaluation/notebooks/recipe_model_selection.ipynb }
 Invoke-Step 'ruff format check' { uv run ruff format --check . --exclude evaluation/notebooks/recipe_model_selection.ipynb }
-Invoke-Step 'mypy' { uv run mypy services/catalog/src services/ingestion/src services/mcp_gateway/src }
+Invoke-Step 'mypy' { uv run mypy packages/storecipe_auth/src services/catalog/src services/ingestion/src services/mcp_gateway/src }
 Invoke-Step 'pytest' { uv run pytest }
 Invoke-Step 'gateway deployment contract' { uv run pytest services/mcp_gateway/tests/test_deployment_contract.py -q }
 Invoke-Step 'gateway health contract' { uv run pytest services/mcp_gateway/tests/test_health.py -q }

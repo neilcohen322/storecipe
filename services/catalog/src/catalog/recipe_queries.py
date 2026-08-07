@@ -10,8 +10,8 @@ from uuid import UUID
 
 from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from catalog.errors import InvalidCursor, StaleRecipeQueryCursor
 from catalog.schemas import ApiModel, RecipeView
-from catalog.services.errors import InvalidCursor, StaleRecipeQueryCursor
 
 FiniteScore = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 

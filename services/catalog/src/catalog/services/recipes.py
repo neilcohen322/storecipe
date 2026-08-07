@@ -19,6 +19,7 @@ from catalog.models import (
 )
 from catalog.recipe_creation_idempotency import recipe_payload_hash
 from catalog.recipe_queries import normalize_query_text
+from catalog.recipe_views import to_recipe_view
 from catalog.schemas import (
     ImportedRecipeCreate,
     IngredientInput,
@@ -95,29 +96,7 @@ async def _new_recipe(
 
 def _recipe_view(recipe: Recipe, user_id: UUID) -> RecipeView:
     rating = next((item.value for item in recipe.ratings if item.user_id == user_id), None)
-    return RecipeView(
-        id=recipe.id,
-        title=recipe.title,
-        source_url=recipe.source_url,
-        servings=recipe.servings,
-        prep_minutes=recipe.prep_minutes,
-        cook_minutes=recipe.cook_minutes,
-        total_minutes=recipe.total_minutes,
-        ingredients=[
-            {
-                "raw_text": ingredient.raw_text,
-                "name": ingredient.name,
-                "quantity": (
-                    float(ingredient.quantity) if ingredient.quantity is not None else None
-                ),
-                "unit": ingredient.unit,
-            }
-            for ingredient in recipe.ingredients
-        ],
-        instructions=[instruction.text for instruction in recipe.instructions],
-        tags=sorted(recipe_tag.tag.name for recipe_tag in recipe.recipe_tags),
-        rating=rating,
-    )
+    return to_recipe_view(recipe, rating=rating)
 
 
 async def get_owned_recipe(session: AsyncSession, user_id: UUID, recipe_id: UUID) -> Recipe:
