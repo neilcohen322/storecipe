@@ -95,9 +95,7 @@ class OboTokenProvider:
 
     def _prune_cache(self) -> None:
         expired_keys = [
-            key
-            for key, cached in self._cache.items()
-            if not self._has_usable_exchange(cached)
+            key for key, cached in self._cache.items() if not self._has_usable_exchange(cached)
         ]
         for key in expired_keys:
             self._cache.pop(key, None)

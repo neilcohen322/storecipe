@@ -40,6 +40,8 @@ markers = [
 target-version = "py313"
 line-length = 100
 src = ["services/catalog/src", "services/ingestion/src", "services/mcp_gateway/src"]
+# Evaluation notebooks are exploratory; keep CI lint/format on service code.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]

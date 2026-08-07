@@ -123,7 +123,6 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     assert "Authorization" not in requests[0].headers
 
 
-
 @pytest.mark.asyncio
 async def test_readiness_bounds_a_hanging_probe_without_leaking_exception_detail() -> None:
     async def hanging_probe() -> dict[str, str]:
