@@ -32,9 +32,7 @@ class Auth0TokenVerifier:
             self._jwk_client = jwk_client
         else:
             resolved_jwks_url = settings.resolved_jwks_url
-            self._jwk_client = (
-                jwt.PyJWKClient(resolved_jwks_url) if resolved_jwks_url else None
-            )
+            self._jwk_client = jwt.PyJWKClient(resolved_jwks_url) if resolved_jwks_url else None
 
     def _decode(self, token: str) -> dict[str, Any]:
         if self._jwk_client is None or not self._settings.auth0_issuer or not self._audience:

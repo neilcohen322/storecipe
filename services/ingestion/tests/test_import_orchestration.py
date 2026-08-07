@@ -231,9 +231,7 @@ async def test_retry_atomically_fences_the_old_worker_and_creates_the_next_dispa
     assert [item.generation for item in dispatches] == [1, 2]
     assert _as_utc(dispatches[1].due_at) == due_at
     with pytest.raises(StaleLease):
-        await orchestration.advance_stage(
-            token, ImportStage.FETCHING, checkpoint_content_hash=None
-        )
+        await orchestration.advance_stage(token, ImportStage.FETCHING, checkpoint_content_hash=None)
 
 
 @pytest.mark.asyncio
