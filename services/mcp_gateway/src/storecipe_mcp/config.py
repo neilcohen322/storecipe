@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -87,6 +87,24 @@ class Settings(BaseSettings):
             "MCP_CATALOG_WRITE_TIMEOUT_SECONDS",
         ),
     )
+    obo_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("MCP_OBO_CLIENT_ID"),
+    )
+    obo_client_secret: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("MCP_OBO_CLIENT_SECRET"),
+    )
+    obo_token_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("MCP_OBO_TOKEN_URL"),
+    )
+    obo_expiry_margin_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=300.0,
+        validation_alias=AliasChoices("MCP_OBO_EXPIRY_MARGIN_SECONDS"),
+    )
 
     @field_validator("catalog_api_url")
     @classmethod
@@ -105,7 +123,7 @@ class Settings(BaseSettings):
             raise ValueError("MCP_CATALOG_API_URL must be a root HTTP(S) URL without userinfo")
         return value
 
-    @field_validator("mcp_resource_url", "auth0_issuer", "auth0_jwks_url")
+    @field_validator("mcp_resource_url", "auth0_issuer", "auth0_jwks_url", "obo_token_url")
     @classmethod
     def _require_http_url(cls, value: str) -> str:
         if not value:
@@ -129,6 +147,14 @@ class Settings(BaseSettings):
             return self.auth0_jwks_url
         if self.auth0_issuer:
             return f"{self.auth0_issuer.rstrip('/')}/.well-known/jwks.json"
+        return ""
+
+    @property
+    def resolved_obo_token_url(self) -> str:
+        if self.obo_token_url:
+            return self.obo_token_url
+        if self.auth0_issuer:
+            return f"{self.auth0_issuer.rstrip('/')}/oauth/token"
         return ""
 
     @property

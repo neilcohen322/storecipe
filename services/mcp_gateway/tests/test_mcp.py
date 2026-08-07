@@ -7,7 +7,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.types import CallToolResult
 
 import storecipe_mcp.auth as mcp_auth
-from storecipe_mcp.auth import Auth0TokenVerifier
+from storecipe_mcp.auth import McpInboundTokenVerifier
 from storecipe_mcp.config import Settings
 from storecipe_mcp.errors import CatalogClientError
 from storecipe_mcp.mcp_server import create_mcp_server
@@ -22,6 +22,8 @@ from storecipe_mcp.models import (
 )
 
 RECIPE_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+MCP_TOKEN = "verified-mcp-token"
+API_TOKEN = "exchanged-api-token"
 
 
 def _recipe_view() -> RecipeView:
@@ -77,21 +79,38 @@ class RecordingCatalog:
         return RatingView(value=value)
 
 
+class FakeOboProvider:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.invalidated: list[str] = []
+
+    async def get_api_token(self, subject_token: str) -> str:
+        self.calls.append(subject_token)
+        if subject_token != MCP_TOKEN:
+            raise CatalogClientError("authentication_required", retryable=False)
+        return API_TOKEN
+
+    async def invalidate(self, subject_token: str) -> None:
+        self.invalidated.append(subject_token)
+
+
 def _server(
     settings: Settings,
     catalog: object,
+    obo_provider: FakeOboProvider | None = None,
 ):
-    provider = cast(Callable[[], Any], lambda: catalog)
+    provider = obo_provider or FakeOboProvider()
     return create_mcp_server(
         settings,
-        Auth0TokenVerifier(settings),
-        catalog_client_provider=provider,
+        McpInboundTokenVerifier(settings),
+        catalog_client_provider=cast(Callable[[], Any], lambda: catalog),
+        obo_provider_factory=lambda: provider,
     )
 
 
 def _access_token(*scopes: str) -> AccessToken:
     return AccessToken(
-        token="verified-raw-token",
+        token=MCP_TOKEN,
         client_id="mcp-client",
         subject="auth0|chef",
         scopes=list(scopes),
@@ -204,7 +223,7 @@ async def test_gateway_exposes_exact_typed_tools_with_approved_contracts(
         ),
     ],
 )
-async def test_tools_forward_only_verified_token_and_call_catalog_once(
+async def test_tools_exchange_mcp_token_and_forward_api_token_to_catalog(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
     name: str,
@@ -212,7 +231,8 @@ async def test_tools_forward_only_verified_token_and_call_catalog_once(
     expected_method: str,
 ) -> None:
     catalog = RecordingCatalog()
-    server = _server(settings, catalog)
+    obo_provider = FakeOboProvider()
+    server = _server(settings, catalog, obo_provider)
     monkeypatch.setattr(
         mcp_auth,
         "get_access_token",
@@ -232,8 +252,41 @@ async def test_tools_forward_only_verified_token_and_call_catalog_once(
     assert len(catalog.calls) == 1
     method, recorded_arguments = catalog.calls[0]
     assert method == expected_method
-    assert recorded_arguments[-1] == "verified-raw-token"
+    assert recorded_arguments[-1] == API_TOKEN
+    assert MCP_TOKEN not in recorded_arguments
     assert "attacker-supplied" not in repr(recorded_arguments)
+    assert obo_provider.calls == [MCP_TOKEN]
+
+
+@pytest.mark.asyncio
+async def test_catalog_401_invalidates_cached_exchange_and_retries_once(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnauthorizedThenOkCatalog(RecordingCatalog):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts = 0
+
+        async def get_recipe(self, recipe_id: UUID, token: str) -> RecipeView:
+            self.attempts += 1
+            self.calls.append(("get_recipe", (recipe_id, token)))
+            if self.attempts == 1:
+                raise CatalogClientError("authentication_required", retryable=False)
+            return _recipe_view()
+
+    catalog = UnauthorizedThenOkCatalog()
+    obo_provider = FakeOboProvider()
+    server = _server(settings, catalog, obo_provider)
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:read"))
+
+    result = await server.call_tool("get_recipe", {"recipe_id": str(RECIPE_ID)})
+
+    assert isinstance(result, tuple)
+    assert catalog.attempts == 2
+    assert obo_provider.invalidated == [MCP_TOKEN]
+    assert obo_provider.calls == [MCP_TOKEN, MCP_TOKEN]
+    assert all(arguments[-1] == API_TOKEN for _, arguments in catalog.calls)
 
 
 @pytest.mark.asyncio

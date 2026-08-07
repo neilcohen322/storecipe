@@ -59,7 +59,7 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
 ) -> None:
     requests: list[httpx.Request] = []
     clients: list[httpx.AsyncClient] = []
-    client_kwargs: dict[str, object] = {}
+    constructed: list[dict[str, object]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
@@ -75,7 +75,7 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     real_async_client = main_module.httpx.AsyncClient
 
     def build_client(*args: object, **kwargs: object) -> httpx.AsyncClient:
-        client_kwargs.update(kwargs)
+        constructed.append(dict(kwargs))
         kwargs["transport"] = httpx.MockTransport(handler)
         client = real_async_client(*args, **kwargs)
         clients.append(client)
@@ -100,17 +100,18 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
         "service": "mcp-gateway",
         "dependencies": {"catalog": "ok"},
     }
-    assert len(clients) == 1
-    assert clients[0].is_closed
-    assert client_kwargs["base_url"] == "http://catalog.test:8000"
-    assert client_kwargs["follow_redirects"] is False
-    timeout = client_kwargs["timeout"]
+    assert len(clients) == 2
+    assert all(client.is_closed for client in clients)
+    catalog_kwargs = next(item for item in constructed if "base_url" in item)
+    assert catalog_kwargs["base_url"] == "http://catalog.test:8000"
+    assert catalog_kwargs["follow_redirects"] is False
+    timeout = catalog_kwargs["timeout"]
     assert isinstance(timeout, httpx.Timeout)
     assert timeout.connect == 1.5
     assert timeout.pool == 2.5
     assert timeout.read == 3.5
     assert timeout.write == 4.5
-    limits = client_kwargs["limits"]
+    limits = catalog_kwargs["limits"]
     assert isinstance(limits, httpx.Limits)
     assert limits.max_connections is not None
     assert limits.max_connections > 0
@@ -120,6 +121,7 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     assert requests[0].method == "GET"
     assert requests[0].url == "http://catalog.test:8000/health/ready"
     assert "Authorization" not in requests[0].headers
+
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,48 @@ class InvalidAccessToken(Exception):
 
 
 class Auth0TokenVerifier:
-    """Validate Auth0 RS256 access tokens against issuer, audience, and JWKS."""
+    """Validate Auth0 RS256 access tokens against issuer, API audience, and JWKS."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        resolved_jwks_url = settings.resolved_jwks_url
+        self._jwk_client = jwt.PyJWKClient(resolved_jwks_url) if resolved_jwks_url else None
+
+    def _decode(self, token: str, *, audience: str) -> dict[str, Any]:
+        if self._jwk_client is None or not self._settings.auth0_issuer or not audience:
+            raise InvalidAccessToken("Auth0 is not configured")
+        try:
+            signing_key = self._jwk_client.get_signing_key_from_jwt(token)
+            claims = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=audience,
+                issuer=self._settings.auth0_issuer,
+                options={"require": ["exp", "iat", "sub"]},
+            )
+        except jwt.PyJWTError as exc:
+            raise InvalidAccessToken("Access token validation failed") from exc
+        return dict(claims)
+
+    async def verify(self, token: str) -> Principal:
+        if not self._settings.auth0_audience:
+            raise InvalidAccessToken("Auth0 is not configured")
+        claims = await asyncio.to_thread(
+            self._decode,
+            token,
+            audience=self._settings.auth0_audience,
+        )
+        subject = claims.get("sub")
+        if not isinstance(subject, str) or not subject:
+            raise InvalidAccessToken("Access token subject is missing")
+        raw_scope = claims.get("scope", "")
+        scopes = frozenset(raw_scope.split()) if isinstance(raw_scope, str) else frozenset()
+        return Principal(subject=subject, scopes=scopes, claims=claims)
+
+
+class McpInboundTokenVerifier:
+    """Validate inbound MCP access tokens against the canonical MCP resource audience."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -35,7 +76,7 @@ class Auth0TokenVerifier:
         if (
             self._jwk_client is None
             or not self._settings.auth0_issuer
-            or not self._settings.auth0_audience
+            or not self._settings.mcp_resource_url
         ):
             raise InvalidAccessToken("Auth0 is not configured")
         try:
@@ -44,7 +85,7 @@ class Auth0TokenVerifier:
                 token,
                 signing_key.key,
                 algorithms=["RS256"],
-                audience=self._settings.auth0_audience,
+                audience=self._settings.mcp_resource_url,
                 issuer=self._settings.auth0_issuer,
                 options={"require": ["exp", "iat", "sub"]},
             )
@@ -63,9 +104,9 @@ class Auth0TokenVerifier:
 
 
 class McpAuth0TokenVerifier(TokenVerifier):
-    """Adapt the gateway Auth0 verifier to the MCP SDK verifier protocol."""
+    """Adapt the MCP inbound Auth0 verifier to the MCP SDK verifier protocol."""
 
-    def __init__(self, verifier: Auth0TokenVerifier, resource_url: str) -> None:
+    def __init__(self, verifier: McpInboundTokenVerifier, resource_url: str) -> None:
         self._verifier = verifier
         self._resource_url = resource_url
 
@@ -76,17 +117,6 @@ class McpAuth0TokenVerifier(TokenVerifier):
             return None
 
         claims = principal.claims
-        raw_audience = claims.get("aud")
-        if isinstance(raw_audience, str):
-            audiences = {raw_audience}
-        elif isinstance(raw_audience, list) and all(
-            isinstance(value, str) for value in raw_audience
-        ):
-            audiences = set(raw_audience)
-        else:
-            audiences = set()
-        if self._resource_url not in audiences:
-            return None
         raw_expiry = claims.get("exp")
         expires_at = raw_expiry if isinstance(raw_expiry, int) else None
         raw_client_id = claims.get("azp") or claims.get("client_id")

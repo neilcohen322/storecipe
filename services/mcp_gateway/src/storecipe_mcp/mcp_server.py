@@ -1,5 +1,5 @@
 from collections.abc import Callable, Mapping
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -10,7 +10,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import AnyHttpUrl, Field
 
 import storecipe_mcp.auth as mcp_auth
-from storecipe_mcp.auth import Auth0TokenVerifier
+from storecipe_mcp.auth import McpInboundTokenVerifier
 from storecipe_mcp.catalog_client import CatalogClient
 from storecipe_mcp.config import Settings
 from storecipe_mcp.errors import CatalogClientError
@@ -22,8 +22,10 @@ from storecipe_mcp.models import (
     RecipeQueryRequest,
     RecipeView,
 )
+from storecipe_mcp.obo_client import OboTokenProvider
 
 CatalogClientProvider = Callable[[], CatalogClient]
+OboTokenProviderFactory = Callable[[], OboTokenProvider]
 
 _READ_SCOPE = "recipes:read"
 _WRITE_SCOPE = "recipes:write"
@@ -71,9 +73,10 @@ class GatewayFastMCP(FastMCP[Any]):
 
 def create_mcp_server(
     settings: Settings,
-    verifier: Auth0TokenVerifier,
+    verifier: McpInboundTokenVerifier,
     *,
     catalog_client_provider: CatalogClientProvider,
+    obo_provider_factory: OboTokenProviderFactory,
 ) -> GatewayFastMCP:
     """Build the gateway MCP server and register its four public tools."""
 
@@ -115,7 +118,15 @@ def create_mcp_server(
     async def query_recipes(request: RecipeQueryRequest) -> RecipeQueryPage:
         """Search recipes with explicit deterministic filters and ordered sorts."""
 
-        return await catalog_client_provider().query_recipes(request, _verified_raw_token())
+        return cast(
+            RecipeQueryPage,
+            await _call_catalog(
+                catalog_client_provider,
+                obo_provider_factory,
+                "query_recipes",
+                request,
+            ),
+        )
 
     @server.tool(
         annotations=ToolAnnotations(
@@ -129,7 +140,15 @@ def create_mcp_server(
     async def get_recipe(recipe_id: UUID) -> RecipeView:
         """Get one complete recipe from the authenticated user's catalog."""
 
-        return await catalog_client_provider().get_recipe(recipe_id, _verified_raw_token())
+        return cast(
+            RecipeView,
+            await _call_catalog(
+                catalog_client_provider,
+                obo_provider_factory,
+                "get_recipe",
+                recipe_id,
+            ),
+        )
 
     @server.tool(
         annotations=ToolAnnotations(
@@ -146,10 +165,15 @@ def create_mcp_server(
     ) -> RecipeView:
         """Create a recipe with durable idempotency; sourceUrl is metadata only."""
 
-        return await catalog_client_provider().create_recipe(
-            recipe,
-            idempotency_key,
-            _verified_raw_token(),
+        return cast(
+            RecipeView,
+            await _call_catalog(
+                catalog_client_provider,
+                obo_provider_factory,
+                "create_recipe",
+                recipe,
+                idempotency_key,
+            ),
         )
 
     @server.tool(
@@ -167,20 +191,46 @@ def create_mcp_server(
     ) -> RatingView:
         """Set the authenticated user's 1-to-5 rating; an existing rating is replaced."""
 
-        return await catalog_client_provider().rate_recipe(
-            recipe_id,
-            value,
-            _verified_raw_token(),
+        return cast(
+            RatingView,
+            await _call_catalog(
+                catalog_client_provider,
+                obo_provider_factory,
+                "rate_recipe",
+                recipe_id,
+                value,
+            ),
         )
 
     return server
 
 
-def _verified_raw_token() -> str:
+def _verified_mcp_token() -> str:
     access_token = mcp_auth.get_access_token()
     if access_token is None or not isinstance(access_token.token, str) or not access_token.token:
         raise CatalogClientError("authentication_required", retryable=False)
     return access_token.token
+
+
+async def _call_catalog(
+    catalog_client_provider: CatalogClientProvider,
+    obo_provider_factory: OboTokenProviderFactory,
+    method_name: str,
+    *args: Any,
+) -> Any:
+    catalog = catalog_client_provider()
+    mcp_token = _verified_mcp_token()
+    obo_provider = obo_provider_factory()
+    api_token = await obo_provider.get_api_token(mcp_token)
+    method = getattr(catalog, method_name)
+    try:
+        return await method(*args, api_token)
+    except CatalogClientError as error:
+        if error.category != "authentication_required":
+            raise
+        await obo_provider.invalidate(mcp_token)
+        refreshed_token = await obo_provider.get_api_token(mcp_token)
+        return await method(*args, refreshed_token)
 
 
 def _mcp_resource_host(settings: Settings) -> str:

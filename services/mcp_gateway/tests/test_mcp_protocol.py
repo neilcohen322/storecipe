@@ -7,14 +7,31 @@ from fastapi.testclient import TestClient
 
 from storecipe_mcp.auth import Principal
 from storecipe_mcp.config import Settings
+from storecipe_mcp.errors import CatalogClientError
 from storecipe_mcp.main import create_app
 
 RECIPE_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+MCP_TOKEN = "verified-mcp-token"
+API_TOKEN = "exchanged-api-token"
 MCP_HEADERS = {
-    "Authorization": "Bearer verified-raw-token",
+    "Authorization": f"Bearer {MCP_TOKEN}",
     "Accept": "application/json, text/event-stream",
     "Content-Type": "application/json",
 }
+
+
+class FakeOboProvider:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def get_api_token(self, subject_token: str) -> str:
+        self.calls.append(subject_token)
+        if subject_token != MCP_TOKEN:
+            raise CatalogClientError("authentication_required", retryable=False)
+        return API_TOKEN
+
+    async def invalidate(self, subject_token: str) -> None:
+        return None
 
 
 def _recipe_view_payload() -> dict[str, Any]:
@@ -66,7 +83,8 @@ def _rpc_request(request_id: int, method: str, params: dict[str, Any]) -> dict[s
 
 def _catalog_handler(calls: list[httpx.Request], request: httpx.Request) -> httpx.Response:
     calls.append(request)
-    assert request.headers["authorization"] == "Bearer verified-raw-token"
+    assert request.headers["authorization"] == f"Bearer {API_TOKEN}"
+    assert MCP_TOKEN not in request.headers["authorization"]
     if request.method == "GET" and request.url.path == "/v1/recipes":
         return httpx.Response(
             200,
@@ -92,25 +110,26 @@ def _install_verified_principal(
     expected_scopes = frozenset(scopes)
 
     async def verify(token: str) -> Principal:
-        assert token == "verified-raw-token"
+        assert token == MCP_TOKEN
         return Principal(
             subject="auth0|chef",
             scopes=expected_scopes,
             claims={
                 "sub": "auth0|chef",
                 "scope": " ".join(sorted(expected_scopes)),
-                "aud": [
-                    app.state.settings.auth0_audience,
-                    app.state.settings.mcp_resource_url,
-                ],
+                "aud": app.state.settings.mcp_resource_url,
             },
         )
 
-    monkeypatch.setattr(app.state.token_verifier, "verify", verify)
+    monkeypatch.setattr(app.state.mcp_token_verifier, "verify", verify)
 
 
 def test_mcp_streamable_http_requires_bearer_token(settings: Settings) -> None:
-    app = create_app(settings=settings, catalog_transport=httpx.MockTransport(_catalog_handler))
+    app = create_app(
+        settings=settings,
+        catalog_transport=httpx.MockTransport(_catalog_handler),
+        obo_provider=FakeOboProvider(),
+    )
 
     with TestClient(app, base_url="https://mcp.storecipe.example") as client:
         response = client.post(
@@ -129,9 +148,11 @@ def test_raw_streamable_http_initialize_list_and_all_four_calls(
     monkeypatch: Any,
 ) -> None:
     calls: list[httpx.Request] = []
+    obo_provider = FakeOboProvider()
     app = create_app(
         settings=settings,
         catalog_transport=httpx.MockTransport(lambda request: _catalog_handler(calls, request)),
+        obo_provider=obo_provider,
     )
 
     with TestClient(app, base_url="https://mcp.storecipe.example") as client:
@@ -192,6 +213,7 @@ def test_raw_streamable_http_initialize_list_and_all_four_calls(
         ("POST", "/v1/recipes"),
         ("PUT", f"/v1/recipes/{RECIPE_ID}/rating"),
     ]
+    assert obo_provider.calls == [MCP_TOKEN] * 4
 
 
 def test_read_only_token_cannot_trigger_create_or_catalog_request(
@@ -199,9 +221,11 @@ def test_read_only_token_cannot_trigger_create_or_catalog_request(
     monkeypatch: Any,
 ) -> None:
     calls: list[httpx.Request] = []
+    obo_provider = FakeOboProvider()
     app = create_app(
         settings=settings,
         catalog_transport=httpx.MockTransport(lambda request: _catalog_handler(calls, request)),
+        obo_provider=obo_provider,
     )
 
     with TestClient(app, base_url="https://mcp.storecipe.example") as client:
@@ -233,3 +257,4 @@ def test_read_only_token_cannot_trigger_create_or_catalog_request(
         'scope="recipes:write"'
     )
     assert calls == []
+    assert obo_provider.calls == []
