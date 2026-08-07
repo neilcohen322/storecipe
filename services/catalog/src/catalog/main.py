@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 
-from catalog.auth import Auth0TokenVerifier
+from catalog.auth import build_token_verifier
 from catalog.config import get_settings
 from catalog.database import create_engine, create_session_factory
 from catalog.problems import PROBLEM_TYPE_BASE, install_problem_details, problem_response
@@ -24,7 +24,7 @@ from catalog.services.errors import (
 )
 
 settings = get_settings()
-token_verifier = Auth0TokenVerifier(settings)
+token_verifier = build_token_verifier(settings)
 
 
 def _status_for(exc: CatalogError) -> int:
@@ -72,6 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = create_engine()
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.token_verifier = token_verifier
+    app.state.auth_resource_metadata_url = settings.resource_metadata_url
     runtime_settings = get_settings()
     app.state.redis_timeout_seconds = runtime_settings.redis_timeout_seconds
     app.state.redis = create_redis_client(

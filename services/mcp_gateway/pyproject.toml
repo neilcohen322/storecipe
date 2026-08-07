@@ -10,8 +10,12 @@ dependencies = [
     "pyjwt[crypto]>=2.10,<3",
     "pydantic>=2.10,<2.12",
     "pydantic-settings>=2.10,<3",
+    "storecipe-auth",
     "uvicorn[standard]>=0.35,<0.36",
 ]
+
+[tool.uv.sources]
+storecipe-auth = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -2,13 +2,24 @@
 
 These are framework-independent: the API layer translates them into RFC 9457
 problem responses (see the handler registered in ``catalog.main``).
+
+Query-layer cursor errors live in ``catalog.errors`` so domain DTOs and
+repositories do not depend on this services package; they are re-exported here
+for a stable import path.
 """
 
 from uuid import UUID
 
+from catalog.errors import CatalogError, InvalidCursor, StaleRecipeQueryCursor
 
-class CatalogError(Exception):
-    """Base class for domain errors raised by catalog services."""
+__all__ = [
+    "CatalogError",
+    "IdempotencyConflict",
+    "InvalidCursor",
+    "InvalidFilter",
+    "RecipeNotFound",
+    "StaleRecipeQueryCursor",
+]
 
 
 class RecipeNotFound(CatalogError):
@@ -24,20 +35,6 @@ class IdempotencyConflict(CatalogError):
 
     def __init__(self) -> None:
         super().__init__("Idempotency key was already used for different recipe content.")
-
-
-class InvalidCursor(CatalogError):
-    """A pagination cursor could not be decoded."""
-
-    def __init__(self) -> None:
-        super().__init__("Invalid pagination cursor.")
-
-
-class StaleRecipeQueryCursor(CatalogError):
-    """A valid query cursor belongs to an older catalog version."""
-
-    def __init__(self) -> None:
-        super().__init__("Recipe query cursor is stale.")
 
 
 class InvalidFilter(CatalogError):

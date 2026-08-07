@@ -11,40 +11,13 @@ from catalog.recipe_queries import (
     validate_request_cursor,
 )
 from catalog.recipe_query_cache import RecipeQueryCache
+from catalog.recipe_views import to_recipe_view
 from catalog.repositories.recipe_queries import (
     QueryCandidate,
     effective_sort,
     fetch_query_candidates,
 )
-from catalog.schemas import RecipeView
 from catalog.services.users import resolve_user
-
-
-def _recipe_view(candidate: QueryCandidate) -> RecipeView:
-    recipe = candidate.recipe
-    return RecipeView(
-        id=recipe.id,
-        title=recipe.title,
-        source_url=recipe.source_url,
-        servings=recipe.servings,
-        prep_minutes=recipe.prep_minutes,
-        cook_minutes=recipe.cook_minutes,
-        total_minutes=recipe.total_minutes,
-        ingredients=[
-            {
-                "raw_text": ingredient.raw_text,
-                "name": ingredient.name,
-                "quantity": (
-                    float(ingredient.quantity) if ingredient.quantity is not None else None
-                ),
-                "unit": ingredient.unit,
-            }
-            for ingredient in recipe.ingredients
-        ],
-        instructions=[instruction.text for instruction in recipe.instructions],
-        tags=sorted(recipe_tag.tag.name for recipe_tag in recipe.recipe_tags),
-        rating=candidate.rating,
-    )
 
 
 def _match(request: RecipeQueryRequest, candidate: QueryCandidate) -> RecipeMatch | None:
@@ -93,7 +66,10 @@ def build_query_page(
     has_more = len(bounded_candidates) > request.limit
     return RecipeQueryPage(
         items=[
-            RecipeQueryItem(recipe=_recipe_view(candidate), match=_match(request, candidate))
+            RecipeQueryItem(
+                recipe=to_recipe_view(candidate.recipe, rating=candidate.rating),
+                match=_match(request, candidate),
+            )
             for candidate in page_candidates
         ],
         next_cursor=(

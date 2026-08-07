@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request, status
 
-from storecipe_mcp.auth import Auth0TokenVerifier, McpInboundTokenVerifier
+from storecipe_mcp.auth import McpInboundTokenVerifier
 from storecipe_mcp.catalog_client import CatalogClient
 from storecipe_mcp.config import Settings, get_settings
 from storecipe_mcp.errors import CatalogClientError
@@ -31,7 +31,6 @@ def create_app(
     obo_provider: OboTokenProvider | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
-    token_verifier = Auth0TokenVerifier(runtime_settings)
     mcp_token_verifier = McpInboundTokenVerifier(runtime_settings)
     runtime_catalog_client: CatalogClient | None = None
     runtime_obo_provider: OboTokenProvider | None = None
@@ -58,7 +57,6 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         nonlocal runtime_catalog_client, runtime_obo_provider
         application.state.settings = runtime_settings
-        application.state.token_verifier = token_verifier
         application.state.mcp_token_verifier = mcp_token_verifier
         application.state.mcp_server = mcp_server
         timeout = httpx.Timeout(

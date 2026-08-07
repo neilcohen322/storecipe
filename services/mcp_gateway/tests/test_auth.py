@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from types import SimpleNamespace
-from typing import Any, cast
 
 import jwt
 import pytest
@@ -37,15 +36,16 @@ def _settings() -> Settings:
 
 
 def _api_verifier(public_key: rsa.RSAPublicKey) -> Auth0TokenVerifier:
-    verifier = Auth0TokenVerifier(_settings())
-    cast(Any, verifier)._jwk_client = StaticJwkClient(public_key)
-    return verifier
+    settings = _settings()
+    return Auth0TokenVerifier(
+        settings,
+        audience=settings.auth0_audience,
+        jwk_client=StaticJwkClient(public_key),
+    )
 
 
 def _mcp_verifier(public_key: rsa.RSAPublicKey) -> McpInboundTokenVerifier:
-    verifier = McpInboundTokenVerifier(_settings())
-    cast(Any, verifier)._jwk_client = StaticJwkClient(public_key)
-    return verifier
+    return McpInboundTokenVerifier(_settings(), jwk_client=StaticJwkClient(public_key))
 
 
 def _token(
@@ -143,7 +143,7 @@ async def test_api_verifier_rejects_mcp_audience_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_auth0_verifier_rejects_unconfigured_or_malformed_tokens() -> None:
-    unconfigured = Auth0TokenVerifier(Settings())
+    unconfigured = Auth0TokenVerifier(Settings(), audience="https://api.storecipe.example")
     with pytest.raises(InvalidAccessToken, match="not configured"):
         await unconfigured.verify("not-a-jwt")
 
