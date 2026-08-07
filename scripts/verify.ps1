@@ -36,8 +36,10 @@ if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
     Invoke-Step 'docker compose config' { docker compose config --quiet }
     docker info *> $null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host 'UNVERIFIED: Docker daemon is unavailable; mcp-gateway image build skipped.'
+        Write-Host 'UNVERIFIED: Docker daemon is unavailable; image builds skipped.'
     } else {
+        Invoke-Step 'docker compose build catalog-api' { docker compose build catalog-api }
+        Invoke-Step 'docker compose build ingestion-api' { docker compose build ingestion-api }
         Invoke-Step 'docker compose build mcp-gateway' { docker compose build mcp-gateway }
     }
 }
