@@ -1,6 +1,5 @@
 import time
 from types import SimpleNamespace
-from typing import Any, cast
 
 import jwt
 import pytest
@@ -24,8 +23,11 @@ def verifier_with_key(public_key: rsa.RSAPublicKey) -> Auth0TokenVerifier:
         auth0_audience="https://api.storecipe.example",
         auth0_jwks_url="https://tenant.example/.well-known/jwks.json",
     )
-    verifier = Auth0TokenVerifier(settings)
-    cast(Any, verifier)._jwk_client = StaticJwkClient(public_key)
+    verifier = Auth0TokenVerifier(
+        settings,
+        audience=settings.auth0_audience,
+        jwk_client=StaticJwkClient(public_key),
+    )
     return verifier
 
 

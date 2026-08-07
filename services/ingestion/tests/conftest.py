@@ -43,7 +43,8 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     app.state.source_lookup = MissingSourceLookup()
     app.state.import_burst_limiter = UnlimitedBurstLimiter()
     app.state.token_verifier = Auth0TokenVerifier(
-        Settings(payload_active_key_id="test", payload_keyring=f"test={keyring}")
+        Settings(payload_active_key_id="test", payload_keyring=f"test={keyring}"),
+        audience="https://api.storecipe.example",
     )
     app.dependency_overrides[get_principal] = principal
     try:

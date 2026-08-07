@@ -14,6 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.types import TypeDecorator
 
+from catalog.errors import InvalidCursor
 from catalog.models import Ingredient, Rating, Recipe, RecipeTag, Tag
 from catalog.recipe_queries import (
     ParsedSort,
@@ -23,7 +24,6 @@ from catalog.recipe_queries import (
     SortField,
     parse_cursor_sort_token,
 )
-from catalog.services.errors import InvalidCursor
 
 _COVERAGE_QUANTUM = Decimal("0.00000000000000000001")
 

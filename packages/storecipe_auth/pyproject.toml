@@ -1,0 +1,16 @@
+[project]
+name = "storecipe-auth"
+version = "0.1.0"
+description = "Shared Auth0 JWT verification for Storecipe services"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi>=0.116,<0.117",
+    "pyjwt[crypto]>=2.10,<3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/storecipe_auth"]
