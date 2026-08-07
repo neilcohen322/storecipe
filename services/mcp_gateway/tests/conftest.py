@@ -11,4 +11,6 @@ def settings() -> Settings:
         auth0_audience="https://api.storecipe.example",
         auth0_jwks_url="https://tenant.example/.well-known/jwks.json",
         mcp_resource_url="https://mcp.storecipe.example/mcp",
+        obo_client_id="obo-client",
+        obo_client_secret="obo-secret",
     )

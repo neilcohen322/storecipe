@@ -6,9 +6,9 @@ Catalog through its documented REST/OpenAPI contract:
 
 ```text
 MCP host (ChatGPT, Claude, or another compatible client)
-  -> public HTTPS + Auth0 bearer token
-  -> mcp-gateway: Streamable HTTP, OAuth metadata, tool contracts
-  -> private HTTP + the same raw bearer token
+  -> public HTTPS + Auth0 MCP-audience bearer token
+  -> mcp-gateway: Streamable HTTP, OAuth metadata, tool contracts, Auth0 OBO exchange
+  -> private HTTP + API-audience bearer token
   -> Catalog REST: authorization, ownership, validation, transactions, persistence
   -> PostgreSQL
 ```
@@ -25,8 +25,9 @@ server-side LLM request.
 | Deterministic recipe queries and query cache | Catalog | `GET /v1/recipes` |
 | Public MCP endpoint, OAuth metadata, and Streamable HTTP transport | MCP gateway | Public HTTPS; Caddy routes `/mcp*` |
 | MCP tool schemas and REST-to-MCP adaptation | MCP gateway | Catalog OpenAPI/REST; future service REST contracts |
-| Access-token verification at the public boundary | MCP gateway, then Catalog | Auth0 issuer, audience, signature/JWKS, expiry, and subject checks |
-| User identity and ownership authorization | Catalog | Verified raw bearer token on every Catalog REST call |
+| Access-token verification at the public boundary | MCP gateway | Auth0 issuer, MCP audience/resource, signature/JWKS, expiry, and subject checks |
+| Auth0 On-Behalf-Of token exchange | MCP gateway | RFC 8693 exchange to the Storecipe API audience before Catalog REST |
+| User identity and ownership authorization | Catalog | Verified API-audience bearer token on every Catalog REST call |
 | Recipe-creation idempotency records and `201`/`200`/`409` outcomes | Catalog | `POST /v1/recipes` with `Idempotency-Key` |
 | Import jobs and state machine | Ingestion | Ingestion REST |
 | URL/text extraction telemetry | Ingestion | No direct database access by catalog |
@@ -54,12 +55,13 @@ update, delete, or server-side LLM tools.
 
 ## Authentication, rate limits, and future aggregation
 
-The gateway verifies the Auth0 bearer token and the exact tool scope before invoking a
-handler. It derives identity only from the verified subject and forwards the same raw
-bearer token in the `Authorization` header to Catalog. Catalog verifies the token a
-second time and independently enforces its REST scope and ownership rules. Only
-`recipes:read`, `recipes:write`, and `ratings:write` are advertised; the internal
-`recipes:internal:create` scope is never advertised to MCP clients.
+The gateway verifies the Auth0 MCP-audience bearer token and the exact tool scope
+before invoking a handler. It exchanges that inbound token through Auth0 RFC 8693
+On-Behalf-Of for a distinct API-audience token, then forwards only the exchanged token
+in the `Authorization` header to Catalog. The inbound MCP token is never forwarded.
+Catalog verifies the API token and independently enforces its REST scope and ownership
+rules. Only `recipes:read`, `recipes:write`, and `ratings:write` are advertised; the
+internal `recipes:internal:create` scope is never advertised to MCP clients.
 
 Public HTTPS/deployment controls are the rate-limiting boundary for gateway traffic.
 The gateway introduces no operation-specific limiter and makes one Catalog request

@@ -75,6 +75,28 @@ async def test_auth0_verifier_rejects_wrong_audience() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auth0_verifier_rejects_mcp_audience_tokens() -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = verifier_with_key(private_key.public_key())
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "sub": "auth0|user-123",
+            "iss": "https://tenant.example/",
+            "aud": "https://mcp.storecipe.example/mcp",
+            "iat": now,
+            "exp": now + 300,
+            "scope": "recipes:read",
+        },
+        private_key,
+        algorithm="RS256",
+    )
+
+    with pytest.raises(InvalidAccessToken):
+        await verifier.verify(token)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("issuer", "expires_at"),
     [

@@ -17,12 +17,13 @@ gateway.
 - **Redis:** disposable cache/rate-limit Redis plus a dedicated persistent Celery broker Redis.
 - **Expo:** universal client shell for web and native applications.
 
-The public flow is `MCP host -> public HTTPS/Caddy -> mcp-gateway -> private HTTP /
-v1 Catalog REST -> PostgreSQL`. The gateway has no database, Redis, ORM, or Catalog
-implementation dependency. It verifies the Auth0 token and tool scope, forwards the
-same raw bearer token, and Catalog verifies it again before applying REST authorization
-and ownership. This boundary can later aggregate tools backed by other microservices'
-REST contracts without exposing their topology or sharing their storage.
+The public flow is `MCP host -> public HTTPS/Caddy -> mcp-gateway -> Auth0 OBO ->
+private Catalog REST -> PostgreSQL`. The gateway has no database, Redis, ORM, or Catalog
+implementation dependency. It verifies the inbound MCP-audience Auth0 token and tool
+scope, exchanges that token for a distinct API-audience token, and Catalog verifies the
+exchanged token before applying REST authorization and ownership. The inbound MCP token
+is never forwarded. This boundary can later aggregate tools backed by other
+microservices' REST contracts without exposing their topology or sharing their storage.
 
 See [`contracts/ownership.md`](contracts/ownership.md) and
 [`contracts/erd.md`](contracts/erd.md) before adding domain logic.
@@ -84,13 +85,14 @@ together. Secrets belong in `.env`, which Git ignores.
 
 ## Protected endpoints
 
-Recipe, Catalog REST, and MCP endpoints require an Auth0 access token whose issuer and
-audience match `AUTH0_ISSUER` and `AUTH0_AUDIENCE`. The gateway exposes exactly four
-tools: `query_recipes` and `get_recipe` use `recipes:read`, `create_recipe` uses
-`recipes:write`, and `rate_recipe` uses `ratings:write`. The gateway verifies the
-token/scope first and Catalog verifies the same raw bearer token again. Leaving Auth0
-unset is safe for local infrastructure checks: health endpoints remain available,
-while protected endpoints return `401`.
+Recipe and Catalog REST endpoints require an Auth0 access token whose issuer and
+audience match `AUTH0_ISSUER` and `AUTH0_AUDIENCE`. MCP hosts present tokens whose
+audience is `MCP_RESOURCE_URL`; the gateway exchanges those for API-audience tokens
+before calling Catalog. The gateway exposes exactly four tools: `query_recipes` and
+`get_recipe` use `recipes:read`, `create_recipe` uses `recipes:write`, and
+`rate_recipe` uses `ratings:write`. Leaving Auth0 unset is safe for local
+infrastructure checks: health endpoints remain available, while protected endpoints
+return `401`.
 
 The MCP host's model chooses when to call these tools and supplies structured recipe
 content. Storecipe makes no server-side LLM request. The gateway does not expose URL

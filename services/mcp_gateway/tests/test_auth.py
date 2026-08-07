@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import time
 from types import SimpleNamespace
 from typing import Any, cast
@@ -11,6 +13,7 @@ from storecipe_mcp.auth import (
     Auth0TokenVerifier,
     InvalidAccessToken,
     McpAuth0TokenVerifier,
+    McpInboundTokenVerifier,
     oauth_challenge,
 )
 from storecipe_mcp.config import Settings
@@ -24,13 +27,23 @@ class StaticJwkClient:
         return SimpleNamespace(key=self._public_key)
 
 
-def _verifier(public_key: rsa.RSAPublicKey) -> Auth0TokenVerifier:
-    settings = Settings(
+def _settings() -> Settings:
+    return Settings(
         auth0_issuer="https://tenant.example/",
         auth0_audience="https://api.storecipe.example",
         auth0_jwks_url="https://tenant.example/.well-known/jwks.json",
+        mcp_resource_url="https://mcp.storecipe.example/mcp",
     )
-    verifier = Auth0TokenVerifier(settings)
+
+
+def _api_verifier(public_key: rsa.RSAPublicKey) -> Auth0TokenVerifier:
+    verifier = Auth0TokenVerifier(_settings())
+    cast(Any, verifier)._jwk_client = StaticJwkClient(public_key)
+    return verifier
+
+
+def _mcp_verifier(public_key: rsa.RSAPublicKey) -> McpInboundTokenVerifier:
+    verifier = McpInboundTokenVerifier(_settings())
     cast(Any, verifier)._jwk_client = StaticJwkClient(public_key)
     return verifier
 
@@ -58,15 +71,46 @@ def _token(
 
 
 @pytest.mark.asyncio
-async def test_auth0_verifier_checks_signature_issuer_audience_expiry_and_scope() -> None:
+async def test_api_verifier_checks_signature_issuer_api_audience_expiry_and_scope() -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = _verifier(private_key.public_key())
+    verifier = _api_verifier(private_key.public_key())
 
     principal = await verifier.verify(_token(private_key))
 
     assert principal.subject == "auth0|user-123"
     assert principal.scopes == frozenset({"recipes:read", "recipes:write"})
     assert principal.claims["aud"] == "https://api.storecipe.example"
+
+
+@pytest.mark.asyncio
+async def test_mcp_inbound_verifier_accepts_only_mcp_resource_audience() -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = _mcp_verifier(private_key.public_key())
+    mcp_token = _token(private_key, audience="https://mcp.storecipe.example/mcp")
+
+    principal = await verifier.verify(mcp_token)
+
+    assert principal.subject == "auth0|user-123"
+    assert principal.claims["aud"] == "https://mcp.storecipe.example/mcp"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"audience": "https://api.storecipe.example"},
+        {"audience": "https://another-api.example"},
+        {"issuer": "https://wrong-tenant.example/"},
+        {"expires_at": int(time.time()) - 1},
+        {"subject": None},
+    ],
+)
+async def test_mcp_inbound_verifier_rejects_non_mcp_tokens(kwargs: dict[str, object]) -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = _mcp_verifier(private_key.public_key())
+
+    with pytest.raises(InvalidAccessToken):
+        await verifier.verify(_token(private_key, **kwargs))
 
 
 @pytest.mark.asyncio
@@ -79,12 +123,22 @@ async def test_auth0_verifier_checks_signature_issuer_audience_expiry_and_scope(
         {"subject": None},
     ],
 )
-async def test_auth0_verifier_rejects_invalid_token_claims(kwargs: dict[str, object]) -> None:
+async def test_api_verifier_rejects_invalid_token_claims(kwargs: dict[str, object]) -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = _verifier(private_key.public_key())
+    verifier = _api_verifier(private_key.public_key())
 
     with pytest.raises(InvalidAccessToken):
         await verifier.verify(_token(private_key, **kwargs))
+
+
+@pytest.mark.asyncio
+async def test_api_verifier_rejects_mcp_audience_tokens() -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    verifier = _api_verifier(private_key.public_key())
+    mcp_token = _token(private_key, audience="https://mcp.storecipe.example/mcp")
+
+    with pytest.raises(InvalidAccessToken):
+        await verifier.verify(mcp_token)
 
 
 @pytest.mark.asyncio
@@ -94,7 +148,7 @@ async def test_auth0_verifier_rejects_unconfigured_or_malformed_tokens() -> None
         await unconfigured.verify("not-a-jwt")
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = _verifier(private_key.public_key())
+    verifier = _api_verifier(private_key.public_key())
     with pytest.raises(InvalidAccessToken):
         await verifier.verify("not-a-jwt")
 
@@ -102,15 +156,9 @@ async def test_auth0_verifier_rejects_unconfigured_or_malformed_tokens() -> None
 @pytest.mark.asyncio
 async def test_mcp_adapter_returns_verified_access_token_and_hides_invalid_tokens() -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = _verifier(private_key.public_key())
+    verifier = _mcp_verifier(private_key.public_key())
     adapter = McpAuth0TokenVerifier(verifier, "https://mcp.storecipe.example/mcp")
-    token = _token(
-        private_key,
-        audience=[
-            "https://api.storecipe.example",
-            "https://mcp.storecipe.example/mcp",
-        ],
-    )
+    token = _token(private_key, audience="https://mcp.storecipe.example/mcp")
 
     access_token = await adapter.verify_token(token)
     invalid = await adapter.verify_token("not-a-jwt")
@@ -125,9 +173,9 @@ async def test_mcp_adapter_returns_verified_access_token_and_hides_invalid_token
 
 
 @pytest.mark.asyncio
-async def test_mcp_adapter_rejects_audience_without_its_resource() -> None:
+async def test_mcp_adapter_rejects_api_audience_tokens() -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    verifier = _verifier(private_key.public_key())
+    verifier = _mcp_verifier(private_key.public_key())
     adapter = McpAuth0TokenVerifier(verifier, "https://mcp.storecipe.example/mcp")
 
     token = _token(private_key, audience="https://api.storecipe.example")

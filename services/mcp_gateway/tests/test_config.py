@@ -87,6 +87,9 @@ def test_settings_load_mcp_environment_aliases(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("MCP_WRITE_TIMEOUT_SECONDS", "4.5")
     monkeypatch.setenv("AUTH0_ISSUER", "https://tenant.example/")
     monkeypatch.setenv("AUTH0_AUDIENCE", "https://api.example")
+    monkeypatch.setenv("MCP_OBO_CLIENT_ID", "obo-client")
+    monkeypatch.setenv("MCP_OBO_CLIENT_SECRET", "obo-secret")
+    monkeypatch.setenv("MCP_OBO_TOKEN_URL", "https://tenant.example/oauth/token")
 
     settings = Settings()
 
@@ -99,6 +102,16 @@ def test_settings_load_mcp_environment_aliases(monkeypatch: pytest.MonkeyPatch) 
     assert settings.write_timeout_seconds == 4.5
     assert settings.auth0_issuer == "https://tenant.example/"
     assert settings.auth0_audience == "https://api.example"
+    assert settings.obo_client_id == "obo-client"
+    assert settings.obo_client_secret.get_secret_value() == "obo-secret"
+    assert settings.obo_token_url == "https://tenant.example/oauth/token"
+    assert settings.resolved_obo_token_url == "https://tenant.example/oauth/token"
+
+
+def test_settings_default_obo_token_url_from_issuer() -> None:
+    settings = Settings(auth0_issuer="https://tenant.example/")
+
+    assert settings.resolved_obo_token_url == "https://tenant.example/oauth/token"
 
 
 def test_gateway_owned_environment_names_require_mcp_namespace(

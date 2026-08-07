@@ -94,6 +94,9 @@ services:
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-}
       AUTH0_JWKS_URL: ${AUTH0_JWKS_URL:-}
       MCP_RESOURCE_URL: ${MCP_RESOURCE_URL:-http://localhost/mcp}
+      MCP_OBO_CLIENT_ID: ${MCP_OBO_CLIENT_ID:-}
+      MCP_OBO_CLIENT_SECRET: ${MCP_OBO_CLIENT_SECRET:-}
+      MCP_OBO_TOKEN_URL: ${MCP_OBO_TOKEN_URL:-}
     ports:
       - "${MCP_PORT:-8002}:8002"
     depends_on:

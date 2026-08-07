@@ -73,6 +73,9 @@ def test_gateway_compose_contract_forbids_database_and_redis_access() -> None:
         "AUTH0_AUDIENCE",
         "AUTH0_JWKS_URL",
         "MCP_RESOURCE_URL",
+        "MCP_OBO_CLIENT_ID",
+        "MCP_OBO_CLIENT_SECRET",
+        "MCP_OBO_TOKEN_URL",
     }
     assert environment["MCP_CATALOG_API_URL"].endswith("http://catalog-api:8000}")
     assert environment["MCP_RESOURCE_URL"].endswith("http://localhost/mcp}")
@@ -111,10 +114,14 @@ def test_public_resource_and_auth0_environment_contracts_are_coherent() -> None:
 
     assert re.search(r"^AUTH0_AUDIENCE=$", env_example, re.MULTILINE)
     assert re.search(r"^MCP_RESOURCE_URL=http://localhost/mcp$", env_example, re.MULTILINE)
+    assert re.search(r"^MCP_OBO_CLIENT_ID=$", env_example, re.MULTILINE)
+    assert re.search(r"^MCP_OBO_CLIENT_SECRET=$", env_example, re.MULTILINE)
     lowered_contract = environment_contract.lower()
     assert "canonical storecipe api resource" in lowered_contract
     assert "public https mcp gateway resource identifier" in lowered_contract
+    assert "on-behalf-of" in lowered_contract
     assert "MCP_RESOURCE_URL` | MCP gateway" in environment_contract
+    assert "MCP_OBO_CLIENT_ID` | MCP gateway" in environment_contract
 
 
 def test_verify_script_covers_gateway_contract_and_runtime_checks() -> None:

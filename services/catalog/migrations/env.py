@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 from logging.config import fileConfig
 
 from alembic import context
@@ -10,7 +11,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from catalog.models import Base
 
 config = context.config
-if config.config_file_name is not None:
+# Skip fileConfig under pytest: it resets root handlers and breaks caplog assertions.
+if config.config_file_name is not None and "pytest" not in sys.modules:
     fileConfig(config.config_file_name)
 
 config.set_main_option(

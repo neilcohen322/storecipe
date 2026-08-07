@@ -34,11 +34,12 @@ The public MCP resource advertises exactly these scopes:
 | `create_recipe` | `recipes:write` |
 | `rate_recipe` | `ratings:write` |
 
-The gateway verifies the bearer token, issuer, audience/resource, signature/JWKS,
-expiry, structure, and required tool scope. It then forwards the same raw bearer
-token to Catalog, which verifies it again and applies REST authorization and
-ownership. A missing scope returns a complete MCP challenge in
-`_meta["mcp/www_authenticate"]`, including the metadata URL, exact required scope,
+The gateway verifies the bearer token, issuer, MCP audience/resource, signature/JWKS,
+expiry, structure, and required tool scope. It then exchanges the inbound MCP token
+through Auth0 On-Behalf-Of for an API-audience token and forwards only that exchanged
+token to Catalog, which verifies it and applies REST authorization and ownership. The
+inbound MCP token is never forwarded. A missing scope returns a complete MCP challenge
+in `_meta["mcp/www_authenticate"]`, including the metadata URL, exact required scope,
 `error="insufficient_scope"`, and a concise description. For example:
 
 ```text

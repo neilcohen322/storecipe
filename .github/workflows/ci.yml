@@ -7,6 +7,33 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: storecipe
+          POSTGRES_PASSWORD: storecipe
+          POSTGRES_DB: storecipe
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U storecipe -d storecipe"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      STORECIPE_TEST_REDIS_URL: redis://localhost:6379/0
+      CATALOG_TEST_DATABASE_URL: postgresql+asyncpg://catalog_app:local_catalog_only@localhost:5432/storecipe
+      INGESTION_TEST_DATABASE_URL: postgresql+asyncpg://ingestion_app:local_ingestion_only@localhost:5432/storecipe
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -17,9 +44,30 @@ jobs:
       - run: uv sync --all-packages --group dev --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy services/catalog/src services/ingestion/src
+      - run: uv run mypy services/catalog/src services/ingestion/src services/mcp_gateway/src
+      - name: Bootstrap Catalog and Ingestion schemas
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          PGPASSWORD=storecipe psql -h localhost -U storecipe -d storecipe -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE catalog_app LOGIN PASSWORD 'local_catalog_only';
+          CREATE ROLE ingestion_app LOGIN PASSWORD 'local_ingestion_only';
+          CREATE SCHEMA catalog AUTHORIZATION catalog_app;
+          CREATE SCHEMA ingestion AUTHORIZATION ingestion_app;
+          GRANT CONNECT ON DATABASE storecipe TO catalog_app, ingestion_app;
+          GRANT CREATE ON DATABASE storecipe TO catalog_app, ingestion_app;
+          SQL
+      - name: Prepare Catalog schema
+        run: uv run alembic -c services/catalog/alembic.ini upgrade head
+        env:
+          CATALOG_DATABASE_URL: postgresql+asyncpg://catalog_app:local_catalog_only@localhost:5432/storecipe
+      - name: Prepare Ingestion schema
+        run: uv run alembic -c services/ingestion/alembic.ini upgrade head
+        env:
+          INGESTION_DATABASE_URL: postgresql+asyncpg://ingestion_app:local_ingestion_only@localhost:5432/storecipe
       - run: uv run pytest
       - run: uv run openapi-spec-validator contracts/openapi.yaml
+      - run: docker compose config --quiet
 
   web:
     runs-on: ubuntu-latest
@@ -38,3 +86,11 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production service images
+        run: |
+          docker compose build catalog-api ingestion-api mcp-gateway
