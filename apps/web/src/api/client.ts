@@ -1,11 +1,3 @@
-export type ApiService = "catalog" | "ingestion";
-
-export type ApiClientBases = Record<ApiService, string>;
-
-export type ApiRequestOptions = RequestInit & {
-  service?: ApiService;
-};
-
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -22,6 +14,57 @@ export class ApiUnauthorizedError extends ApiError {
     this.name = "ApiUnauthorizedError";
   }
 }
+
+/** Credential states that require re-login; network/transient Auth0 failures stay retryable. */
+const UNAUTHORIZED_CREDENTIAL_MARKERS = new Set([
+  "NO_CREDENTIALS",
+  "NO_REFRESH_TOKEN",
+  "SESSION_EXPIRED",
+  "INVALID_CREDENTIALS",
+  "RENEW_FAILED",
+  "login_required",
+  "session_expired",
+  "missing_refresh_token",
+  "invalid_refresh_token",
+  "invalid_grant",
+  "consent_required",
+  "mfa_required",
+]);
+
+export function isUnauthorizedCredentialError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as {
+    type?: unknown;
+    code?: unknown;
+    name?: unknown;
+    error?: unknown;
+  };
+
+  for (const value of [candidate.type, candidate.code, candidate.name, candidate.error]) {
+    if (typeof value !== "string" || value.length === 0) {
+      continue;
+    }
+    if (UNAUTHORIZED_CREDENTIAL_MARKERS.has(value)) {
+      return true;
+    }
+    if (UNAUTHORIZED_CREDENTIAL_MARKERS.has(value.toLowerCase())) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export type ApiService = "catalog" | "ingestion";
+
+export type ApiClientBases = Record<ApiService, string>;
+
+export type ApiRequestOptions = RequestInit & {
+  service?: ApiService;
+};
 
 function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
@@ -48,14 +91,30 @@ export function createApiClient(
     path: string,
     { service = "catalog", headers: requestHeaders, ...init }: ApiRequestOptions = {},
   ): Promise<Response> => {
-    const accessToken = await getAccessToken();
+    let accessToken: string;
+    try {
+      accessToken = await getAccessToken();
+    } catch (err) {
+      if (isUnauthorizedCredentialError(err)) {
+        const reason = err instanceof Error ? err.message : "Authentication required";
+        throw new ApiUnauthorizedError(reason);
+      }
+      throw err instanceof Error ? err : new Error("Failed to obtain access token");
+    }
     const headers = new Headers(requestHeaders);
     headers.set("Authorization", `Bearer ${accessToken}`);
 
-    const response = await fetch(joinUrl(bases[service], path), {
-      ...init,
-      headers,
-    });
+    const url = joinUrl(bases[service], path);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "network error";
+      throw new Error(`Failed to reach ${service} at ${url}: ${reason}`);
+    }
 
     if (!response.ok) {
       const detail = await errorDetail(response);

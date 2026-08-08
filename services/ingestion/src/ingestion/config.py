@@ -4,6 +4,7 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator, model_vali
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ingestion.ai_extractor import DEFAULT_OPENROUTER_MODEL
+from ingestion.cors_origins import parse_cors_origins
 
 
 class Settings(BaseSettings):
@@ -36,6 +37,9 @@ class Settings(BaseSettings):
     auth0_issuer: str = Field(default="", validation_alias="AUTH0_ISSUER")
     auth0_audience: str = Field(default="", validation_alias="AUTH0_AUDIENCE")
     auth0_jwks_url: str = Field(default="", validation_alias="AUTH0_JWKS_URL")
+    cors_origins: str = Field(
+        default="http://localhost:8081,http://127.0.0.1:8081",
+    )
     catalog_api_url: str = Field(
         default="http://catalog-api:8000",
         validation_alias=AliasChoices("CATALOG_API_URL", "CATALOG_URL", "CATALOG_BASE_URL"),
@@ -54,6 +58,16 @@ class Settings(BaseSettings):
     import_burst_window_seconds: int = Field(default=60, ge=1, le=86_400)
     ai_daily_token_limit: int = Field(default=1_100_000, ge=1)
     ai_invocation_reservation_tokens: int = Field(default=275_000, ge=1)
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return parse_cors_origins(self.cors_origins)
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _cors_origins_are_explicit_urls(cls, value: str) -> str:
+        parse_cors_origins(value)
+        return value
 
     @property
     def resolved_jwks_url(self) -> str:

@@ -9,16 +9,13 @@ import {
 } from "react-native";
 
 import { ApiUnauthorizedError } from "../api/client";
-import type { createIngestionApi, ImportJob, ImportJobStatus } from "../api/ingestion";
+import type { createIngestionApi } from "../api/ingestion";
 import { colors, sharedStyles } from "../theme";
-
-const TERMINAL_STATUSES: ReadonlySet<ImportJobStatus> = new Set([
-  "completed",
-  "review_required",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
+import {
+  resolveImportIdempotencyAttempt,
+  type ImportIdempotencyAttempt,
+} from "../utils/idempotencySession";
+import { createImportPoller, type ImportPoller } from "../utils/importPolling";
 
 type ImportTab = "url" | "text";
 
@@ -27,13 +24,6 @@ export type ImportScreenProps = {
   onBack(): void;
   onUnauthorized(): void;
 };
-
-function formatStatus(job: Pick<ImportJob, "status" | "errorCategory">): string {
-  if (job.errorCategory) {
-    return `${job.status} (${job.errorCategory})`;
-  }
-  return job.status;
-}
 
 export function ImportScreen({
   ingestion,
@@ -46,64 +36,41 @@ export function ImportScreen({
   const [submitting, setSubmitting] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const attemptRef = useRef<ImportIdempotencyAttempt | null>(null);
+  const ingestionRef = useRef(ingestion);
+  const onUnauthorizedRef = useRef(onUnauthorized);
+  const pollerRef = useRef<ImportPoller | null>(null);
+
+  ingestionRef.current = ingestion;
+  onUnauthorizedRef.current = onUnauthorized;
+
+  if (pollerRef.current === null) {
+    pollerRef.current = createImportPoller({
+      getImport: (jobId) => ingestionRef.current.getImport(jobId),
+      isActive: () => mountedRef.current,
+      onStatus: (next) => setStatusText(next),
+      onTerminal: () => {
+        attemptRef.current = null;
+        setSubmitting(false);
+      },
+      onUnauthorized: () => onUnauthorizedRef.current(),
+      onError: (message) => {
+        // Keep key/job so retry resumes the same attempt instead of duplicating.
+        setError(message);
+        setSubmitting(false);
+      },
+      isUnauthorizedError: (err) => err instanceof ApiUnauthorizedError,
+    });
+  }
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (pollTimer.current) {
-        clearInterval(pollTimer.current);
-        pollTimer.current = null;
-      }
+      pollerRef.current?.stop();
     };
   }, []);
-
-  const stopPolling = () => {
-    if (pollTimer.current) {
-      clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    }
-  };
-
-  const startPolling = (jobId: string) => {
-    stopPolling();
-    setStatusText("queued");
-
-    const tick = async () => {
-      if (!mountedRef.current) {
-        return;
-      }
-      try {
-        const job = await ingestion.getImport(jobId);
-        if (!mountedRef.current) {
-          return;
-        }
-        setStatusText(formatStatus(job));
-        if (TERMINAL_STATUSES.has(job.status)) {
-          stopPolling();
-          setSubmitting(false);
-        }
-      } catch (err) {
-        if (!mountedRef.current) {
-          return;
-        }
-        stopPolling();
-        setSubmitting(false);
-        if (err instanceof ApiUnauthorizedError) {
-          onUnauthorized();
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Failed to poll import status");
-      }
-    };
-
-    void tick();
-    pollTimer.current = setInterval(() => {
-      void tick();
-    }, 2000);
-  };
 
   const submit = async () => {
     setError(null);
@@ -118,14 +85,34 @@ export function ImportScreen({
       return;
     }
 
+    const fingerprint =
+      tab === "url" ? `url:${url.trim()}` : `text:${text.trim()}`;
+    const attempt = resolveImportIdempotencyAttempt(attemptRef.current, fingerprint);
+    attemptRef.current = attempt;
+
     setSubmitting(true);
     try {
-      const submission =
-        tab === "url"
-          ? await ingestion.createUrlImport(url.trim())
-          : await ingestion.createTextImport(text.trim());
-      startPolling(submission.jobId);
+      let jobId = attempt.jobId;
+      if (jobId === null) {
+        const submission =
+          tab === "url"
+            ? await ingestion.createUrlImport(url.trim(), {
+                idempotencyKey: attempt.session.key,
+              })
+            : await ingestion.createTextImport(text.trim(), {
+                idempotencyKey: attempt.session.key,
+              });
+        jobId = submission.jobId;
+        attemptRef.current = { session: attempt.session, jobId };
+      }
+      if (!mountedRef.current) {
+        return;
+      }
+      pollerRef.current?.start(jobId);
     } catch (err) {
+      if (!mountedRef.current) {
+        return;
+      }
       setSubmitting(false);
       if (err instanceof ApiUnauthorizedError) {
         onUnauthorized();

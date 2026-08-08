@@ -1,10 +1,12 @@
 import {
   createContext,
+  type ComponentProps,
   type PropsWithChildren,
   useCallback,
   useContext,
   useMemo,
 } from "react";
+import { Platform } from "react-native";
 import {
   Auth0Provider as ReactNativeAuth0Provider,
   useAuth0,
@@ -18,6 +20,7 @@ const AUTH_SCOPE =
 export type AuthContextValue = {
   isLoading: boolean;
   isAuthenticated: boolean;
+  errorMessage: string | null;
   login(): Promise<void>;
   logout(): Promise<void>;
   getAccessToken(): Promise<string>;
@@ -25,18 +28,37 @@ export type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function webRedirectUrl(): string | undefined {
+  if (Platform.OS !== "web") {
+    return undefined;
+  }
+  if (typeof window === "undefined" || !window.location?.origin) {
+    return undefined;
+  }
+  return window.location.origin;
+}
+
 function AuthSession({
   audience,
   children,
 }: PropsWithChildren<{ audience: string }>) {
-  const { user, isLoading, authorize, clearSession, getCredentials } = useAuth0();
+  const { user, isLoading, error, authorize, clearSession, getCredentials } =
+    useAuth0();
 
   const login = useCallback(async () => {
-    await authorize({ audience, scope: AUTH_SCOPE });
+    // On web, authorize() calls loginWithRedirect. Passing an explicit
+    // redirectUrl avoids redirect_uri: undefined wiping the SPA default.
+    const redirectUrl = webRedirectUrl();
+    await authorize({
+      audience,
+      scope: AUTH_SCOPE,
+      ...(redirectUrl ? { redirectUrl } : {}),
+    });
   }, [audience, authorize]);
 
   const logout = useCallback(async () => {
-    await clearSession();
+    const returnToUrl = webRedirectUrl();
+    await clearSession(returnToUrl ? { returnToUrl } : undefined);
   }, [clearSession]);
 
   const getAccessToken = useCallback(async () => {
@@ -48,11 +70,12 @@ function AuthSession({
     () => ({
       isLoading,
       isAuthenticated: user !== null,
+      errorMessage: error?.message ?? null,
       login,
       logout,
       getAccessToken,
     }),
-    [getAccessToken, isLoading, login, logout, user],
+    [error?.message, getAccessToken, isLoading, login, logout, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -60,13 +83,17 @@ function AuthSession({
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const { domain, clientId, audience } = getAuth0Config();
+  // Auth0Provider's public props type is platform-agnostic Auth0Options; refresh
+  // tokens are a web Auth0 SPA option consumed at runtime by the web adapter.
+  const providerProps = {
+    domain,
+    clientId,
+    useDPoP: false,
+    useRefreshTokens: true,
+  } as ComponentProps<typeof ReactNativeAuth0Provider>;
 
   return (
-    <ReactNativeAuth0Provider
-      domain={domain}
-      clientId={clientId}
-      useDPoP={false}
-    >
+    <ReactNativeAuth0Provider {...providerProps}>
       <AuthSession audience={audience}>{children}</AuthSession>
     </ReactNativeAuth0Provider>
   );

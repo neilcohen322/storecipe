@@ -60,6 +60,9 @@ function AuthenticatedApp() {
   const handleLogin = useCallback(async () => {
     setLoginError(null);
     try {
+      // Web: login redirects away; the promise intentionally never resolves.
+      // Show status so a failed/blocked redirect is visible.
+      setLoginError("Redirecting to Auth0…");
       await auth.login();
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : "Login failed");
@@ -85,7 +88,7 @@ function AuthenticatedApp() {
           authConfigured
           isLoading={auth.isLoading}
           isAuthenticated={auth.isAuthenticated}
-          errorMessage={loginError}
+          errorMessage={loginError ?? auth.errorMessage}
           onLogin={() => void handleLogin()}
           onContinue={() => setRoute({ name: "list" })}
         />

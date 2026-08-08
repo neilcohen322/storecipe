@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -11,7 +11,11 @@ import {
 import { ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi } from "../api/catalog";
 import { colors, sharedStyles } from "../theme";
-import { randomUuid } from "../utils/randomUuid";
+import {
+  resolveIdempotencySession,
+  type IdempotencySession,
+} from "../utils/idempotencySession";
+import { fingerprintRecipeCreate, parseRecipeLines } from "../utils/recipeFingerprint";
 
 export type CreateRecipeScreenProps = {
   catalog: ReturnType<typeof createCatalogApi>;
@@ -19,13 +23,6 @@ export type CreateRecipeScreenProps = {
   onBack(): void;
   onUnauthorized(): void;
 };
-
-function parseLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
 
 export function CreateRecipeScreen({
   catalog,
@@ -38,6 +35,7 @@ export function CreateRecipeScreen({
   const [instructionsText, setInstructionsText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const idempotencyRef = useRef<IdempotencySession | null>(null);
 
   const submit = async () => {
     const trimmedTitle = title.trim();
@@ -46,19 +44,27 @@ export function CreateRecipeScreen({
       return;
     }
 
-    const ingredients = parseLines(ingredientsText).map((rawText) => ({
+    const ingredients = parseRecipeLines(ingredientsText).map((rawText) => ({
       rawText,
       name: rawText,
     }));
-    const instructions = parseLines(instructionsText);
+    const instructions = parseRecipeLines(instructionsText);
+    const fingerprint = fingerprintRecipeCreate({
+      title: trimmedTitle,
+      ingredients,
+      instructions,
+    });
+    const session = resolveIdempotencySession(idempotencyRef.current, fingerprint);
+    idempotencyRef.current = session;
 
     setSubmitting(true);
     setError(null);
     try {
       const recipe = await catalog.createRecipe(
         { title: trimmedTitle, ingredients, instructions },
-        randomUuid(),
+        session.key,
       );
+      idempotencyRef.current = null;
       onCreated(recipe.id);
     } catch (err) {
       if (err instanceof ApiUnauthorizedError) {
