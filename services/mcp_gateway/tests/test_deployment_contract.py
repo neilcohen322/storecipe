@@ -76,6 +76,7 @@ def test_gateway_compose_contract_forbids_database_and_redis_access() -> None:
         "MCP_OBO_CLIENT_ID",
         "MCP_OBO_CLIENT_SECRET",
         "MCP_OBO_TOKEN_URL",
+        "MCP_OBO_EXPIRY_MARGIN_SECONDS",
     }
     assert environment["MCP_CATALOG_API_URL"].endswith("http://catalog-api:8000}")
     assert environment["MCP_RESOURCE_URL"].endswith("http://localhost/mcp}")

@@ -1,7 +1,8 @@
 from functools import lru_cache
+from typing import Self
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -140,6 +141,51 @@ class Settings(BaseSettings):
         if parsed.path != "/mcp" or parsed.query or parsed.fragment:
             raise ValueError("MCP_RESOURCE_URL path must be exactly /mcp without query or fragment")
         return value
+
+    @model_validator(mode="after")
+    def _require_gateway_auth_all_or_none(self) -> Self:
+        has_issuer = bool(self.auth0_issuer)
+        has_audience = bool(self.auth0_audience)
+        has_jwks = bool(self.auth0_jwks_url)
+        has_client_id = bool(self.obo_client_id)
+        has_client_secret = bool(self.obo_client_secret.get_secret_value())
+        has_explicit_token_url = bool(self.obo_token_url)
+        auth_intent = any(
+            (
+                has_issuer,
+                has_audience,
+                has_jwks,
+                has_client_id,
+                has_client_secret,
+                has_explicit_token_url,
+            )
+        )
+        if not auth_intent:
+            return self
+        missing: list[str] = []
+        if not has_issuer:
+            missing.append("AUTH0_ISSUER")
+        if not has_audience:
+            missing.append("AUTH0_AUDIENCE")
+        if not has_client_id:
+            missing.append("MCP_OBO_CLIENT_ID")
+        if not has_client_secret:
+            missing.append("MCP_OBO_CLIENT_SECRET")
+        if missing:
+            raise ValueError(
+                "Gateway auth settings are all-or-none; missing: " + ", ".join(missing)
+            )
+        return self
+
+    @property
+    def obo_configured(self) -> bool:
+        return bool(
+            self.auth0_issuer
+            and self.obo_client_id
+            and self.obo_client_secret.get_secret_value()
+            and self.auth0_audience
+            and self.resolved_obo_token_url
+        )
 
     @property
     def resolved_jwks_url(self) -> str:

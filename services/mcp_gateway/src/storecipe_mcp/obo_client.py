@@ -64,6 +64,7 @@ class OboTokenProvider:
         self._max_cache_entries = max_cache_entries
         self._clock = clock
         self._cache: OrderedDict[str, _CachedExchange] = OrderedDict()
+        self._inflight: dict[str, asyncio.Task[str]] = {}
         self._lock = asyncio.Lock()
 
     async def get_api_token(self, subject_token: str) -> str:
@@ -74,15 +75,12 @@ class OboTokenProvider:
             if cached is not None and self._has_usable_exchange(cached):
                 self._cache.move_to_end(cache_key)
                 return cached.api_token
-            api_token, expires_in = await self._exchange(subject_token)
-            self._store_exchange(
-                cache_key,
-                _CachedExchange(
-                    api_token=api_token,
-                    expires_at=self._clock() + expires_in,
-                ),
-            )
-            return api_token
+            task = self._inflight.get(cache_key)
+            if task is None:
+                task = asyncio.create_task(self._exchange_and_store(cache_key, subject_token))
+                task.add_done_callback(_consume_finished_task_exception)
+                self._inflight[cache_key] = task
+        return await asyncio.shield(task)
 
     async def invalidate(self, subject_token: str) -> None:
         """Discard a cached exchange for ``subject_token`` if it is still current."""
@@ -106,6 +104,22 @@ class OboTokenProvider:
         self._cache.move_to_end(cache_key)
         while len(self._cache) > self._max_cache_entries:
             self._cache.popitem(last=False)
+
+    async def _exchange_and_store(self, cache_key: str, subject_token: str) -> str:
+        try:
+            api_token, expires_in = await self._exchange(subject_token)
+            exchange = _CachedExchange(
+                api_token=api_token,
+                expires_at=self._clock() + expires_in,
+            )
+            async with self._lock:
+                self._store_exchange(cache_key, exchange)
+            return api_token
+        finally:
+            async with self._lock:
+                current = self._inflight.get(cache_key)
+                if current is asyncio.current_task():
+                    self._inflight.pop(cache_key, None)
 
     async def _exchange(self, subject_token: str) -> tuple[str, float]:
         payload = {
@@ -157,6 +171,13 @@ def build_obo_token_provider(settings: Settings, http: httpx.AsyncClient) -> Obo
 
 def _cache_key(subject_token: str) -> str:
     return hashlib.sha256(subject_token.encode("utf-8")).hexdigest()
+
+
+def _consume_finished_task_exception(task: asyncio.Task[object]) -> None:
+    """Retrieve exceptions from detached exchange tasks so they are not logged on GC."""
+    if task.cancelled():
+        return
+    task.exception()
 
 
 def _optional_error_body(response: httpx.Response) -> Mapping[str, object]:

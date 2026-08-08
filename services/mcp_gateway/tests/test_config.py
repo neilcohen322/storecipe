@@ -108,10 +108,54 @@ def test_settings_load_mcp_environment_aliases(monkeypatch: pytest.MonkeyPatch) 
     assert settings.resolved_obo_token_url == "https://tenant.example/oauth/token"
 
 
-def test_settings_default_obo_token_url_from_issuer() -> None:
-    settings = Settings(auth0_issuer="https://tenant.example/")
+def test_settings_issuer_alone_is_rejected_as_partial_gateway_auth() -> None:
+    with pytest.raises(ValidationError, match="all-or-none"):
+        Settings(auth0_issuer="https://tenant.example/")
 
+
+def test_settings_reject_partial_obo_configuration() -> None:
+    with pytest.raises(ValidationError, match="all-or-none"):
+        Settings(
+            auth0_issuer="https://tenant.example/",
+            auth0_audience="https://api.storecipe.example",
+            obo_client_id="obo-client",
+        )
+
+
+def test_settings_reject_obo_without_issuer_even_with_explicit_token_url() -> None:
+    with pytest.raises(ValidationError, match="all-or-none"):
+        Settings(
+            auth0_audience="https://api.storecipe.example",
+            obo_client_id="obo-client",
+            obo_client_secret="obo-secret",
+            obo_token_url="https://tenant.example/oauth/token",
+        )
+
+
+def test_settings_accept_complete_obo_configuration() -> None:
+    settings = Settings(
+        auth0_issuer="https://tenant.example/",
+        auth0_audience="https://api.storecipe.example",
+        obo_client_id="obo-client",
+        obo_client_secret="obo-secret",
+    )
+
+    assert settings.obo_configured is True
     assert settings.resolved_obo_token_url == "https://tenant.example/oauth/token"
+    assert settings.resolved_jwks_url == "https://tenant.example/.well-known/jwks.json"
+
+
+def test_settings_explicit_token_url_overrides_issuer_token_path() -> None:
+    settings = Settings(
+        auth0_issuer="https://tenant.example/",
+        auth0_audience="https://api.storecipe.example",
+        obo_client_id="obo-client",
+        obo_client_secret="obo-secret",
+        obo_token_url="https://tenant.example/custom/oauth/token",
+    )
+
+    assert settings.obo_configured is True
+    assert settings.resolved_obo_token_url == "https://tenant.example/custom/oauth/token"
 
 
 def test_gateway_owned_environment_names_require_mcp_namespace(

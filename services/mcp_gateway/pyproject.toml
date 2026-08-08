@@ -7,7 +7,6 @@ dependencies = [
     "fastapi>=0.116,<0.117",
     "httpx>=0.28,<0.29",
     "mcp>=1.26,<2",
-    "pyjwt[crypto]>=2.10,<3",
     "pydantic>=2.10,<2.12",
     "pydantic-settings>=2.10,<3",
     "storecipe-auth",

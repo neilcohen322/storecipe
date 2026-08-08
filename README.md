@@ -90,9 +90,13 @@ audience match `AUTH0_ISSUER` and `AUTH0_AUDIENCE`. MCP hosts present tokens who
 audience is `MCP_RESOURCE_URL`; the gateway exchanges those for API-audience tokens
 before calling Catalog. The gateway exposes exactly four tools: `query_recipes` and
 `get_recipe` use `recipes:read`, `create_recipe` uses `recipes:write`, and
-`rate_recipe` uses `ratings:write`. Leaving Auth0 unset is safe for local
-infrastructure checks: health endpoints remain available, while protected endpoints
-return `401`.
+`rate_recipe` uses `ratings:write`. Leaving Auth0/OBO fully unset is safe for local
+infrastructure checks: `/health/live` and `/health/ready` stay available, with
+`obo_config: not_required`. Any Auth0/OBO value enables the all-or-none gateway auth
+bundle (`AUTH0_ISSUER`, `AUTH0_AUDIENCE`, `MCP_OBO_CLIENT_ID`, and
+`MCP_OBO_CLIENT_SECRET`; token URL may be explicit or derived from the issuer). Partial
+bundles fail startup validation. Protected endpoints return `401` while Auth0
+verification settings are empty.
 
 The MCP host's model chooses when to call these tools and supplies structured recipe
 content. Storecipe makes no server-side LLM request. The gateway does not expose URL
@@ -105,7 +109,8 @@ on `create_recipe` is metadata and is not fetched.
 stores the key and canonical payload hash transactionally and returns `201 Created`
 for the first user/key/payload, `200 OK` for an exact replay, and `409 Conflict` with
 `idempotency_conflict` when the same user/key is reused with different validated
-content. The gateway does not keep retry state or perform hidden retries.
+content. After a Catalog `401`, the gateway invalidates its cached OBO token and
+retries that Catalog call once; it keeps no other retry state.
 
 Public HTTPS/deployment controls are the gateway rate-limiting boundary. Catalog and
 Ingestion retain their own bounded query, cache, and import-burst protections; Week 11
