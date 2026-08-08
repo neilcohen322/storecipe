@@ -636,6 +636,8 @@ async def test_actual_serialized_request_fits_reserved_token_envelope(
         response_format=build_response_format(),
     )
     assert len(serialized) + MAX_OUTPUT_TOKENS <= 275_000
+    assert b"require_parameters" not in serialized
+    assert b'"provider"' not in serialized
 
 
 @pytest.mark.asyncio

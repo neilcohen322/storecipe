@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 
@@ -118,3 +119,10 @@ app.include_router(recipes_router)
 app.include_router(ratings_router)
 app.include_router(internal_recipes_router)
 app.include_router(health_router)
+# Outermost so browser preflight OPTIONS succeeds before auth/route handling.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

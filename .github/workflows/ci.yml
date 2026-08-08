@@ -86,6 +86,7 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
+      - run: pnpm test
 
   images:
     runs-on: ubuntu-latest

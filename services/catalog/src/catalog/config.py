@@ -1,7 +1,9 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from catalog.cors_origins import parse_cors_origins
 
 
 class Settings(BaseSettings):
@@ -22,6 +24,20 @@ class Settings(BaseSettings):
     auth0_issuer: str = Field(default="", validation_alias="AUTH0_ISSUER")
     auth0_audience: str = Field(default="", validation_alias="AUTH0_AUDIENCE")
     auth0_jwks_url: str = Field(default="", validation_alias="AUTH0_JWKS_URL")
+    # Comma-separated browser origins allowed to call Catalog from Expo web.
+    cors_origins: str = Field(
+        default="http://localhost:8081,http://127.0.0.1:8081",
+    )
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return parse_cors_origins(self.cors_origins)
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _cors_origins_are_explicit_urls(cls, value: str) -> str:
+        parse_cors_origins(value)
+        return value
 
     @property
     def resolved_jwks_url(self) -> str:

@@ -1,13 +1,16 @@
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ingestion.auth import build_token_verifier
 from ingestion.catalog_client import build_catalog_client
 from ingestion.config import get_settings
+from ingestion.cors_origins import parse_cors_origins
 from ingestion.crypto import PayloadCipher
 from ingestion.database import create_engine
 from ingestion.problems import install_problem_details
@@ -15,6 +18,16 @@ from ingestion.rate_limits import RedisBurstLimiter
 from ingestion.repositories.imports import ImportRepository
 from ingestion.routes.health import router as health_router
 from ingestion.routes.imports import router as imports_router
+
+
+def _cors_origins_from_env() -> list[str]:
+    # Avoid get_settings() at import time — Settings requires payload secrets
+    # that unit tests set only after importing the app module.
+    raw = os.environ.get(
+        "INGESTION_CORS_ORIGINS",
+        "http://localhost:8081,http://127.0.0.1:8081",
+    )
+    return parse_cors_origins(raw)
 
 
 @asynccontextmanager
@@ -68,3 +81,9 @@ app = FastAPI(
 install_problem_details(app)
 app.include_router(health_router)
 app.include_router(imports_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins_from_env(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

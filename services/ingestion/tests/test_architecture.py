@@ -54,6 +54,14 @@ def test_operations_docs_describe_split_redis_and_opt_in_recovery_checks() -> No
     assert "ingestion-dispatcher" in compose
     assert "ingestion-reconciler" in compose
     assert "Celery broker uses redis-broker" in compose
+    assert "INGESTION_IMPORT_BURST_REQUESTS" in compose
+    assert "INGESTION_AI_DAILY_TOKEN_LIMIT" in compose
+    assert "OPENROUTER_API_KEY" in compose
+    # Secret stays on the worker; API/dispatcher/reconciler share ingestion-common only.
+    api_block = compose.split("ingestion-api:")[1].split("ingestion-worker:")[0]
+    worker_block = compose.split("ingestion-worker:")[1].split("ingestion-dispatcher:")[0]
+    assert "OPENROUTER_API_KEY" not in api_block
+    assert "OPENROUTER_API_KEY" in worker_block
     assert "UNVERIFIED" in verifier
     assert "INGESTION_TEST_DATABASE_URL" in verifier
     assert "RUN_DOCKER_INTEGRATION" in verifier

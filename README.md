@@ -66,6 +66,21 @@ Set-Location apps/web
 pnpm run web
 ```
 
+Local Expo web serves at `http://localhost:8081` by default. For Auth0 Universal
+Login with `react-native-auth0`, configure the development SPA client with these
+exact URLs (no wildcards):
+
+- Allowed Callback URLs: `http://localhost:8081`
+- Allowed Logout URLs: `http://localhost:8081`
+- Allowed Web Origins: `http://localhost:8081`
+
+Copy `EXPO_PUBLIC_AUTH0_DOMAIN`, `EXPO_PUBLIC_AUTH0_CLIENT_ID`, and
+`EXPO_PUBLIC_AUTH0_AUDIENCE` into `apps/web/.env` (API audience — not
+`MCP_RESOURCE_URL`). Optional API bases default to Catalog
+`http://localhost:8000` and Ingestion `http://localhost:8001` via
+`EXPO_PUBLIC_CATALOG_API_URL` / `EXPO_PUBLIC_INGESTION_API_URL`. Live Google login
+against the development Auth0 SPA is working for local Compose; MCP tunnel / DCR /
+OBO proof remains Week 13 (stable public MCP URL).
 ## Quality checks
 
 ```powershell

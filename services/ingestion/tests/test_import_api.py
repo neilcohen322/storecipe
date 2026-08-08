@@ -280,6 +280,52 @@ async def test_default_source_lookup_unavailability_returns_503(
 
 
 @pytest.mark.asyncio
+async def test_non_retryable_source_lookup_token_failure_still_accepts_import(
+    api_client: AsyncClient,
+) -> None:
+    """Misconfigured M2M must not abort URL import; skip duplicate warning instead."""
+    app.state.source_lookup = StubSourceLookup(
+        error=CatalogError(
+            CatalogFailureCode.TOKEN_REQUEST_FAILED,
+            retryable=False,
+            status=401,
+        )
+    )
+
+    response = await api_client.post(
+        "/v1/imports/url",
+        json={"url": "https://example.com/soup"},
+    )
+
+    assert response.status_code == 202
+    assert "jobId" in response.json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 404])
+async def test_non_retryable_source_lookup_contract_failure_does_not_skip_warning(
+    api_client: AsyncClient,
+    status: int,
+) -> None:
+    """Unexpected Catalog contract errors must fail closed, not look like no duplicate."""
+    app.state.source_lookup = StubSourceLookup(
+        error=CatalogError(
+            CatalogFailureCode.CATALOG_REQUEST_FAILED,
+            retryable=False,
+            status=status,
+        )
+    )
+
+    response = await api_client.post(
+        "/v1/imports/url",
+        json={"url": "https://example.com/soup"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["errorCategory"] == "source_lookup_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_matching_idempotency_replay_precedes_a_later_source_warning(
     api_client: AsyncClient,
 ) -> None:

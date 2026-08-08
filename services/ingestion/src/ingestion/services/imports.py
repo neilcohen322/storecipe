@@ -10,7 +10,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ingestion.catalog_client import CatalogError
+from ingestion.catalog_client import CatalogError, CatalogFailureCode
 from ingestion.crypto import PayloadCipher
 from ingestion.models import ImportInputKind, ImportJob, ImportStatus
 from ingestion.repositories.imports import ImportRepository
@@ -18,6 +18,22 @@ from ingestion.schemas import DuplicatePolicy
 
 _ACTIVE_URL_INDEX = "uq_import_jobs_owner_active_url_fingerprint"
 _IDEMPOTENCY_KEY_INDEX = "uq_import_jobs_owner_idempotency_key"
+_SKIPPABLE_TOKEN_FAILURE_CODES = frozenset(
+    {
+        CatalogFailureCode.TOKEN_REQUEST_FAILED,
+        CatalogFailureCode.TOKEN_RESPONSE_INVALID,
+    }
+)
+
+
+def _skip_duplicate_warning_on_auth_failure(error: CatalogError) -> bool:
+    """Only Auth0/M2M terminal auth failures may skip the duplicate warning."""
+
+    if error.retryable:
+        return False
+    if error.code in _SKIPPABLE_TOKEN_FAILURE_CODES:
+        return True
+    return error.status in {401, 403}
 
 
 class ImportNotFound(Exception):
@@ -144,7 +160,13 @@ class ImportService:
                 except CatalogError as error:
                     if error.retryable:
                         raise SourceLookupUnavailable from error
-                    raise
+                    if _skip_duplicate_warning_on_auth_failure(error):
+                        # Misconfigured M2M: skip duplicate warning, still accept.
+                        existing_recipe_id = None
+                    else:
+                        # Unexpected contract failures (e.g. 400/404) must not look
+                        # like "no duplicate found".
+                        raise SourceLookupUnavailable from error
                 if existing_recipe_id is not None:
                     raise ExistingRecipeSource(existing_recipe_id)
             if active_winner is None:

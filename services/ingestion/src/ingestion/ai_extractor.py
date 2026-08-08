@@ -258,7 +258,9 @@ def serialize_openrouter_request(
             "response_format": response_format,
             "temperature": 0,
             "max_tokens": MAX_OUTPUT_TOKENS,
-            "provider": {"require_parameters": True},
+            # Do not set provider.require_parameters: OpenRouter returns 404 for
+            # models (including openai/gpt-5.6-luna) when no endpoint advertises
+            # support for every requested parameter (strict json_schema, etc.).
         },
         separators=(",", ":"),
         ensure_ascii=False,

@@ -1,0 +1,138 @@
+import { StyleSheet } from "react-native";
+
+/** Shared Storecipe dark-green palette from the original App shell. */
+export const colors = {
+  background: "#10231c",
+  badge: "#d8f3dc",
+  badgeText: "#1b4332",
+  title: "#f7fff9",
+  subtitle: "#b7d8c7",
+  button: "#2d6a4f",
+  buttonText: "#d8f3dc",
+  note: "#78a890",
+  danger: "#f4a3a3",
+  inputBg: "#1a3329",
+  inputBorder: "#2d6a4f",
+  rowBorder: "#1f3d31",
+} as const;
+
+export const sharedStyles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: colors.background,
+    padding: 24,
+  },
+  centered: {
+    flex: 1,
+    backgroundColor: colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 32,
+  },
+  badge: {
+    backgroundColor: colors.badge,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    marginBottom: 24,
+  },
+  badgeText: {
+    color: colors.badgeText,
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+  },
+  title: {
+    color: colors.title,
+    fontSize: 54,
+    fontWeight: "800",
+    letterSpacing: -1.5,
+  },
+  heading: {
+    color: colors.title,
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+    marginBottom: 16,
+  },
+  subtitle: {
+    color: colors.subtitle,
+    fontSize: 18,
+    lineHeight: 27,
+    maxWidth: 520,
+    textAlign: "center",
+    marginTop: 12,
+  },
+  body: {
+    color: colors.subtitle,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  note: {
+    color: colors.note,
+    fontSize: 13,
+    marginTop: 18,
+  },
+  error: {
+    color: colors.danger,
+    fontSize: 14,
+    marginTop: 12,
+    textAlign: "center",
+  },
+  button: {
+    backgroundColor: colors.button,
+    borderRadius: 12,
+    marginTop: 16,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  buttonSecondary: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: colors.button,
+    borderRadius: 12,
+    marginTop: 12,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    alignItems: "center",
+  },
+  buttonText: {
+    color: colors.buttonText,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  buttonRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 16,
+  },
+  input: {
+    backgroundColor: colors.inputBg,
+    borderColor: colors.inputBorder,
+    borderWidth: 1,
+    borderRadius: 10,
+    color: colors.title,
+    fontSize: 15,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  label: {
+    color: colors.note,
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 6,
+  },
+  row: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.rowBorder,
+    paddingVertical: 14,
+  },
+  rowTitle: {
+    color: colors.title,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+});
