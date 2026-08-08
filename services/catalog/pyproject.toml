@@ -7,7 +7,6 @@ dependencies = [
     "alembic>=1.16,<2",
     "asyncpg>=0.30,<0.31",
     "fastapi>=0.116,<0.117",
-    "pyjwt[crypto]>=2.10,<3",
     "pydantic>=2.10,<2.12",
     "pydantic-settings>=2.10,<3",
     "redis>=6.2,<7",

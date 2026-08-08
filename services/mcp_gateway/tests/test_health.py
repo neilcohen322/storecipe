@@ -54,6 +54,36 @@ def test_readiness_returns_service_unavailable_for_failed_probe() -> None:
     assert response.json() == {"detail": "dependency unavailable: catalog"}
 
 
+def test_default_readiness_allows_all_auth_unset_local_infrastructure() -> None:
+    app = create_app(
+        settings=Settings(
+            service_name="test-mcp-gateway",
+            catalog_api_url="http://catalog.test:8000",
+        ),
+        catalog_transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "service": "catalog",
+                    "dependencies": {"postgres": "ok"},
+                },
+                request=request,
+            )
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "service": "test-mcp-gateway",
+        "dependencies": {"catalog": "ok", "obo_config": "not_required"},
+    }
+
+
 def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -84,6 +114,10 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     monkeypatch.setattr(main_module.httpx, "AsyncClient", build_client)
     settings = Settings(
         catalog_api_url="http://catalog.test:8000",
+        auth0_issuer="https://tenant.example/",
+        auth0_audience="https://api.storecipe.example",
+        obo_client_id="obo-client",
+        obo_client_secret="obo-secret",
         connect_timeout_seconds=1.5,
         pool_timeout_seconds=2.5,
         read_timeout_seconds=3.5,
@@ -98,7 +132,7 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     assert response.json() == {
         "status": "ok",
         "service": "mcp-gateway",
-        "dependencies": {"catalog": "ok"},
+        "dependencies": {"catalog": "ok", "obo_config": "ok"},
     }
     assert len(clients) == 2
     assert all(client.is_closed for client in clients)
@@ -146,7 +180,10 @@ def test_oauth_protected_resource_metadata_is_gateway_owned() -> None:
     settings = Settings(
         service_name="test-mcp-gateway",
         auth0_issuer="https://tenant.example/",
+        auth0_audience="https://api.storecipe.example",
         mcp_resource_url="https://mcp.example/mcp",
+        obo_client_id="obo-client",
+        obo_client_secret="obo-secret",
     )
     app = create_app(settings=settings)
 

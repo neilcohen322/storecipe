@@ -64,11 +64,14 @@ rules. Only `recipes:read`, `recipes:write`, and `ratings:write` are advertised;
 internal `recipes:internal:create` scope is never advertised to MCP clients.
 
 Public HTTPS/deployment controls are the rate-limiting boundary for gateway traffic.
-The gateway introduces no operation-specific limiter and makes one Catalog request
-per tool invocation with no hidden automatic retry. Catalog and Ingestion retain
-their own service-level protections: bounded query/pagination inputs, Catalog
-database/cache limits, and the existing Ingestion import burst limit. A Catalog
-`429` crosses the REST boundary as a safe retryable MCP `catalog_rate_limited` error.
+The gateway introduces no operation-specific limiter. Each tool invocation makes one
+Catalog request, except after a Catalog `401` when the gateway invalidates the cached
+OBO exchange and retries that same Catalog operation once. All four tools are
+idempotent (`create_recipe` via Idempotency-Key), so the single retry is safe.
+Catalog and Ingestion retain their own service-level protections: bounded
+query/pagination inputs, Catalog database/cache limits, and the existing Ingestion
+import burst limit. A Catalog `429` crosses the REST boundary as a safe retryable MCP
+`catalog_rate_limited` error.
 
 Future Storecipe services may add tools behind this same gateway by publishing
 authenticated REST contracts. That is aggregation at the gateway's HTTP boundary,

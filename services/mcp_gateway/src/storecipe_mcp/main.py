@@ -15,6 +15,7 @@ from storecipe_mcp.obo_client import OboTokenProvider, build_obo_token_provider
 
 ReadinessResult = Mapping[str, str] | bool
 ReadinessProbe = Callable[[], Awaitable[ReadinessResult]]
+_READY_DEPENDENCY_STATUSES = frozenset({"ok", "not_required"})
 
 
 def _dependency_statuses(result: ReadinessResult) -> dict[str, str]:
@@ -42,7 +43,8 @@ def create_app(
 
     def require_obo_provider() -> OboTokenProvider:
         if runtime_obo_provider is None:
-            raise CatalogClientError("authentication_required", retryable=False)
+            # Misconfiguration / missing OBO provider — not a user re-auth problem.
+            raise CatalogClientError("temporary_catalog_failure", retryable=False)
         return runtime_obo_provider
 
     mcp_server = create_mcp_server(
@@ -87,15 +89,24 @@ def create_app(
                 runtime_catalog_client = catalog_client
                 if obo_provider is not None:
                     runtime_obo_provider = obo_provider
-                elif (
-                    runtime_settings.obo_client_id
-                    and runtime_settings.obo_client_secret.get_secret_value()
-                    and runtime_settings.auth0_audience
-                    and runtime_settings.resolved_obo_token_url
-                ):
+                elif runtime_settings.obo_configured:
                     runtime_obo_provider = build_obo_token_provider(runtime_settings, obo_http)
+
+                async def default_readiness() -> dict[str, str]:
+                    catalog_status = await catalog_client.readiness()
+                    dependencies = dict(catalog_status)
+                    if runtime_settings.obo_configured:
+                        dependencies["obo_config"] = (
+                            "ok" if runtime_obo_provider is not None else "unavailable"
+                        )
+                    else:
+                        dependencies["obo_config"] = (
+                            "ok" if runtime_obo_provider is not None else "not_required"
+                        )
+                    return dependencies
+
                 application.state.catalog_client = catalog_client
-                application.state.readiness_probe = readiness_probe or catalog_client.readiness
+                application.state.readiness_probe = readiness_probe or default_readiness
                 try:
                     async with mcp_app.router.lifespan_context(mcp_app):
                         yield
@@ -131,7 +142,9 @@ def create_app(
             ) from None
         dependencies = _dependency_statuses(result)
         failed = [
-            name for name, dependency_status in dependencies.items() if dependency_status != "ok"
+            name
+            for name, dependency_status in dependencies.items()
+            if dependency_status not in _READY_DEPENDENCY_STATUSES
         ]
         if failed:
             raise HTTPException(
