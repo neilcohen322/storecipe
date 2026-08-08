@@ -62,7 +62,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const { domain, clientId, audience } = getAuth0Config();
 
   return (
-    <ReactNativeAuth0Provider domain={domain} clientId={clientId}>
+    <ReactNativeAuth0Provider
+      domain={domain}
+      clientId={clientId}
+      useDPoP={false}
+    >
       <AuthSession audience={audience}>{children}</AuthSession>
     </ReactNativeAuth0Provider>
   );
