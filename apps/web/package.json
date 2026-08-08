@@ -13,7 +13,10 @@
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
+    "@react-native/jest-preset": "^0.86.2",
+    "@types/jest": "^30.0.0",
     "@types/react": "~19.2.2",
+    "jest-expo": "^57.0.3",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -21,7 +24,11 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "test": "jest",
     "typecheck": "tsc --noEmit"
+  },
+  "jest": {
+    "preset": "jest-expo"
   },
   "private": true
 }
