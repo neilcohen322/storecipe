@@ -47,11 +47,15 @@ export function ImportScreen({
   const [statusText, setStatusText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       if (pollTimer.current) {
         clearInterval(pollTimer.current);
+        pollTimer.current = null;
       }
     };
   }, []);
@@ -68,14 +72,23 @@ export function ImportScreen({
     setStatusText("queued");
 
     const tick = async () => {
+      if (!mountedRef.current) {
+        return;
+      }
       try {
         const job = await ingestion.getImport(jobId);
+        if (!mountedRef.current) {
+          return;
+        }
         setStatusText(formatStatus(job));
         if (TERMINAL_STATUSES.has(job.status)) {
           stopPolling();
           setSubmitting(false);
         }
       } catch (err) {
+        if (!mountedRef.current) {
+          return;
+        }
         stopPolling();
         setSubmitting(false);
         if (err instanceof ApiUnauthorizedError) {

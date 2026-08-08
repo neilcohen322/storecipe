@@ -51,7 +51,11 @@ function AuthenticatedApp() {
   const handleUnauthorized = useCallback(() => {
     setLoginError("Session expired. Please log in again.");
     setRoute({ name: "landing" });
-  }, []);
+    void auth.logout().catch(() => {
+      // Session clear failed; landing still shows Log in once isAuthenticated updates,
+      // or the error message prompts the user to try again.
+    });
+  }, [auth]);
 
   const handleLogin = useCallback(async () => {
     setLoginError(null);
