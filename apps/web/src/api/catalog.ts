@@ -92,15 +92,17 @@ function buildRecipeQueryPath(params?: ListRecipesParams): string {
 
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value === undefined) {
+    if (value === undefined || value === null) {
       continue;
     }
-    if (value === null) {
-      search.append(key, "");
+    if (typeof value === "string" && value === "") {
       continue;
     }
     if (Array.isArray(value)) {
       for (const item of value) {
+        if (item === undefined || item === null || item === "") {
+          continue;
+        }
         search.append(key, item);
       }
       continue;

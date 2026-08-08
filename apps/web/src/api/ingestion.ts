@@ -1,4 +1,5 @@
 import type { createApiClient } from "./client";
+import { randomUuid } from "../utils/randomUuid";
 
 export type ImportJobStatus =
   | "queued"
@@ -33,7 +34,7 @@ type ImportCreateOptions = {
 };
 
 function resolveIdempotencyKey(idempotencyKey?: string): string {
-  return idempotencyKey ?? crypto.randomUUID();
+  return idempotencyKey ?? randomUuid();
 }
 
 function normalizeImportSubmission(
