@@ -19,6 +19,9 @@
 | `AUTH0_ISSUER` | APIs/MCP | protected routes / complete gateway auth | Expected JWT issuer; required in the gateway auth all-or-none bundle (cannot be replaced by `MCP_OBO_TOKEN_URL`) |
 | `AUTH0_AUDIENCE` | Catalog/Ingestion/MCP OBO | protected routes / complete gateway auth | Canonical Storecipe API resource; distinct from the public MCP resource URL |
 | `AUTH0_JWKS_URL` | APIs/MCP | no | Optional JWKS override; defaults to `<issuer>/.well-known/jwks.json` |
+| `EXPO_PUBLIC_AUTH0_DOMAIN` | Web (Expo) | Auth0 login | Auth0 tenant domain for Universal Login SPA |
+| `EXPO_PUBLIC_AUTH0_CLIENT_ID` | Web (Expo) | Auth0 login | Public Auth0 SPA client ID |
+| `EXPO_PUBLIC_AUTH0_AUDIENCE` | Web (Expo) | Auth0 login | Storecipe API resource for access tokens; use `AUTH0_AUDIENCE`, not `MCP_RESOURCE_URL` |
 | `MCP_PORT` | Compose | no | Optional host port mapped to the gateway's internal port `8002` |
 | `MCP_CATALOG_API_URL` | MCP gateway | yes | Trusted Catalog REST base URL; defaults to `http://catalog-api:8000` |
 | `MCP_CATALOG_MAX_RESPONSE_BYTES` | MCP gateway | no | Maximum Catalog response size; defaults to 2,097,152 bytes |
