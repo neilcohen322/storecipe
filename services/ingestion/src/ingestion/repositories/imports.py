@@ -13,6 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Select
 
 from ingestion.crypto import PayloadCipher
+from ingestion.import_models import FetchFailureCode
 from ingestion.models import (
     AttemptState,
     CatalogAttempt,
@@ -60,6 +61,10 @@ _TERMINAL_STAGE_FOR_STATUS = {
 }
 
 MAX_PIPELINE_PAYLOAD_BYTES = 256 * 1024
+VARIANT_OUTCOME_CATEGORIES = frozenset(
+    {code.value for code in FetchFailureCode}
+    | {"succeeded", "alternate_shell", "invalid_candidate_url"}
+)
 
 
 class ImportRepository:
@@ -311,6 +316,104 @@ class ImportRepository:
             .returning(ImportJob.id)
         )
         return reserved is not None
+
+    async def reserve_variant_fetch(self, token: "LeaseToken") -> bool:
+        """Durably reserve the single server-rendered variant fetch for a URL job."""
+
+        job = await self._locked_job(token.job_id)
+        now = await self._database_now()
+        now = self._comparison_time(job, now)
+        self._require_live_fence(job, token, now)
+        assert job is not None
+        if (
+            job.input_kind is not ImportInputKind.URL
+            or job.stage is not ImportStage.EXTRACTING
+            or job.variant_fetch_attempted_at is not None
+            or job.cancel_requested_at is not None
+        ):
+            return False
+        reserved = await self.session.scalar(
+            update(ImportJob)
+            .execution_options(synchronize_session="fetch")
+            .where(
+                *self._fence_predicates(token, now),
+                ImportJob.input_kind == ImportInputKind.URL,
+                ImportJob.stage == ImportStage.EXTRACTING,
+                ImportJob.variant_fetch_attempted_at.is_(None),
+                ImportJob.cancel_requested_at.is_(None),
+            )
+            .values(variant_fetch_attempted_at=self._fence_clock_expression())
+            .returning(ImportJob.id)
+        )
+        return reserved is not None
+
+    async def record_variant_fetch_success(self, token: "LeaseToken", content_hash: str) -> bool:
+        """Persist the safe success metadata for the one reserved variant fetch."""
+
+        job = await self._locked_job(token.job_id)
+        now = await self._database_now()
+        now = self._comparison_time(job, now)
+        self._require_live_fence(job, token, now)
+        assert job is not None
+        if (
+            job.input_kind is not ImportInputKind.URL
+            or job.stage is not ImportStage.EXTRACTING
+            or job.variant_fetch_attempted_at is None
+            or job.variant_outcome_category is not None
+            or job.cancel_requested_at is not None
+        ):
+            return False
+        recorded = await self.session.scalar(
+            update(ImportJob)
+            .execution_options(synchronize_session="fetch")
+            .where(
+                *self._fence_predicates(token, now),
+                ImportJob.input_kind == ImportInputKind.URL,
+                ImportJob.stage == ImportStage.EXTRACTING,
+                ImportJob.variant_fetch_attempted_at.is_not(None),
+                ImportJob.variant_outcome_category.is_(None),
+                ImportJob.cancel_requested_at.is_(None),
+            )
+            .values(variant_content_hash=content_hash, variant_outcome_category="succeeded")
+            .returning(ImportJob.id)
+        )
+        return recorded is not None
+
+    async def record_variant_fetch_failure(
+        self, token: "LeaseToken", outcome_category: str
+    ) -> bool:
+        """Persist one privacy-safe variant-fetch failure category after reservation."""
+
+        if outcome_category not in VARIANT_OUTCOME_CATEGORIES - {"succeeded"}:
+            raise ValueError("invalid variant outcome category")
+        job = await self._locked_job(token.job_id)
+        now = await self._database_now()
+        now = self._comparison_time(job, now)
+        self._require_live_fence(job, token, now)
+        assert job is not None
+        if (
+            job.input_kind is not ImportInputKind.URL
+            or job.stage is not ImportStage.EXTRACTING
+            or job.variant_fetch_attempted_at is None
+            or job.variant_outcome_category is not None
+            or job.cancel_requested_at is not None
+        ):
+            return False
+        recorded = await self.session.scalar(
+            update(ImportJob)
+            .execution_options(synchronize_session="fetch")
+            .where(
+                *self._fence_predicates(token, now),
+                ImportJob.input_kind == ImportInputKind.URL,
+                ImportJob.stage == ImportStage.EXTRACTING,
+                ImportJob.variant_fetch_attempted_at.is_not(None),
+                ImportJob.variant_outcome_category.is_(None),
+                ImportJob.cancel_requested_at.is_(None),
+            )
+            .values(variant_outcome_category=outcome_category)
+            .returning(ImportJob.id)
+        )
+        return recorded is not None
 
     async def record_candidate_checkpoint(self, token: "LeaseToken", content_hash: str) -> bool:
         """Attach the validated candidate checkpoint while retaining the live lease fence."""

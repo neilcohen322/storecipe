@@ -15,7 +15,7 @@ from ingestion.config import Settings
 from ingestion.import_models import FetchedDocument, RecipeImportCandidate
 from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.orchestration import LeaseToken
-from ingestion.pipeline import AiBudgetPolicy
+from ingestion.pipeline import AiBudgetPolicy, ImportAdapters
 from ingestion.repositories.imports import ImportRepository
 from ingestion.telemetry import ImportEvent, emit_import_event, queue_import_event
 
@@ -57,6 +57,18 @@ def _ai_budget_policy(settings: Settings) -> AiBudgetPolicy:
         provider_name="openrouter",
         model_name=settings.openrouter_model,
         prompt_version=PROMPT_VERSION,
+    )
+
+
+def _build_import_adapters(settings: Settings, model: object, catalog: object) -> ImportAdapters:
+    from ingestion.fetcher import SafeFetcher
+
+    return ImportAdapters(
+        fetcher=SafeFetcher(),
+        deterministic=_JsonLdAdapter(),
+        model=_model_if_enabled(settings.ai_extraction_enabled, model),  # type: ignore[arg-type]
+        catalog=catalog,  # type: ignore[arg-type]
+        variant_registry=settings.server_rendered_variant_registry,
     )
 
 
@@ -131,9 +143,8 @@ def build_import_runner() -> ImportRunner:
     from ingestion.config import get_settings
     from ingestion.crypto import PayloadCipher
     from ingestion.database import create_engine
-    from ingestion.fetcher import SafeFetcher
     from ingestion.orchestration import StaleLease
-    from ingestion.pipeline import ImportAdapters, ImportPipeline
+    from ingestion.pipeline import ImportPipeline
     from ingestion.repositories.budgets import AiBudgetRepository
     from ingestion.repositories.imports import ImportRepository
 
@@ -176,12 +187,7 @@ def build_import_runner() -> ImportRunner:
                     ).run(
                         job_id,
                         token,
-                        ImportAdapters(
-                            fetcher=SafeFetcher(),
-                            deterministic=_JsonLdAdapter(),
-                            model=_model_if_enabled(settings.ai_extraction_enabled, model),
-                            catalog=catalog,
-                        ),
+                        _build_import_adapters(settings, model, catalog),
                     )
                 except StaleLease:
                     await session.rollback()

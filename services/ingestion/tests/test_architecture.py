@@ -67,6 +67,33 @@ def test_operations_docs_describe_split_redis_and_opt_in_recovery_checks() -> No
     assert "RUN_DOCKER_INTEGRATION" in verifier
 
 
+def test_server_rendered_registry_is_empty_and_worker_only_in_compose() -> None:
+    compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    registry_lines = [
+        line
+        for source in (compose, env_example)
+        for line in source.splitlines()
+        if "INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON" in line
+    ]
+
+    assert registry_lines
+    assert all("{}" in line for line in registry_lines)
+    assert all("www." not in line and "mobile." not in line for line in registry_lines)
+
+    common_block = compose.split("ingestion-api:", 1)[1].split("ingestion-worker:", 1)[0]
+    worker_block = compose.split("ingestion-worker:", 1)[1].split("ingestion-dispatcher:", 1)[0]
+    assert "INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON" not in common_block
+    assert "INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON" in worker_block
+
+    config_source = (ROOT / "services" / "ingestion" / "src" / "ingestion" / "config.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'server_rendered_variant_hosts_json: str = "{}"' in config_source
+    assert '"www.' not in config_source
+    assert '"mobile.' not in config_source
+
+
 def test_duplicate_source_contract_is_explicit() -> None:
     openapi = (ROOT / "contracts" / "openapi.yaml").read_text(encoding="utf-8")
     errors = (ROOT / "contracts" / "errors.md").read_text(encoding="utf-8")
