@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from ingestion.crypto import PayloadCipher
 from ingestion.models import (
     AttemptState,
     Base,
@@ -17,7 +19,7 @@ from ingestion.models import (
     ImportStage,
     ImportStatus,
 )
-from ingestion.orchestration import StaleLease
+from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.repositories.imports import ImportRepository
 
 
@@ -62,6 +64,155 @@ async def _job(session: AsyncSession, job_id: UUID) -> ImportJob:
 
 def _as_utc(timestamp: datetime) -> datetime:
     return timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=UTC)
+
+
+def cipher() -> PayloadCipher:
+    return PayloadCipher(
+        active_key_id="test",
+        keys={"test": base64.b64decode("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")},
+    )
+
+
+async def claimed_extracting_job(
+    session: AsyncSession,
+) -> tuple[ImportRepository, LeaseToken, ImportJob]:
+    repository = ImportRepository(session)
+    target = await repository.create_job(
+        owner_subject="auth0|owner",
+        input_kind=ImportInputKind.URL,
+        request_fingerprint="a" * 64,
+        plaintext_input=b"https://www.publisher.test/recipe/a",
+        payload_cipher=cipher(),
+    )
+    await session.commit()
+    token = await repository.record_receipt_and_claim(target.id, "worker", 1, lease_seconds=60)
+    assert token is not None
+    assert await repository.advance_stage(
+        token, ImportStage.FETCHING, checkpoint_content_hash=None
+    )
+    assert await repository.advance_stage(
+        token, ImportStage.EXTRACTING, checkpoint_content_hash="f" * 64
+    )
+    await session.commit()
+    return repository, token, target
+
+
+@pytest.mark.asyncio
+async def test_variant_fetch_can_be_reserved_only_once_in_extracting(
+    session: AsyncSession,
+) -> None:
+    """Dropping the attempted-at guard would repeat the variant fetch after redelivery."""
+
+    repository, token, target = await claimed_extracting_job(session)
+
+    assert await repository.reserve_variant_fetch(token) is True
+    await session.commit()
+    assert await repository.reserve_variant_fetch(token) is False
+    await session.refresh(target)
+    assert target.variant_fetch_attempted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_stale_lease_cannot_record_variant_success(
+    session: AsyncSession,
+) -> None:
+    """Dropping the lease fence would let a displaced worker record a variant result."""
+
+    repository, token, _ = await claimed_extracting_job(session)
+    assert await repository.reserve_variant_fetch(token)
+    await session.commit()
+    stale = token.__class__(token.job_id, "other", token.generation, token.expires_at)
+
+    with pytest.raises(StaleLease):
+        await repository.record_variant_fetch_success(stale, "a" * 64)
+
+
+@pytest.mark.asyncio
+async def test_variant_reservation_rejects_text_jobs_and_other_stages(
+    session: AsyncSession,
+) -> None:
+    """Removing the input and stage predicates would reserve an irrelevant fetch."""
+
+    repository = ImportRepository(session)
+    text_job = await repository.create_job(
+        owner_subject="auth0|owner",
+        input_kind=ImportInputKind.TEXT,
+        request_fingerprint="b" * 64,
+        plaintext_input=b"Recipe text",
+        payload_cipher=cipher(),
+    )
+    await session.commit()
+    text_token = await repository.record_receipt_and_claim(
+        text_job.id, "worker", 1, lease_seconds=60
+    )
+    assert text_token is not None
+    assert await repository.advance_stage(
+        text_token, ImportStage.FETCHING, checkpoint_content_hash=None
+    )
+    assert await repository.advance_stage(
+        text_token, ImportStage.EXTRACTING, checkpoint_content_hash="f" * 64
+    )
+    assert await repository.reserve_variant_fetch(text_token) is False
+
+    _, url_token, target = await claimed_extracting_job(session)
+    target.stage = ImportStage.FETCHING
+    await session.commit()
+    assert await repository.reserve_variant_fetch(url_token) is False
+
+
+@pytest.mark.asyncio
+async def test_variant_result_requires_reservation_and_closed_safe_category(
+    session: AsyncSession,
+) -> None:
+    """Removing result guards would retain unsafe metadata or invent a result without an attempt."""
+
+    repository, token, target = await claimed_extracting_job(session)
+
+    assert await repository.record_variant_fetch_success(token, "a" * 64) is False
+    with pytest.raises(ValueError, match="variant outcome category"):
+        await repository.record_variant_fetch_failure(token, "https://private.example/secret")
+    assert await repository.reserve_variant_fetch(token) is True
+    assert await repository.record_variant_fetch_failure(token, "alternate_shell") is True
+    await session.refresh(target)
+    assert target.variant_content_hash is None
+    assert target.variant_outcome_category == "alternate_shell"
+    assert await repository.record_variant_fetch_failure(token, "invalid_candidate_url") is False
+
+
+@pytest.mark.asyncio
+async def test_variant_fetch_success_is_durable_and_terminal_or_cancelled_jobs_cannot_mutate(
+    session: AsyncSession,
+) -> None:
+    """Removing terminal or cancellation guards would change a stopped job."""
+
+    repository, token, target = await claimed_extracting_job(session)
+    assert await repository.reserve_variant_fetch(token)
+    assert await repository.record_variant_fetch_success(token, "a" * 64)
+    await session.refresh(target)
+    assert target.variant_content_hash == "a" * 64
+    assert target.variant_outcome_category == "succeeded"
+
+    assert await repository.finish_terminal(
+        token,
+        ImportStatus.COMPLETED,
+        error_category=None,
+        diagnostic_reference=None,
+    )
+    with pytest.raises(StaleLease):
+        await repository.record_variant_fetch_failure(token, "invalid_candidate_url")
+
+    repository, token, target = await claimed_extracting_job(session)
+    await session.execute(
+        update(ImportJob)
+        .where(ImportJob.id == target.id)
+        .values(cancel_requested_at=datetime.now(UTC))
+    )
+    await session.commit()
+    assert await repository.reserve_variant_fetch(token) is False
+    assert await repository.record_variant_fetch_failure(token, "invalid_candidate_url") is False
+    await session.refresh(target)
+    assert target.variant_fetch_attempted_at is None
+    assert target.variant_outcome_category is None
 
 
 def test_postgresql_fenced_paths_use_a_wall_clock_statement() -> None:

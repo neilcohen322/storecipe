@@ -120,6 +120,9 @@ class ImportJob(Base):
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     input_content_hash: Mapped[str | None] = mapped_column(String(64))
     fetched_content_hash: Mapped[str | None] = mapped_column(String(64))
+    variant_fetch_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    variant_content_hash: Mapped[str | None] = mapped_column(String(64))
+    variant_outcome_category: Mapped[str | None] = mapped_column(String(128))
     candidate_content_hash: Mapped[str | None] = mapped_column(String(64))
     model_content_hash: Mapped[str | None] = mapped_column(String(64))
     status: Mapped[ImportStatus] = mapped_column(

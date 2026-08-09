@@ -236,6 +236,48 @@ async def test_duplicate_delivery_cannot_claim_a_live_generation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_concurrent_variant_fetch_reservation_allows_exactly_one_attempt() -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|variant-reservation|{uuid4()}"
+    barrier = asyncio.Barrier(2)
+    try:
+        async with factory.begin() as session:
+            repository = ImportRepository(session)
+            job = await repository.create_job(
+                owner_subject=owner,
+                input_kind=ImportInputKind.URL,
+                request_fingerprint=("d" * 63) + "1",
+                plaintext_input=b"https://recipes.example/soup",
+                payload_cipher=make_test_cipher(),
+            )
+            job_id = job.id
+        async with factory.begin() as session:
+            repository = ImportRepository(session)
+            token = await repository.record_receipt_and_claim(job_id, "worker", 1, lease_seconds=60)
+            assert token is not None
+            assert await repository.advance_stage(
+                token, ImportStage.FETCHING, checkpoint_content_hash=None
+            )
+            assert await repository.advance_stage(
+                token, ImportStage.EXTRACTING, checkpoint_content_hash="f" * 64
+            )
+
+        async def reserve() -> bool:
+            async with factory.begin() as session:
+                await barrier.wait()
+                return await ImportRepository(session).reserve_variant_fetch(token)
+
+        results = await asyncio.gather(reserve(), reserve())
+        assert results.count(True) == 1
+        assert results.count(False) == 1
+    finally:
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_cancelled_job_is_not_redispatched_after_lease_loss() -> None:
     engine = create_async_engine(database_url(), pool_size=5)
     factory = async_sessionmaker(engine, expire_on_commit=False)
