@@ -445,6 +445,32 @@ def test_settings_reject_malformed_server_rendered_variant_registry() -> None:
         )
 
 
+def test_worker_registry_has_no_site_specific_default() -> None:
+    keyring = base64.b64encode(b"k" * 32).decode()
+    settings = Settings(
+        payload_active_key_id="current",
+        payload_keyring=f"current={keyring}",
+        server_rendered_variant_hosts_json="{}",
+    )
+
+    assert settings.server_rendered_variant_registry.hosts == {}
+
+
+def test_worker_injects_runtime_variant_registry_into_adapters() -> None:
+    keyring = base64.b64encode(b"k" * 32).decode()
+    settings = Settings(
+        payload_active_key_id="current",
+        payload_keyring=f"current={keyring}",
+        server_rendered_variant_hosts_json='{"Publisher.TEST":"Variant.TEST"}',
+    )
+
+    adapters = ingestion_worker._build_import_adapters(settings, object(), object())
+
+    assert adapters.variant_registry.hosts == {
+        "publisher.test": "variant.test",
+    }
+
+
 def test_settings_exposes_configured_server_rendered_variant_registry() -> None:
     keyring = base64.b64encode(b"k" * 32).decode()
     settings = Settings(

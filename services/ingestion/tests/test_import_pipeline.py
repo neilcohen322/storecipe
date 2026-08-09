@@ -447,8 +447,9 @@ async def test_successful_primary_jsonld_never_classifies_or_fetches_a_variant(
 
 @pytest.mark.asyncio
 async def test_shell_primary_fetches_one_variant_and_retains_primary_source_identity(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
     )
@@ -476,6 +477,25 @@ async def test_shell_primary_fetches_one_variant_and_retains_primary_source_iden
     assert json.loads(candidate_payload)["source_url"] == PRIMARY_URL
     assert variant_payload is not None
     assert FetchedDocument(**json.loads(variant_payload)).final_url == PRIMARY_URL
+    events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if json.loads(record.message)["event"].startswith("variant.")
+    ]
+    assert [event["event"] for event in events] == [
+        "variant.eligible",
+        "variant.reserved",
+        "variant.succeeded",
+    ]
+    for event in events:
+        assert event["attempt"] == 1
+        assert event["stage"] == "extracting"
+        assert event["shell_reason"] == "sparse_no_recipe"
+        assert event["source_host"] == "www.publisher.test"
+        serialized = json.dumps(event)
+        for forbidden in (PRIMARY_URL, ALTERNATE_URL, "/recipe/a", "?x=1", "<script"):
+            assert forbidden not in serialized
+        assert "mobile.publisher.test" not in serialized
 
 
 class VariantReservationVisibilityFetcher(SequencedFetcher):
@@ -590,8 +610,9 @@ async def test_non_shell_parse_failure_keeps_primary_outcome_without_variant_req
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", list(FetchFailureCode))
 async def test_each_variant_fetch_failure_is_recorded_once_without_normal_fetch_retry(
-    session: AsyncSession, failure: FetchFailureCode
+    session: AsyncSession, failure: FetchFailureCode, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
     )
@@ -617,12 +638,25 @@ async def test_each_variant_fetch_failure_is_recorded_once_without_normal_fetch_
     assert stored.status is ImportStatus.FAILED
     assert stored.stage is ImportStage.FAILED
     assert stored.next_attempt_at is None
+    events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "variant.failed"
+    ]
+    assert len(events) == 1
+    assert events[0]["error_category"] == failure.value
+    assert events[0]["source_host"] == "www.publisher.test"
+    serialized = json.dumps(events[0])
+    assert PRIMARY_URL not in serialized
+    assert ALTERNATE_URL not in serialized
+    assert "mobile.publisher.test" not in serialized
 
 
 @pytest.mark.asyncio
 async def test_alternate_shell_is_extracted_once_without_recursing_to_another_variant(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
     )
@@ -649,12 +683,18 @@ async def test_alternate_shell_is_extracted_once_without_recursing_to_another_va
     assert deterministic.calls[1].final_url == PRIMARY_URL
     assert stored.variant_outcome_category == "succeeded"
     assert stored.safe_error_category == "model_extraction_disabled"
+    assert [
+        record
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "variant.checkpoint_reused"
+    ] == []
 
 
 @pytest.mark.asyncio
 async def test_incomplete_alternate_candidate_stays_in_review_without_model_extraction(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
     )
@@ -686,12 +726,18 @@ async def test_incomplete_alternate_candidate_stays_in_review_without_model_extr
     assert stored.status is ImportStatus.REVIEW_REQUIRED
     assert stored.safe_error_category == "incomplete_extraction"
     assert model.calls == []
+    assert [
+        record
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "variant.checkpoint_reused"
+    ] == []
 
 
 @pytest.mark.asyncio
 async def test_model_receives_variant_html_with_the_primary_trusted_url(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
     )
@@ -717,6 +763,11 @@ async def test_model_receives_variant_html_with_the_primary_trusted_url(
     )
 
     assert model.calls[0] == (alternate.html, PRIMARY_URL)
+    assert [
+        record
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "variant.checkpoint_reused"
+    ] == []
 
 
 class CrashAfterVariantReservationRepository(ImportRepository):
@@ -778,8 +829,9 @@ async def test_redelivery_after_variant_reservation_without_checkpoint_fails_clo
 
 @pytest.mark.asyncio
 async def test_variant_checkpoint_is_reused_after_a_crash_before_alternate_extraction(
-    session: AsyncSession,
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
     )
@@ -817,6 +869,19 @@ async def test_variant_checkpoint_is_reused_after_a_crash_before_alternate_extra
     assert no_more_fetches.calls == []
     assert candidate_payload is not None
     assert json.loads(candidate_payload)["source_url"] == PRIMARY_URL
+    events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "variant.checkpoint_reused"
+    ]
+    assert len(events) == 1
+    assert events[0]["attempt"] == 1
+    assert events[0]["stage"] == "extracting"
+    assert events[0]["source_host"] == "www.publisher.test"
+    serialized = json.dumps(events[0])
+    assert PRIMARY_URL not in serialized
+    assert ALTERNATE_URL not in serialized
+    assert "mobile.publisher.test" not in serialized
 
 
 class StateChangingVariantReservationRepository(ImportRepository):

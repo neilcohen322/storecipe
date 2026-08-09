@@ -48,6 +48,37 @@ def test_emit_import_event_logs_only_declared_safe_fields(caplog) -> None:
     assert "payload" not in record
 
 
+def test_variant_event_contains_only_safe_fields(caplog) -> None:
+    logger = logging.getLogger("test-variant")
+    caplog.set_level(logging.INFO, logger=logger.name)
+
+    emit_import_event(
+        logger,
+        ImportEvent(
+            name="variant.failed",
+            job_id="job-1",
+            dispatch_generation=1,
+            stage="extracting",
+            attempt=1,
+            shell_reason="sparse_no_recipe",
+            source_host="www.publisher.test",
+            error_category="access_denied",
+        ),
+    )
+
+    event = json.loads(caplog.records[-1].message)
+    assert set(event) == {
+        "event",
+        "job_id",
+        "dispatch_generation",
+        "stage",
+        "attempt",
+        "shell_reason",
+        "source_host",
+        "error_category",
+    }
+
+
 def test_emit_import_event_does_not_propagate_logging_failures() -> None:
     class BrokenLogger:
         def info(self, *args: object, **kwargs: object) -> None:
