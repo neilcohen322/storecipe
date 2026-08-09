@@ -289,12 +289,12 @@ def build_extraction_messages(source_text: str) -> list[dict[str, str]]:
     ]
 
 
-def _candidate_text_fields(model_fields: LlmRecipeFields) -> list[str]:
+def _candidate_text_fields(model_fields: LlmRecipeFields) -> str:
     texts = [model_fields.title, *model_fields.instructions]
     for ingredient in model_fields.ingredients:
         texts.append(ingredient.raw_text)
         texts.append(ingredient.name)
-    return texts
+    return "\n".join(texts)
 
 
 def candidate_from_model_content(
@@ -308,9 +308,8 @@ def candidate_from_model_content(
         model_fields = LlmRecipeFields.model_validate_json(content)
     except ValidationError as exc:
         raise AiExtractionError(AiExtractionFailureCode.SCHEMA_VALIDATION_FAILED) from exc
-    for text in _candidate_text_fields(model_fields):
-        if contains_access_challenge_markers(text):
-            raise AiExtractionError(AiExtractionFailureCode.NOT_A_RECIPE)
+    if contains_access_challenge_markers(_candidate_text_fields(model_fields)):
+        raise AiExtractionError(AiExtractionFailureCode.NOT_A_RECIPE)
     return RecipeImportCandidate(
         source_url=trusted_source_url,
         **model_fields.model_dump(),
