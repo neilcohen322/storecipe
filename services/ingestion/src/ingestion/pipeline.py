@@ -7,7 +7,7 @@ import logging
 import random
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Protocol
@@ -39,6 +39,7 @@ from ingestion.models import AttemptState, ImportInputKind, ImportJob, ImportSta
 from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.imports import MAX_PIPELINE_PAYLOAD_BYTES, ImportRepository
+from ingestion.server_rendered_variants import ServerRenderedVariantRegistry, classify_shell
 from ingestion.telemetry import ImportEvent, emit_import_event
 
 PROVIDER_ATTEMPT_SECONDS = 60
@@ -77,6 +78,9 @@ class ImportAdapters:
     deterministic: DeterministicExtractor
     model: ModelExtractor | None
     catalog: CatalogGateway | None
+    variant_registry: ServerRenderedVariantRegistry = field(
+        default_factory=ServerRenderedVariantRegistry.empty
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,7 +144,7 @@ class ImportPipeline:
                 job_id,
                 lease_token,
                 ImportStage.EXTRACTING,
-                lambda: self._run_deterministic(job_id, lease_token, adapters.deterministic),
+                lambda: self._run_deterministic(job_id, lease_token, adapters),
             )
             try:
                 job = await self._repository.get_job_for_lease(lease_token)
@@ -313,7 +317,7 @@ class ImportPipeline:
         await self._commit()
 
     async def _run_deterministic(
-        self, job_id: UUID, token: LeaseToken, extractor: DeterministicExtractor
+        self, job_id: UUID, token: LeaseToken, adapters: ImportAdapters
     ) -> None:
         job = await self._repository.get_job_for_lease(token)
         if (
@@ -328,12 +332,37 @@ class ImportPipeline:
             return
         document = await self._load_document(job_id)
         await self._commit()
+        failure: ParseError | None = None
         try:
-            result = await extractor.extract(document)
+            result = await adapters.deterministic.extract(document)
         except ParseError as error:
-            if error.candidate is not None:
+            failure = error
+            if (
+                job.input_kind is ImportInputKind.URL
+                and job.variant_fetch_attempted_at is None
+                and job.variant_content_hash is None
+                and classify_shell(document, error.code) is not None
+                and adapters.variant_registry.candidate_url(document.final_url or "") is not None
+            ):
+                variant = await self._try_variant_document(job_id, token, document, error, adapters)
+                if variant is not None:
+                    try:
+                        result = await adapters.deterministic.extract(variant)
+                    except ParseError as alternate_failure:
+                        failure = alternate_failure
+                    else:
+                        failure = None
+                else:
+                    current = await self._repository.session.get(ImportJob, job_id)
+                    if current is not None and current.status in {
+                        ImportStatus.CANCELLED,
+                        ImportStatus.TIMED_OUT,
+                    }:
+                        return
+        if failure is not None:
+            if failure.candidate is not None:
                 try:
-                    payload = self._serialize_candidate(error.candidate)
+                    payload = self._serialize_candidate(failure.candidate)
                 except ValueError:
                     await self._repository.finish_terminal(
                         token,
@@ -368,6 +397,52 @@ class ImportPipeline:
                 token, ImportStage.VALIDATING, checkpoint_content_hash=None
             )
         await self._commit()
+
+    async def _try_variant_document(
+        self,
+        job_id: UUID,
+        token: LeaseToken,
+        primary: FetchedDocument,
+        failure: ParseError,
+        adapters: ImportAdapters,
+    ) -> FetchedDocument | None:
+        """Fetch exactly one registered server-rendered variant after a primary parse failure."""
+
+        candidate_url = adapters.variant_registry.candidate_url(primary.final_url or "")
+        if candidate_url is None:
+            return None
+        if not await self._repository.reserve_variant_fetch(token):
+            await self._commit()
+            return None
+        await self._commit()
+        job = await self._repository.get_job_for_lease(token)
+        if await self._finish_if_cancelled_or_timed_out(job, token):
+            return None
+        try:
+            fetched = await adapters.fetcher.fetch(candidate_url)
+        except FetchError as error:
+            await self._repository.record_variant_fetch_failure(token, error.code.value)
+            await self._commit()
+            return None
+        variant = FetchedDocument(
+            requested_url=primary.requested_url,
+            final_url=primary.final_url,
+            html=fetched.html,
+            content_type=fetched.content_type,
+            byte_count=fetched.byte_count,
+        )
+        content_hash = await self._repository.store_pipeline_payload(
+            token,
+            "variant_fetched",
+            self._serialize_document(variant),
+            self._payload_cipher,
+            max_bytes=5 * 1024 * 1024,
+        )
+        if not await self._repository.record_variant_fetch_success(token, content_hash):
+            await self._commit()
+            return None
+        await self._commit()
+        return variant
 
     async def _run_model(
         self, job_id: UUID, token: LeaseToken, extractor: ModelExtractor | None
@@ -659,6 +734,14 @@ class ImportPipeline:
         )
 
     async def _load_document(self, job_id: UUID) -> FetchedDocument:
+        job = await self._repository.session.get(ImportJob, job_id)
+        if job is not None and job.variant_content_hash is not None:
+            raw = await self._repository.load_payload(
+                job_id, "variant_fetched", self._payload_cipher
+            )
+            if raw is None:
+                raise RuntimeError("variant fetched checkpoint is unavailable")
+            return FetchedDocument(**json.loads(raw))
         raw = await self._repository.load_payload(job_id, "fetched", self._payload_cipher)
         if raw is None:
             raise RuntimeError("fetched checkpoint is unavailable")

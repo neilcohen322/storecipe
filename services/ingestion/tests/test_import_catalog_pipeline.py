@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,6 +20,7 @@ from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.models import Base, ImportInputKind, ImportJob, ImportStage, ImportStatus
 from ingestion.pipeline import ImportAdapters, ImportPipeline
 from ingestion.repositories.imports import ImportRepository
+from ingestion.server_rendered_variants import ServerRenderedVariantRegistry
 
 
 @pytest_asyncio.fixture
@@ -60,6 +62,7 @@ class Catalog:
         self.calls = 0
         self.recipe_id = uuid4()
         self.source_fingerprints: list[str] = []
+        self.candidates: list[RecipeImportCandidate] = []
 
     async def create_imported(
         self,
@@ -70,6 +73,7 @@ class Catalog:
     ) -> UUID:
         self.calls += 1
         self.source_fingerprints.append(source_fingerprint)
+        self.candidates.append(candidate)
         return self.recipe_id
 
 
@@ -229,3 +233,61 @@ async def test_incomplete_candidate_is_retained_for_review(session: AsyncSession
     assert job.status is ImportStatus.REVIEW_REQUIRED
     assert job.stage is ImportStage.REVIEW_REQUIRED
     assert job.safe_error_category == "incomplete_extraction"
+
+
+@pytest.mark.asyncio
+async def test_catalog_receives_primary_source_identity_after_server_rendered_variant(
+    session: AsyncSession,
+) -> None:
+    primary_url = "https://www.publisher.test/recipe/a?x=1&x=2"
+    alternate_url = "https://mobile.publisher.test/recipe/a?x=1&x=2"
+    fixtures = Path(__file__).parent / "fixtures"
+    primary_html = (fixtures / "recipe-shell.html").read_text(encoding="utf-8")
+    alternate_html = (fixtures / "recipe-server-rendered.html").read_text(encoding="utf-8")
+
+    class SequencedFetcher:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+            self.documents = [
+                FetchedDocument(
+                    primary_url, primary_url, primary_html, "text/html", len(primary_html)
+                ),
+                FetchedDocument(
+                    alternate_url, alternate_url, alternate_html, "text/html", len(alternate_html)
+                ),
+            ]
+
+        async def fetch(self, url: str) -> FetchedDocument:
+            self.calls.append(url)
+            return self.documents.pop(0)
+
+    class JsonLdDeterministic:
+        async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+            return parse_recipe_jsonld(document)
+
+    repository = ImportRepository(session)
+    created = await repository.create_job(
+        owner_subject="owner",
+        input_kind=ImportInputKind.URL,
+        request_fingerprint="server-rendered".ljust(64, "x"),
+        plaintext_input=primary_url.encode(),
+        payload_cipher=cipher(),
+    )
+    await session.commit()
+    token = await repository.record_receipt_and_claim(created.id, "worker", 1, lease_seconds=60)
+    assert token is not None
+    await session.commit()
+    fetcher = SequencedFetcher()
+    catalog = Catalog()
+    registry = ServerRenderedVariantRegistry.from_json(
+        '{"www.publisher.test":"mobile.publisher.test"}'
+    )
+
+    await ImportPipeline(repository, cipher()).run(
+        created.id,
+        token,
+        ImportAdapters(fetcher, JsonLdDeterministic(), None, catalog, registry),
+    )
+
+    assert fetcher.calls == [primary_url, alternate_url]
+    assert str(catalog.candidates[0].source_url) == primary_url

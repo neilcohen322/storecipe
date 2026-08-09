@@ -4,6 +4,7 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import aiohttp
@@ -12,6 +13,7 @@ import pytest_asyncio
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import ingestion.pipeline as pipeline_module
 from ingestion.ai_extractor import (
     MAX_OUTPUT_TOKENS,
     PROMPT_VERSION,
@@ -26,12 +28,15 @@ from ingestion.ai_extractor import (
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import (
     FetchedDocument,
+    FetchError,
+    FetchFailureCode,
     IngredientCandidate,
     ParseError,
     ParseFailureCode,
     RecipeImportCandidate,
     ReviewRecipeCandidate,
 )
+from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.models import (
     AiDailyUsage,
     AttemptState,
@@ -49,6 +54,7 @@ from ingestion.pipeline import AiBudgetPolicy, ImportAdapters
 from ingestion.pipeline import ImportPipeline as _ImportPipeline
 from ingestion.repositories.budgets import AiBudgetRepository
 from ingestion.repositories.imports import ImportRepository
+from ingestion.server_rendered_variants import ServerRenderedVariantRegistry
 
 
 @pytest_asyncio.fixture
@@ -101,6 +107,38 @@ def candidate(*, source_url: str | None) -> RecipeImportCandidate:
     )
 
 
+PRIMARY_URL = "https://www.publisher.test/recipe/a?x=1&x=2"
+ALTERNATE_URL = "https://mobile.publisher.test/recipe/a?x=1&x=2"
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def fixture_document(name: str, *, requested_url: str, final_url: str) -> FetchedDocument:
+    html = (FIXTURES / name).read_text(encoding="utf-8")
+    return FetchedDocument(requested_url, final_url, html, "text/html", len(html.encode("utf-8")))
+
+
+def primary_shell_document() -> FetchedDocument:
+    return fixture_document("recipe-shell.html", requested_url=PRIMARY_URL, final_url=PRIMARY_URL)
+
+
+def primary_recipe_document() -> FetchedDocument:
+    return fixture_document(
+        "recipe-server-rendered.html", requested_url=PRIMARY_URL, final_url=PRIMARY_URL
+    )
+
+
+def alternate_recipe_document() -> FetchedDocument:
+    return fixture_document(
+        "recipe-server-rendered.html", requested_url=ALTERNATE_URL, final_url=ALTERNATE_URL
+    )
+
+
+def variant_registry() -> ServerRenderedVariantRegistry:
+    return ServerRenderedVariantRegistry.from_json(
+        '{"www.publisher.test":"mobile.publisher.test"}'
+    )
+
+
 class RecordingFetcher:
     def __init__(self, html: str = "<script type='application/ld+json'>{}</script>") -> None:
         self.calls: list[str] = []
@@ -117,6 +155,19 @@ class RecordingFetcher:
         )
 
 
+class SequencedFetcher:
+    def __init__(self, documents: list[FetchedDocument | BaseException]) -> None:
+        self.documents = documents
+        self.calls: list[str] = []
+
+    async def fetch(self, url: str) -> FetchedDocument:
+        self.calls.append(url)
+        outcome = self.documents.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
 class RecordingDeterministicExtractor:
     def __init__(self, outcome: RecipeImportCandidate | ParseError) -> None:
         self.outcome = outcome
@@ -127,6 +178,24 @@ class RecordingDeterministicExtractor:
         if isinstance(self.outcome, ParseError):
             raise self.outcome
         return self.outcome
+
+
+class SequencedDeterministicExtractor:
+    def __init__(self, outcomes: list[RecipeImportCandidate | BaseException]) -> None:
+        self.outcomes = outcomes
+        self.calls: list[FetchedDocument] = []
+
+    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+        self.calls.append(document)
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+class DeterministicJsonLdAdapter:
+    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+        return parse_recipe_jsonld(document)
 
 
 class VisibilityCheckingDeterministicExtractor:
@@ -337,6 +406,502 @@ def adapters(
     model: RecordingModelExtractor,
 ) -> ImportAdapters:
     return ImportAdapters(fetcher=fetcher, deterministic=deterministic, model=model, catalog=None)
+
+
+@pytest.mark.asyncio
+async def test_successful_primary_jsonld_never_classifies_or_fetches_a_variant(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adding classification before a successful primary parse would create an avoidable request."""
+
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    fetcher = SequencedFetcher([primary_recipe_document()])
+    classifications: list[object] = []
+
+    def classify_spy(document: FetchedDocument, failure: ParseFailureCode) -> None:
+        classifications.append((document, failure))
+        return None
+
+    monkeypatch.setattr(pipeline_module, "classify_shell", classify_spy)
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            fetcher,
+            DeterministicJsonLdAdapter(),
+            None,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert fetcher.calls == [PRIMARY_URL]
+    assert classifications == []
+    assert stored.variant_fetch_attempted_at is None
+    assert await repository.load_payload(job_id, "variant_fetched", cipher()) is None
+
+
+@pytest.mark.asyncio
+async def test_shell_primary_fetches_one_variant_and_retains_primary_source_identity(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    fetcher = SequencedFetcher([primary_shell_document(), alternate_recipe_document()])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            fetcher,
+            DeterministicJsonLdAdapter(),
+            None,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    candidate_payload = await repository.load_payload(job_id, "candidate", cipher())
+    variant_payload = await repository.load_payload(job_id, "variant_fetched", cipher())
+    assert fetcher.calls == [PRIMARY_URL, ALTERNATE_URL]
+    assert stored.variant_outcome_category == "succeeded"
+    assert stored.variant_content_hash is not None
+    assert candidate_payload is not None
+    assert json.loads(candidate_payload)["source_url"] == PRIMARY_URL
+    assert variant_payload is not None
+    assert FetchedDocument(**json.loads(variant_payload)).final_url == PRIMARY_URL
+
+
+class VariantReservationVisibilityFetcher(SequencedFetcher):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        job_id: UUID,
+        documents: list[FetchedDocument],
+    ) -> None:
+        super().__init__(documents)
+        self._session_factory = session_factory
+        self._job_id = job_id
+        self.observed: tuple[bool, str | None] | None = None
+
+    async def fetch(self, url: str) -> FetchedDocument:
+        if len(self.calls) == 1:
+            async with self._session_factory() as observer:
+                visible_job = await observer.get(ImportJob, self._job_id)
+                self.observed = (
+                    visible_job is not None and visible_job.variant_fetch_attempted_at is not None,
+                    None if visible_job is None else visible_job.variant_content_hash,
+                )
+        return await super().fetch(url)
+
+
+@pytest.mark.asyncio
+async def test_variant_reservation_is_committed_before_alternate_fetch_io(
+    file_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with file_session_factory() as session:
+        repository = ImportRepository(session)
+        created = await repository.create_job(
+            owner_subject="auth0|owner",
+            input_kind=ImportInputKind.URL,
+            request_fingerprint="variant-visibility".ljust(64, "x"),
+            plaintext_input=PRIMARY_URL.encode(),
+            payload_cipher=cipher(),
+        )
+        await session.commit()
+        token = await repository.record_receipt_and_claim(
+            created.id, "worker-a", 1, lease_seconds=60
+        )
+        assert token is not None
+        await session.commit()
+        fetcher = VariantReservationVisibilityFetcher(
+            file_session_factory,
+            created.id,
+            [primary_shell_document(), alternate_recipe_document()],
+        )
+
+        await ImportPipeline(repository, cipher()).run(
+            created.id,
+            token,
+            ImportAdapters(
+                fetcher,
+                DeterministicJsonLdAdapter(),
+                None,
+                None,
+                variant_registry(),
+            ),
+        )
+
+    assert fetcher.observed == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_registry_miss_keeps_primary_no_recipe_outcome_without_variant_request(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    fetcher = SequencedFetcher([primary_shell_document()])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None),
+    )
+
+    stored = await job(session, job_id)
+    assert fetcher.calls == [PRIMARY_URL]
+    assert stored.status is ImportStatus.FAILED
+    assert stored.safe_error_category == "model_extraction_disabled"
+    assert stored.variant_fetch_attempted_at is None
+
+
+@pytest.mark.asyncio
+async def test_non_shell_parse_failure_keeps_primary_outcome_without_variant_request(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    html = "<main>" + ("complete cooking text " * 200) + "</main>"
+    primary = FetchedDocument(PRIMARY_URL, PRIMARY_URL, html, "text/html", len(html))
+    fetcher = SequencedFetcher([primary])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+    )
+
+    stored = await job(session, job_id)
+    assert fetcher.calls == [PRIMARY_URL]
+    assert stored.status is ImportStatus.FAILED
+    assert stored.safe_error_category == "model_extraction_disabled"
+    assert stored.variant_fetch_attempted_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", list(FetchFailureCode))
+async def test_each_variant_fetch_failure_is_recorded_once_without_normal_fetch_retry(
+    session: AsyncSession, failure: FetchFailureCode
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    fetcher = SequencedFetcher(
+        [primary_shell_document(), FetchError(failure, url=ALTERNATE_URL)]
+    )
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            fetcher,
+            DeterministicJsonLdAdapter(),
+            None,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert fetcher.calls == [PRIMARY_URL, ALTERNATE_URL]
+    assert stored.variant_outcome_category == failure.value
+    assert stored.status is ImportStatus.FAILED
+    assert stored.stage is ImportStage.FAILED
+    assert stored.next_attempt_at is None
+
+
+@pytest.mark.asyncio
+async def test_alternate_shell_is_extracted_once_without_recursing_to_another_variant(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    alternate_shell = fixture_document(
+        "recipe-shell.html", requested_url=ALTERNATE_URL, final_url=ALTERNATE_URL
+    )
+    fetcher = SequencedFetcher([primary_shell_document(), alternate_shell])
+    deterministic = SequencedDeterministicExtractor(
+        [
+            ParseError(ParseFailureCode.NO_RECIPE_FOUND),
+            ParseError(ParseFailureCode.NO_RECIPE_FOUND),
+        ]
+    )
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(fetcher, deterministic, None, None, variant_registry()),
+    )
+
+    stored = await job(session, job_id)
+    assert fetcher.calls == [PRIMARY_URL, ALTERNATE_URL]
+    assert len(deterministic.calls) == 2
+    assert deterministic.calls[1].final_url == PRIMARY_URL
+    assert stored.variant_outcome_category == "succeeded"
+    assert stored.safe_error_category == "model_extraction_disabled"
+
+
+@pytest.mark.asyncio
+async def test_incomplete_alternate_candidate_stays_in_review_without_model_extraction(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    partial = ReviewRecipeCandidate(
+        title="Partial variant soup",
+        ingredients=[IngredientCandidate(raw_text="1 cup lentils", name="lentils")],
+    )
+    deterministic = SequencedDeterministicExtractor(
+        [
+            ParseError(ParseFailureCode.NO_RECIPE_FOUND),
+            ParseError(ParseFailureCode.INCOMPLETE_RECIPE, candidate=partial),
+        ]
+    )
+    model = RecordingModelExtractor([])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            SequencedFetcher([primary_shell_document(), alternate_recipe_document()]),
+            deterministic,
+            model,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert stored.status is ImportStatus.REVIEW_REQUIRED
+    assert stored.safe_error_category == "incomplete_extraction"
+    assert model.calls == []
+
+
+@pytest.mark.asyncio
+async def test_model_receives_variant_html_with_the_primary_trusted_url(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    alternate = alternate_recipe_document()
+    model = RecordingModelExtractor([model_result()])
+    deterministic = SequencedDeterministicExtractor(
+        [
+            ParseError(ParseFailureCode.NO_RECIPE_FOUND),
+            ParseError(ParseFailureCode.NO_RECIPE_FOUND),
+        ]
+    )
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            SequencedFetcher([primary_shell_document(), alternate]),
+            deterministic,
+            model,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    assert model.calls[0] == (alternate.html, PRIMARY_URL)
+
+
+class CrashAfterVariantReservationRepository(ImportRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session)
+        self.crash_after_reservation = False
+
+    async def reserve_variant_fetch(self, token: object) -> bool:
+        reserved = await super().reserve_variant_fetch(token)  # type: ignore[arg-type]
+        self.crash_after_reservation = reserved
+        return reserved
+
+    async def get_job_for_lease(self, token: object) -> ImportJob:
+        loaded = await super().get_job_for_lease(token)  # type: ignore[arg-type]
+        if self.crash_after_reservation and loaded.variant_fetch_attempted_at is not None:
+            self.crash_after_reservation = False
+            raise RuntimeError("simulated worker death after variant reservation")
+        return loaded
+
+
+@pytest.mark.asyncio
+async def test_redelivery_after_variant_reservation_without_checkpoint_fails_closed_without_refetch(
+    session: AsyncSession,
+) -> None:
+    repository = CrashAfterVariantReservationRepository(session)
+    created = await repository.create_job(
+        owner_subject="auth0|owner",
+        input_kind=ImportInputKind.URL,
+        request_fingerprint="variant-reservation".ljust(64, "x"),
+        plaintext_input=PRIMARY_URL.encode(),
+        payload_cipher=cipher(),
+    )
+    await session.commit()
+    token = await repository.record_receipt_and_claim(created.id, "worker-a", 1, lease_seconds=60)
+    assert token is not None
+    await session.commit()
+    fetcher = SequencedFetcher([primary_shell_document()])
+
+    with pytest.raises(RuntimeError, match="variant reservation"):
+        await ImportPipeline(repository, cipher()).run(
+            created.id,
+            token,
+            ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+        )
+    await session.commit()
+    reserved = await job(session, created.id)
+    assert reserved.variant_fetch_attempted_at is not None
+    assert reserved.variant_content_hash is None
+
+    next_token = await redeliver(session, repository, created.id)
+    await ImportPipeline(repository, cipher()).run(
+        created.id,
+        next_token,
+        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+    )
+
+    assert fetcher.calls == [PRIMARY_URL]
+
+
+@pytest.mark.asyncio
+async def test_variant_checkpoint_is_reused_after_a_crash_before_alternate_extraction(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    fetcher = SequencedFetcher([primary_shell_document(), alternate_recipe_document()])
+    interrupted = SequencedDeterministicExtractor(
+        [ParseError(ParseFailureCode.NO_RECIPE_FOUND), RuntimeError("after variant checkpoint")]
+    )
+
+    with pytest.raises(RuntimeError, match="after variant checkpoint"):
+        await ImportPipeline(repository, cipher()).run(
+            job_id,
+            token,
+            ImportAdapters(fetcher, interrupted, None, None, variant_registry()),
+        )
+    await session.commit()
+    stored = await job(session, job_id)
+    assert stored.variant_content_hash is not None
+    assert await repository.load_payload(job_id, "variant_fetched", cipher()) is not None
+
+    next_token = await redeliver(session, repository, job_id)
+    no_more_fetches = SequencedFetcher([])
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        next_token,
+        ImportAdapters(
+            no_more_fetches,
+            DeterministicJsonLdAdapter(),
+            None,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    candidate_payload = await repository.load_payload(job_id, "candidate", cipher())
+    assert no_more_fetches.calls == []
+    assert candidate_payload is not None
+    assert json.loads(candidate_payload)["source_url"] == PRIMARY_URL
+
+
+class StateChangingVariantReservationRepository(ImportRepository):
+    def __init__(self, session: AsyncSession, *, cancelled: bool) -> None:
+        super().__init__(session)
+        self._cancelled = cancelled
+
+    async def reserve_variant_fetch(self, token: object) -> bool:
+        reserved = await super().reserve_variant_fetch(token)  # type: ignore[arg-type]
+        if reserved:
+            values: dict[str, datetime] = (
+                {"cancel_requested_at": datetime.now(UTC)}
+                if self._cancelled
+                else {"deadline_at": datetime.now(UTC) - timedelta(seconds=1)}
+            )
+            await self.session.execute(
+                update(ImportJob).where(ImportJob.id == token.job_id).values(**values)
+            )
+        return reserved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cancelled", "expected_status"),
+    [(True, ImportStatus.CANCELLED), (False, ImportStatus.TIMED_OUT)],
+)
+async def test_cancellation_or_deadline_after_variant_reservation_prevents_alternate_io(
+    session: AsyncSession, cancelled: bool, expected_status: ImportStatus
+) -> None:
+    repository = StateChangingVariantReservationRepository(session, cancelled=cancelled)
+    created = await repository.create_job(
+        owner_subject="auth0|owner",
+        input_kind=ImportInputKind.URL,
+        request_fingerprint=("cancelled" if cancelled else "timed-out").ljust(64, "x"),
+        plaintext_input=PRIMARY_URL.encode(),
+        payload_cipher=cipher(),
+    )
+    await session.commit()
+    token = await repository.record_receipt_and_claim(created.id, "worker-a", 1, lease_seconds=60)
+    assert token is not None
+    await session.commit()
+    fetcher = SequencedFetcher([primary_shell_document()])
+
+    await ImportPipeline(repository, cipher()).run(
+        created.id,
+        token,
+        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+    )
+
+    stored = await job(session, created.id)
+    assert fetcher.calls == [PRIMARY_URL]
+    assert stored.variant_fetch_attempted_at is not None
+    assert stored.variant_content_hash is None
+    assert stored.status is expected_status
+
+
+@pytest.mark.asyncio
+async def test_missing_durable_variant_checkpoint_fails_closed_without_primary_refetch(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    assert await repository.advance_stage(token, ImportStage.FETCHING, checkpoint_content_hash=None)
+    primary_payload = _ImportPipeline._serialize_document(primary_shell_document())
+    fetched_hash = await repository.store_pipeline_payload(
+        token, "fetched", primary_payload, cipher(), max_bytes=5 * 1024 * 1024
+    )
+    assert await repository.advance_stage(
+        token, ImportStage.EXTRACTING, checkpoint_content_hash=fetched_hash
+    )
+    await session.execute(
+        update(ImportJob).where(ImportJob.id == job_id).values(variant_content_hash="v" * 64)
+    )
+    await session.commit()
+    fetcher = SequencedFetcher([])
+
+    with pytest.raises(RuntimeError, match="variant fetched checkpoint is unavailable"):
+        await ImportPipeline(repository, cipher()).run(
+            job_id,
+            token,
+            ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+        )
+
+    assert fetcher.calls == []
 
 
 @pytest.mark.asyncio
