@@ -2263,3 +2263,257 @@ async def test_text_deterministic_candidate_has_no_source_url(session: AsyncSess
     stored = await repository.load_payload(job_id, "candidate", cipher())
     assert stored is not None
     assert RecipeImportCandidate.model_validate_json(stored).source_url is None
+
+
+@pytest.mark.asyncio
+async def test_access_challenge_fetch_never_calls_model(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    html = (FIXTURES / "access_challenge_radware.html").read_text(encoding="utf-8")
+    fetcher = RecordingFetcher(html=html)
+    model = RecordingModelExtractor([])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            fetcher,
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            model,
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert stored.status is ImportStatus.FAILED
+    assert stored.safe_error_category == "access_denied"
+    assert model.calls == []
+
+
+@pytest.mark.asyncio
+async def test_perfdrive_final_url_fetch_never_calls_model(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    perfdrive = FetchedDocument(
+        PRIMARY_URL,
+        "https://validate.perfdrive.com/?incident=secret-id",
+        "<html><body>ok</body></html>",
+        "text/html",
+        28,
+    )
+    fetcher = SequencedFetcher([perfdrive])
+    model = RecordingModelExtractor([])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            fetcher,
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            model,
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert stored.status is ImportStatus.FAILED
+    assert stored.safe_error_category == "access_denied"
+    assert model.calls == []
+
+
+@pytest.mark.asyncio
+async def test_no_recipe_on_challenge_does_not_advance_to_model(session: AsyncSession) -> None:
+    """Regression if a challenge checkpoint already exists from older builds."""
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    challenge_doc = fixture_document(
+        "access_challenge_radware.html", requested_url=PRIMARY_URL, final_url=PRIMARY_URL
+    )
+    assert await repository.advance_stage(token, ImportStage.FETCHING, checkpoint_content_hash=None)
+    fetched_hash = await repository.store_pipeline_payload(
+        token,
+        "fetched",
+        _ImportPipeline._serialize_document(challenge_doc),
+        cipher(),
+        max_bytes=5 * 1024 * 1024,
+    )
+    assert await repository.advance_stage(
+        token, ImportStage.EXTRACTING, checkpoint_content_hash=fetched_hash
+    )
+    await session.commit()
+
+    model = RecordingModelExtractor([model_result()])
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            model,
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert model.calls == []
+    assert stored.safe_error_category == "access_denied"
+    assert stored.status is ImportStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_no_recipe_normal_html_advances_to_model(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe without jsonld"
+    )
+    model = RecordingModelExtractor([model_result()])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            model,
+        ),
+    )
+
+    assert len(model.calls) == 1
+    stored = await job(session, job_id)
+    assert stored.stage is ImportStage.VALIDATING
+
+
+@pytest.mark.asyncio
+async def test_variant_challenge_html_is_not_used_for_extraction(
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    challenge_html = (FIXTURES / "access_challenge_radware.html").read_text(encoding="utf-8")
+    challenge_variant = FetchedDocument(
+        ALTERNATE_URL,
+        ALTERNATE_URL,
+        challenge_html,
+        "text/html",
+        len(challenge_html.encode("utf-8")),
+    )
+    fetcher = SequencedFetcher([primary_shell_document(), challenge_variant])
+    deterministic = SequencedDeterministicExtractor(
+        [ParseError(ParseFailureCode.NO_RECIPE_FOUND)]
+    )
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            fetcher,
+            deterministic,
+            None,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert len(deterministic.calls) == 1
+    assert "Radware Block Page" not in deterministic.calls[0].html
+    assert stored.variant_outcome_category == "access_denied"
+    failed_events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "variant.failed"
+    ]
+    assert len(failed_events) == 1
+    assert failed_events[0]["error_category"] == "access_denied"
+
+
+@pytest.mark.asyncio
+async def test_variant_perfdrive_final_url_is_not_used_for_extraction(
+    session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="ingestion.pipeline")
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    perfdrive_variant = FetchedDocument(
+        ALTERNATE_URL,
+        "https://validate.perfdrive.com/?incident=secret-id",
+        "<html><body>ok</body></html>",
+        "text/html",
+        28,
+    )
+    fetcher = SequencedFetcher([primary_shell_document(), perfdrive_variant])
+    deterministic = SequencedDeterministicExtractor(
+        [ParseError(ParseFailureCode.NO_RECIPE_FOUND)]
+    )
+    model = RecordingModelExtractor([model_result()])
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            fetcher,
+            deterministic,
+            model,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert stored.variant_outcome_category == "access_denied"
+    assert perfdrive_variant.html not in {call[0] for call in model.calls}
+    failed_events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "variant.failed"
+    ]
+    assert len(failed_events) == 1
+    assert failed_events[0]["error_category"] == "access_denied"
+
+
+@pytest.mark.asyncio
+async def test_legacy_challenge_extracting_never_fetches_variant(
+    session: AsyncSession,
+) -> None:
+    """Challenge primaries at EXTRACTING must not enter the variant shell path."""
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
+    )
+    challenge_doc = fixture_document(
+        "access_challenge_radware.html", requested_url=PRIMARY_URL, final_url=PRIMARY_URL
+    )
+    assert await repository.advance_stage(token, ImportStage.FETCHING, checkpoint_content_hash=None)
+    fetched_hash = await repository.store_pipeline_payload(
+        token,
+        "fetched",
+        _ImportPipeline._serialize_document(challenge_doc),
+        cipher(),
+        max_bytes=5 * 1024 * 1024,
+    )
+    assert await repository.advance_stage(
+        token, ImportStage.EXTRACTING, checkpoint_content_hash=fetched_hash
+    )
+    await session.commit()
+
+    fetcher = SequencedFetcher([])
+    model = RecordingModelExtractor([model_result()])
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            fetcher,
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            model,
+            None,
+            variant_registry(),
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert fetcher.calls == []
+    assert stored.variant_fetch_attempted_at is None
+    assert stored.safe_error_category == "access_denied"
+    assert stored.status is ImportStatus.FAILED
+    assert model.calls == []

@@ -16,6 +16,7 @@ from uuid import UUID
 import aiohttp
 from yarl import URL
 
+from ingestion.access_challenge import classify_access_challenge
 from ingestion.ai_extractor import (
     MAX_OUTPUT_TOKENS,
     AiExtractionError,
@@ -316,6 +317,15 @@ class ImportPipeline:
                     )
                 await self._commit()
                 return
+            if classify_access_challenge(source) is not None:
+                await self._repository.finish_terminal(
+                    token,
+                    ImportStatus.FAILED,
+                    error_category="access_denied",
+                    diagnostic_reference=None,
+                )
+                await self._commit()
+                return
             retained = self._serialize_document(source)
             checkpoint_hash = await self._repository.store_pipeline_payload(
                 token, "fetched", retained, self._payload_cipher, max_bytes=5 * 1024 * 1024
@@ -348,6 +358,15 @@ class ImportPipeline:
             return
         document = await self._load_document(job_id, token, emit_variant_checkpoint_event=True)
         await self._commit()
+        if classify_access_challenge(document) is not None:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category="access_denied",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            return
         failure: ParseError | None = None
         try:
             result = await adapters.deterministic.extract(document)
@@ -403,9 +422,17 @@ class ImportPipeline:
                     diagnostic_reference=None,
                 )
             else:
-                await self._repository.advance_stage(
-                    token, ImportStage.MODEL_EXTRACTING, checkpoint_content_hash=None
-                )
+                if classify_access_challenge(document) is not None:
+                    await self._repository.finish_terminal(
+                        token,
+                        ImportStatus.FAILED,
+                        error_category="access_denied",
+                        diagnostic_reference=None,
+                    )
+                else:
+                    await self._repository.advance_stage(
+                        token, ImportStage.MODEL_EXTRACTING, checkpoint_content_hash=None
+                    )
             await self._commit()
             return
         payload = self._serialize_candidate(result)
@@ -465,6 +492,21 @@ class ImportPipeline:
                     source_host=source_host,
                     started=started,
                     error_category=error.code.value,
+                )
+            return None
+        if classify_access_challenge(fetched) is not None:
+            recorded = await self._repository.record_variant_fetch_failure(
+                token, FetchFailureCode.ACCESS_DENIED.value
+            )
+            await self._commit()
+            if recorded:
+                self._emit_variant_event(
+                    "variant.failed",
+                    token,
+                    shell_reason=shell_reason,
+                    source_host=source_host,
+                    started=started,
+                    error_category=FetchFailureCode.ACCESS_DENIED.value,
                 )
             return None
         variant = FetchedDocument(
@@ -542,6 +584,8 @@ class ImportPipeline:
                 diagnostic_reference=None,
             )
             await self._commit()
+            return
+        if await self._finish_terminal_on_access_challenge(job_id, token) is not None:
             return
         now = datetime.now(UTC)
         request_deadline = now + timedelta(seconds=PROVIDER_ATTEMPT_SECONDS)
@@ -657,6 +701,15 @@ class ImportPipeline:
             return
         document = await self._load_document(job_id, token)
         await self._commit()
+        if classify_access_challenge(document) is not None:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category="access_denied",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            return
         try:
             result = await extractor.extract(
                 source_text=self._capped_model_source(document.html),
@@ -783,6 +836,35 @@ class ImportPipeline:
                 ),
             ),
         )
+
+    async def _finish_terminal_on_access_challenge(
+        self, job_id: UUID, token: LeaseToken
+    ) -> ImportStatus | None:
+        document = await self._try_load_document(job_id)
+        if document is None or classify_access_challenge(document) is None:
+            return None
+        await self._repository.finish_terminal(
+            token,
+            ImportStatus.FAILED,
+            error_category="access_denied",
+            diagnostic_reference=None,
+        )
+        await self._commit()
+        return ImportStatus.FAILED
+
+    async def _try_load_document(self, job_id: UUID) -> FetchedDocument | None:
+        job = await self._repository.session.get(ImportJob, job_id)
+        if job is not None and job.variant_content_hash is not None:
+            raw = await self._repository.load_payload(
+                job_id, "variant_fetched", self._payload_cipher
+            )
+            if raw is None:
+                return None
+            return FetchedDocument(**json.loads(raw))
+        raw = await self._repository.load_payload(job_id, "fetched", self._payload_cipher)
+        if raw is None:
+            return None
+        return FetchedDocument(**json.loads(raw))
 
     async def _load_document(
         self,
@@ -1116,6 +1198,8 @@ class ImportPipeline:
                 return "budget_not_configured", False
             if error.code is AiExtractionFailureCode.RATE_LIMITED:
                 return "provider_rate_limited", True
+            if error.code is AiExtractionFailureCode.NOT_A_RECIPE:
+                return "access_denied", False
             if error.code in {
                 AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE,
                 AiExtractionFailureCode.SCHEMA_VALIDATION_FAILED,

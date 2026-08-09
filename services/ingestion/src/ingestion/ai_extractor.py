@@ -12,11 +12,12 @@ from typing import Annotated, Protocol
 import aiohttp
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ingestion.access_challenge import contains_access_challenge_markers
 from ingestion.import_models import MAX_PG_INT, RecipeImportCandidate
 
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.6-luna"
-PROMPT_VERSION = "week5-exercise-v1"
+PROMPT_VERSION = "week13-access-challenge-v1"
 MAX_OUTPUT_TOKENS = 1_200
 REQUEST_TIMEOUT_SECONDS = 30.0
 
@@ -63,6 +64,7 @@ class AiExtractionFailureCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     INVALID_PROVIDER_RESPONSE = "invalid_provider_response"
     SCHEMA_VALIDATION_FAILED = "schema_validation_failed"
+    NOT_A_RECIPE = "not_a_recipe"
 
 
 class AiExtractionError(Exception):
@@ -274,6 +276,8 @@ def build_extraction_messages(source_text: str) -> list[dict[str, str]]:
         "Preserve the recipe's original language and do not translate it. "
         "Use null when an optional numeric value is unknown. "
         "Do not invent ingredients, steps, quantities, times, servings, or tags. "
+        "If the source is an access challenge, CAPTCHA, bot block, or otherwise not a recipe, "
+        "do not invent a recipe from it. "
         "Preserve ingredient and instruction order."
     )
     return [
@@ -285,6 +289,14 @@ def build_extraction_messages(source_text: str) -> list[dict[str, str]]:
     ]
 
 
+def _candidate_text_fields(model_fields: LlmRecipeFields) -> str:
+    texts = [model_fields.title, *model_fields.instructions]
+    for ingredient in model_fields.ingredients:
+        texts.append(ingredient.raw_text)
+        texts.append(ingredient.name)
+    return "\n".join(texts)
+
+
 def candidate_from_model_content(
     content: str,
     *,
@@ -294,12 +306,14 @@ def candidate_from_model_content(
 
     try:
         model_fields = LlmRecipeFields.model_validate_json(content)
-        return RecipeImportCandidate(
-            source_url=trusted_source_url,
-            **model_fields.model_dump(),
-        )
     except ValidationError as exc:
         raise AiExtractionError(AiExtractionFailureCode.SCHEMA_VALIDATION_FAILED) from exc
+    if contains_access_challenge_markers(_candidate_text_fields(model_fields)):
+        raise AiExtractionError(AiExtractionFailureCode.NOT_A_RECIPE)
+    return RecipeImportCandidate(
+        source_url=trusted_source_url,
+        **model_fields.model_dump(),
+    )
 
 
 class AiRecipeExtractor:
