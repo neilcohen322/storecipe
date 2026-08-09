@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ingestion.ai_extractor import DEFAULT_OPENROUTER_MODEL
 from ingestion.cors_origins import parse_cors_origins
+from ingestion.server_rendered_variants import ServerRenderedVariantRegistry
 
 
 class Settings(BaseSettings):
@@ -58,10 +59,15 @@ class Settings(BaseSettings):
     import_burst_window_seconds: int = Field(default=60, ge=1, le=86_400)
     ai_daily_token_limit: int = Field(default=1_100_000, ge=1)
     ai_invocation_reservation_tokens: int = Field(default=275_000, ge=1)
+    server_rendered_variant_hosts_json: str = "{}"
 
     @property
     def cors_origin_list(self) -> list[str]:
         return parse_cors_origins(self.cors_origins)
+
+    @property
+    def server_rendered_variant_registry(self) -> ServerRenderedVariantRegistry:
+        return ServerRenderedVariantRegistry.from_json(self.server_rendered_variant_hosts_json)
 
     @field_validator("cors_origins")
     @classmethod
@@ -105,6 +111,12 @@ class Settings(BaseSettings):
         if self.ai_invocation_reservation_tokens > self.ai_daily_token_limit:
             raise ValueError("AI invocation reservation cannot exceed the daily token limit")
         return self
+
+    @field_validator("server_rendered_variant_hosts_json")
+    @classmethod
+    def _server_rendered_variant_registry_is_valid(cls, value: str) -> str:
+        ServerRenderedVariantRegistry.from_json(value)
+        return value
 
 
 @lru_cache

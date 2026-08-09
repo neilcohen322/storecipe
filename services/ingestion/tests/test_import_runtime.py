@@ -432,3 +432,29 @@ def test_worker_builds_budget_policy_from_runtime_settings() -> None:
     assert policy.reservation_tokens == 270_000
     assert policy.provider_name == "openrouter"
     assert policy.model_name == "provider/model-pinned"
+
+
+def test_settings_reject_malformed_server_rendered_variant_registry() -> None:
+    keyring = base64.b64encode(b"k" * 32).decode()
+
+    with pytest.raises(ValueError, match="JSON object"):
+        Settings(
+            payload_active_key_id="current",
+            payload_keyring=f"current={keyring}",
+            server_rendered_variant_hosts_json="[]",
+        )
+
+
+def test_settings_exposes_configured_server_rendered_variant_registry() -> None:
+    keyring = base64.b64encode(b"k" * 32).decode()
+    settings = Settings(
+        payload_active_key_id="current",
+        payload_keyring=f"current={keyring}",
+        server_rendered_variant_hosts_json=(
+            '{"www.publisher.test":"mobile.publisher.test"}'
+        ),
+    )
+
+    assert settings.server_rendered_variant_registry.candidate_url(
+        "https://www.publisher.test/recipes/a"
+    ) == "https://mobile.publisher.test/recipes/a"
