@@ -2,7 +2,9 @@ import base64
 import json
 
 import pytest
+from bs4 import BeautifulSoup
 
+import ingestion.server_rendered_variants as variants
 from ingestion.import_models import FetchedDocument, ParseFailureCode
 from ingestion.server_rendered_variants import (
     ServerRenderedVariantRegistry,
@@ -188,6 +190,32 @@ def test_useful_long_recipe_content_with_an_unrelated_empty_root_is_not_a_shell(
     )
 
     assert classify_shell(document(html), ParseFailureCode.NO_RECIPE_FOUND) is None
+
+
+def test_recipe_section_detection_runs_once_for_many_empty_root_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    markers = "".join(
+        '<div id="root"></div><div id="app"></div><div data-reactroot></div>' for _ in range(50)
+    )
+    html = (
+        markers
+        + '<main><section class="recipe-content"><p>'
+        + ("cook the ingredients " * 150)
+        + "</p></section></main>"
+    )
+    calls = 0
+    original = variants._has_recipe_sections
+
+    def recipe_sections_spy(soup: BeautifulSoup) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(soup)
+
+    monkeypatch.setattr(variants, "_has_recipe_sections", recipe_sections_spy)
+
+    assert classify_shell(document(html), ParseFailureCode.NO_RECIPE_FOUND) is None
+    assert calls == 1
 
 
 def test_application_state_without_recipe_sections_is_classified() -> None:

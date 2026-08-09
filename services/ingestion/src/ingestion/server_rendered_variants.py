@@ -115,11 +115,11 @@ class ServerRenderedVariantRegistry:
         return None if target is None else str(primary.with_host(target))
 
 
-def _has_empty_application_root(soup: BeautifulSoup) -> bool:
+def _has_empty_application_root(soup: BeautifulSoup, *, has_recipe_sections: bool) -> bool:
     for node in soup.find_all(True):
         if node.get("id") not in {"root", "app"} and not node.has_attr("data-reactroot"):
             continue
-        if not node.get_text(" ", strip=True) and not _has_recipe_sections(soup):
+        if not node.get_text(" ", strip=True) and not has_recipe_sections:
             return True
     return False
 
@@ -135,13 +135,13 @@ def _has_recipe_sections(soup: BeautifulSoup) -> bool:
 
 
 def _has_application_state_without_recipe_sections(
-    document: FetchedDocument, soup: BeautifulSoup
+    document: FetchedDocument, soup: BeautifulSoup, *, has_recipe_sections: bool
 ) -> bool:
     has_state_script = _APPLICATION_STATE_MARKER.search(document.html) is not None
     has_application_root = soup.find(id={"root", "app"}) is not None or any(
         node.has_attr("data-reactroot") for node in soup.find_all(True)
     )
-    return (has_state_script or has_application_root) and not _has_recipe_sections(soup)
+    return (has_state_script or has_application_root) and not has_recipe_sections
 
 
 def classify_shell(
@@ -160,8 +160,11 @@ def classify_shell(
     visible = " ".join(soup.get_text(" ", strip=True).split())
     if len(visible) < 2_000:
         return ShellReason.SPARSE_NO_RECIPE
-    if _has_empty_application_root(soup):
+    has_recipe_sections = _has_recipe_sections(soup)
+    if _has_empty_application_root(soup, has_recipe_sections=has_recipe_sections):
         return ShellReason.EMPTY_APP_ROOT
-    if _has_application_state_without_recipe_sections(document, soup):
+    if _has_application_state_without_recipe_sections(
+        document, soup, has_recipe_sections=has_recipe_sections
+    ):
         return ShellReason.APPLICATION_STATE_ONLY
     return None
