@@ -582,6 +582,87 @@ async def test_registry_miss_keeps_primary_no_recipe_outcome_without_variant_req
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("input_kind", "plaintext", "registry", "already_attempted"),
+    [
+        pytest.param(
+            ImportInputKind.URL,
+            PRIMARY_URL.encode(),
+            ServerRenderedVariantRegistry.empty(),
+            False,
+            id="empty-registry",
+        ),
+        pytest.param(
+            ImportInputKind.URL,
+            PRIMARY_URL.encode(),
+            ServerRenderedVariantRegistry.from_json(
+                '{"www.other-publisher.test":"mobile.other-publisher.test"}'
+            ),
+            False,
+            id="unknown-primary-host",
+        ),
+        pytest.param(
+            ImportInputKind.URL,
+            PRIMARY_URL.encode(),
+            variant_registry(),
+            True,
+            id="already-attempted-url",
+        ),
+        pytest.param(
+            ImportInputKind.TEXT,
+            b"Soup without structured data",
+            variant_registry(),
+            False,
+            id="text-import",
+        ),
+    ],
+)
+async def test_ineligible_variant_paths_never_classify_the_document(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    input_kind: ImportInputKind,
+    plaintext: bytes,
+    registry: ServerRenderedVariantRegistry,
+    already_attempted: bool,
+) -> None:
+    """Calling the BeautifulSoup shell gate before eligibility wastes work on every import."""
+
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=input_kind, plaintext=plaintext
+    )
+    if already_attempted:
+        await session.execute(
+            update(ImportJob)
+            .where(ImportJob.id == job_id)
+            .values(variant_fetch_attempted_at=datetime.now(UTC))
+        )
+        await session.commit()
+    fetcher = SequencedFetcher([primary_shell_document()])
+    classifications: list[tuple[FetchedDocument, ParseFailureCode]] = []
+
+    def classify_spy(document: FetchedDocument, failure: ParseFailureCode) -> None:
+        classifications.append((document, failure))
+        return None
+
+    monkeypatch.setattr(pipeline_module, "classify_shell", classify_spy)
+
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        ImportAdapters(
+            fetcher,
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            None,
+            None,
+            registry,
+        ),
+    )
+
+    assert classifications == []
+    assert fetcher.calls == ([PRIMARY_URL] if input_kind is ImportInputKind.URL else [])
+
+
+@pytest.mark.asyncio
 async def test_non_shell_parse_failure_keeps_primary_outcome_without_variant_request(
     session: AsyncSession,
 ) -> None:

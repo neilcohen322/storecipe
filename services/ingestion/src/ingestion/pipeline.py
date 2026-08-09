@@ -353,30 +353,32 @@ class ImportPipeline:
             result = await adapters.deterministic.extract(document)
         except ParseError as error:
             failure = error
-            shell_reason = classify_shell(document, error.code)
             if (
                 job.input_kind is ImportInputKind.URL
                 and job.variant_fetch_attempted_at is None
                 and job.variant_content_hash is None
-                and shell_reason is not None
             ):
-                variant = await self._try_variant_document(
-                    job_id, token, document, shell_reason, adapters
-                )
-                if variant is not None:
-                    try:
-                        result = await adapters.deterministic.extract(variant)
-                    except ParseError as alternate_failure:
-                        failure = alternate_failure
-                    else:
-                        failure = None
-                else:
-                    current = await self._repository.session.get(ImportJob, job_id)
-                    if current is not None and current.status in {
-                        ImportStatus.CANCELLED,
-                        ImportStatus.TIMED_OUT,
-                    }:
-                        return
+                candidate_url = adapters.variant_registry.candidate_url(document.final_url or "")
+                if candidate_url is not None:
+                    shell_reason = classify_shell(document, error.code)
+                    if shell_reason is not None:
+                        variant = await self._try_variant_document(
+                            job_id, token, document, candidate_url, shell_reason, adapters
+                        )
+                        if variant is not None:
+                            try:
+                                result = await adapters.deterministic.extract(variant)
+                            except ParseError as alternate_failure:
+                                failure = alternate_failure
+                            else:
+                                failure = None
+                        else:
+                            current = await self._repository.session.get(ImportJob, job_id)
+                            if current is not None and current.status in {
+                                ImportStatus.CANCELLED,
+                                ImportStatus.TIMED_OUT,
+                            }:
+                                return
         if failure is not None:
             if failure.candidate is not None:
                 try:
@@ -421,14 +423,12 @@ class ImportPipeline:
         job_id: UUID,
         token: LeaseToken,
         primary: FetchedDocument,
+        candidate_url: str,
         shell_reason: ShellReason,
         adapters: ImportAdapters,
     ) -> FetchedDocument | None:
         """Fetch exactly one registered server-rendered variant after a primary parse failure."""
 
-        candidate_url = adapters.variant_registry.candidate_url(primary.final_url or "")
-        if candidate_url is None:
-            return None
         started = time.monotonic()
         source_host = _source_host(primary.final_url)
         self._emit_variant_event(

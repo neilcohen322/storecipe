@@ -82,7 +82,7 @@ def _terminal_result(
     status_value = body.get("status")
     if not isinstance(status_value, str) or status_value not in KNOWN_STATUSES:
         raise SmokeError("response_invalid", status=status)
-    recipe_id_value = body.get("recipeId")
+    recipe_id_value = body.get("createdRecipeId")
     recipe_id = None
     if recipe_id_value is not None:
         if not isinstance(recipe_id_value, str):

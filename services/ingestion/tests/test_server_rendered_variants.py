@@ -101,6 +101,7 @@ def test_registry_never_uses_suffix_matching(url: str) -> None:
         '{"https://www.publisher.test":"mobile.publisher.test"}',
         '{"www.publisher.test/path":"mobile.publisher.test"}',
         '{"www.publisher.test:443":"mobile.publisher.test"}',
+        '{"www.publisher.test..":"mobile.publisher.test"}',
         '{"user@www.publisher.test":"mobile.publisher.test"}',
         '{"127.0.0.1":"mobile.publisher.test"}',
         '{"*.publisher.test":"mobile.publisher.test"}',
@@ -125,6 +126,21 @@ def test_registry_rejects_duplicate_normalized_source_hosts() -> None:
 
     with pytest.raises(ValueError, match="duplicate source"):
         ServerRenderedVariantRegistry.from_json(raw)
+
+
+def test_registry_rejects_byte_for_byte_duplicate_source_hosts() -> None:
+    raw = (
+        '{"www.publisher.test":"mobile.publisher.test","www.publisher.test":"other.publisher.test"}'
+    )
+
+    with pytest.raises(ValueError, match="duplicate source"):
+        ServerRenderedVariantRegistry.from_json(raw)
+
+
+@pytest.mark.parametrize("host", ["１２７.０.０.１", "１２７．０．０．１"])
+def test_registry_rejects_ip_literals_after_idna_normalization(host: str) -> None:
+    with pytest.raises(ValueError, match="IP literals"):
+        ServerRenderedVariantRegistry.from_json(json.dumps({host: "mobile.publisher.test"}))
 
 
 def test_registry_rejects_non_string_host_values() -> None:
@@ -161,6 +177,17 @@ def test_empty_application_root_is_classified_after_sparse_threshold() -> None:
     assert classify_shell(document(html), ParseFailureCode.INCOMPLETE_RECIPE) is (
         ShellReason.EMPTY_APP_ROOT
     )
+
+
+def test_useful_long_recipe_content_with_an_unrelated_empty_root_is_not_a_shell() -> None:
+    html = (
+        '<div id="root"></div><div id="app"></div><div data-reactroot></div>'
+        '<main><section class="recipe-content"><p>'
+        + ("cook the ingredients " * 150)
+        + "</p></section></main>"
+    )
+
+    assert classify_shell(document(html), ParseFailureCode.NO_RECIPE_FOUND) is None
 
 
 def test_application_state_without_recipe_sections_is_classified() -> None:

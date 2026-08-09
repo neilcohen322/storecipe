@@ -22,11 +22,17 @@ class ShellReason(StrEnum):
     APPLICATION_STATE_ONLY = "application_state_only"
 
 
+@dataclass(frozen=True, slots=True)
+class _JsonObjectPairs:
+    pairs: list[tuple[str, object]]
+
+
 def _normalize_dns_hostname(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError("registry hostnames must be strings")
 
-    hostname = value[:-1] if value.endswith(".") else value
+    has_terminal_dot = value.endswith(".")
+    hostname = value[:-1] if has_terminal_dot else value
     if not hostname:
         raise ValueError("registry hostnames must not be empty")
     try:
@@ -36,23 +42,32 @@ def _normalize_dns_hostname(value: object) -> str:
     else:
         raise ValueError("registry hostnames must not be IP literals")
 
+    try:
+        normalized_input = hostname.encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise ValueError("registry hostnames must be valid IDNA hostnames") from exc
+    if normalized_input.endswith(".") and not has_terminal_dot:
+        normalized_input = normalized_input[:-1]
+
     labels: list[str] = []
-    for label in hostname.split("."):
+    for label in normalized_input.split("."):
         if not label or "*" in label:
             raise ValueError("registry hostnames must not contain wildcard or empty labels")
-        try:
-            normalized = label.encode("idna").decode("ascii").lower()
-        except UnicodeError as exc:
-            raise ValueError("registry hostnames must be valid IDNA hostnames") from exc
-        if not _DNS_LABEL.fullmatch(normalized):
+        if not _DNS_LABEL.fullmatch(label):
             raise ValueError("registry hostnames contain an invalid DNS label")
-        if len(normalized.encode("ascii")) > 63:
+        if len(label.encode("ascii")) > 63:
             raise ValueError("registry hostname labels must be at most 63 bytes")
-        labels.append(normalized)
+        labels.append(label)
 
     normalized_hostname = ".".join(labels)
     if len(normalized_hostname.encode("ascii")) > 253:
         raise ValueError("registry hostnames must be at most 253 bytes")
+    try:
+        ipaddress.ip_address(normalized_hostname)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("registry hostnames must not be IP literals")
     return normalized_hostname
 
 
@@ -66,12 +81,16 @@ class ServerRenderedVariantRegistry:
 
     @classmethod
     def from_json(cls, raw: str) -> "ServerRenderedVariantRegistry":
-        decoded = json.loads(raw)
-        if not isinstance(decoded, dict):
+        decoded = json.loads(raw, object_pairs_hook=_JsonObjectPairs)
+        if not isinstance(decoded, _JsonObjectPairs):
             raise ValueError("server-rendered variant registry must be a JSON object")
 
         normalized: dict[str, str] = {}
-        for source, target in decoded.items():
+        raw_sources: set[str] = set()
+        for source, target in decoded.pairs:
+            if source in raw_sources:
+                raise ValueError("server-rendered variant registry has a duplicate source")
+            raw_sources.add(source)
             source_host = _normalize_dns_hostname(source)
             target_host = _normalize_dns_hostname(target)
             if source_host in normalized:
@@ -100,7 +119,7 @@ def _has_empty_application_root(soup: BeautifulSoup) -> bool:
     for node in soup.find_all(True):
         if node.get("id") not in {"root", "app"} and not node.has_attr("data-reactroot"):
             continue
-        if not node.get_text(" ", strip=True):
+        if not node.get_text(" ", strip=True) and not _has_recipe_sections(soup):
             return True
     return False
 

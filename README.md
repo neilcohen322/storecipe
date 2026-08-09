@@ -100,7 +100,7 @@ shell before starting the worker, then start the existing three-service import s
 (`catalog-api`, `ingestion-api`, and `ingestion-worker`):
 
 ```powershell
-$env:INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON = '{"<primary-host>":["<alternate-host>"]}'
+$env:INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON = '{"<primary-host>":"<alternate-host>"}'
 docker compose up --build -d --force-recreate catalog-api ingestion-api ingestion-worker
 ```
 

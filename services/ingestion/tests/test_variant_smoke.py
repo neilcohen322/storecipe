@@ -27,7 +27,7 @@ async def test_smoke_reports_only_safe_terminal_identifiers() -> None:
             json={
                 "id": JOB_ID,
                 "status": "completed",
-                "recipeId": RECIPE_ID,
+                "createdRecipeId": RECIPE_ID,
                 "errorCategory": None,
             },
         )
