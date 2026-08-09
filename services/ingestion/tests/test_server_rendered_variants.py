@@ -50,6 +50,16 @@ def test_exact_registry_changes_only_case_normalized_host() -> None:
     ) == "https://mobile.publisher.test/a%2Fb?tag=1&tag=2"
 
 
+def test_candidate_url_preserves_raw_path_and_ordered_query_encoding() -> None:
+    registry = ServerRenderedVariantRegistry.from_json(
+        '{"www.publisher.test":"mobile.publisher.test"}'
+    )
+
+    assert registry.candidate_url(
+        "https://www.publisher.test/a%61%2Fb?x=%7e&tag=2&tag=1&tag=2"
+    ) == "https://mobile.publisher.test/a%61%2Fb?x=%7e&tag=2&tag=1&tag=2"
+
+
 def test_registry_normalizes_one_terminal_dot() -> None:
     registry = ServerRenderedVariantRegistry.from_json(
         '{"WWW.PUBLISHER.TEST.":"MOBILE.PUBLISHER.TEST."}'

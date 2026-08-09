@@ -81,7 +81,7 @@ class ServerRenderedVariantRegistry:
 
     def candidate_url(self, primary_final_url: str) -> str | None:
         try:
-            primary = URL(primary_final_url)
+            primary = URL(primary_final_url, encoded=True)
             port = primary.port
         except (TypeError, ValueError, UnicodeError):
             return None
