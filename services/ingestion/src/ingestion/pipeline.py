@@ -346,9 +346,7 @@ class ImportPipeline:
             )
             await self._commit()
             return
-        document = await self._load_document(
-            job_id, token, emit_variant_checkpoint_event=True
-        )
+        document = await self._load_document(job_id, token, emit_variant_checkpoint_event=True)
         await self._commit()
         failure: ParseError | None = None
         try:

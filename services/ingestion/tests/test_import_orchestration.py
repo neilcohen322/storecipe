@@ -87,9 +87,7 @@ async def claimed_extracting_job(
     await session.commit()
     token = await repository.record_receipt_and_claim(target.id, "worker", 1, lease_seconds=60)
     assert token is not None
-    assert await repository.advance_stage(
-        token, ImportStage.FETCHING, checkpoint_content_hash=None
-    )
+    assert await repository.advance_stage(token, ImportStage.FETCHING, checkpoint_content_hash=None)
     assert await repository.advance_stage(
         token, ImportStage.EXTRACTING, checkpoint_content_hash="f" * 64
     )

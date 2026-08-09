@@ -27,9 +27,12 @@ def test_registry_is_empty_by_default() -> None:
     key = base64.b64encode(b"t" * 32).decode()
     settings = Settings(payload_active_key_id="test", payload_keyring=f"test={key}")
 
-    assert settings.server_rendered_variant_registry.candidate_url(
-        "https://www.publisher.test/recipes/a?tag=1&tag=2"
-    ) is None
+    assert (
+        settings.server_rendered_variant_registry.candidate_url(
+            "https://www.publisher.test/recipes/a?tag=1&tag=2"
+        )
+        is None
+    )
 
 
 def test_empty_registry_is_immutable_and_has_no_hosts() -> None:
@@ -45,9 +48,10 @@ def test_exact_registry_changes_only_case_normalized_host() -> None:
         '{"www.publisher.test":"mobile.publisher.test"}'
     )
 
-    assert registry.candidate_url(
-        "https://WWW.PUBLISHER.TEST:443/a%2Fb?tag=1&tag=2"
-    ) == "https://mobile.publisher.test/a%2Fb?tag=1&tag=2"
+    assert (
+        registry.candidate_url("https://WWW.PUBLISHER.TEST:443/a%2Fb?tag=1&tag=2")
+        == "https://mobile.publisher.test/a%2Fb?tag=1&tag=2"
+    )
 
 
 def test_candidate_url_preserves_raw_path_and_ordered_query_encoding() -> None:
@@ -55,9 +59,10 @@ def test_candidate_url_preserves_raw_path_and_ordered_query_encoding() -> None:
         '{"www.publisher.test":"mobile.publisher.test"}'
     )
 
-    assert registry.candidate_url(
-        "https://www.publisher.test/a%61%2Fb?x=%7e&tag=2&tag=1&tag=2"
-    ) == "https://mobile.publisher.test/a%61%2Fb?x=%7e&tag=2&tag=1&tag=2"
+    assert (
+        registry.candidate_url("https://www.publisher.test/a%61%2Fb?x=%7e&tag=2&tag=1&tag=2")
+        == "https://mobile.publisher.test/a%61%2Fb?x=%7e&tag=2&tag=1&tag=2"
+    )
 
 
 def test_registry_normalizes_one_terminal_dot() -> None:
@@ -124,16 +129,17 @@ def test_registry_rejects_duplicate_normalized_source_hosts() -> None:
 
 def test_registry_rejects_non_string_host_values() -> None:
     with pytest.raises(ValueError):
-        ServerRenderedVariantRegistry.from_json(
-            '{"www.publisher.test": ["mobile.publisher.test"]}'
-        )
+        ServerRenderedVariantRegistry.from_json('{"www.publisher.test": ["mobile.publisher.test"]}')
 
 
-@pytest.mark.parametrize("url", [
-    "http://www.publisher.test/recipes/a",
-    "https://www.publisher.test:8443/recipes/a",
-    "https://127.0.0.1/recipes/a",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://www.publisher.test/recipes/a",
+        "https://www.publisher.test:8443/recipes/a",
+        "https://127.0.0.1/recipes/a",
+    ],
+)
 def test_registry_only_candidates_https_default_port(url: str) -> None:
     registry = ServerRenderedVariantRegistry.from_json(
         '{"www.publisher.test":"mobile.publisher.test"}'
@@ -143,9 +149,10 @@ def test_registry_only_candidates_https_default_port(url: str) -> None:
 
 
 def test_sparse_failed_document_is_classified_as_shell() -> None:
-    assert classify_shell(
-        document('<div id="root"></div>'), ParseFailureCode.NO_RECIPE_FOUND
-    ) is ShellReason.SPARSE_NO_RECIPE
+    assert (
+        classify_shell(document('<div id="root"></div>'), ParseFailureCode.NO_RECIPE_FOUND)
+        is ShellReason.SPARSE_NO_RECIPE
+    )
 
 
 def test_empty_application_root_is_classified_after_sparse_threshold() -> None:
@@ -159,9 +166,7 @@ def test_empty_application_root_is_classified_after_sparse_threshold() -> None:
 def test_application_state_without_recipe_sections_is_classified() -> None:
     html = (
         '<script id="__NEXT_DATA__">{"buildId":"test"}</script>'
-        '<div id="app"><p>'
-        + ("application content " * 150)
-        + "</p></div>"
+        '<div id="app"><p>' + ("application content " * 150) + "</p></div>"
     )
 
     assert classify_shell(document(html), ParseFailureCode.NO_RECIPE_FOUND) is (
@@ -170,7 +175,7 @@ def test_application_state_without_recipe_sections_is_classified() -> None:
 
 
 def test_useful_long_recipe_content_returns_none() -> None:
-    html = '<main><h1>Recipe</h1><p>' + ("cook the ingredients " * 150) + "</p></main>"
+    html = "<main><h1>Recipe</h1><p>" + ("cook the ingredients " * 150) + "</p></main>"
 
     assert classify_shell(document(html), ParseFailureCode.NO_RECIPE_FOUND) is None
 

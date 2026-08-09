@@ -476,11 +476,12 @@ def test_settings_exposes_configured_server_rendered_variant_registry() -> None:
     settings = Settings(
         payload_active_key_id="current",
         payload_keyring=f"current={keyring}",
-        server_rendered_variant_hosts_json=(
-            '{"www.publisher.test":"mobile.publisher.test"}'
-        ),
+        server_rendered_variant_hosts_json=('{"www.publisher.test":"mobile.publisher.test"}'),
     )
 
-    assert settings.server_rendered_variant_registry.candidate_url(
-        "https://www.publisher.test/recipes/a"
-    ) == "https://mobile.publisher.test/recipes/a"
+    assert (
+        settings.server_rendered_variant_registry.candidate_url(
+            "https://www.publisher.test/recipes/a"
+        )
+        == "https://mobile.publisher.test/recipes/a"
+    )

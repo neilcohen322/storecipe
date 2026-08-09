@@ -89,7 +89,7 @@ def test_server_rendered_registry_is_empty_and_worker_only_in_compose() -> None:
     config_source = (ROOT / "services" / "ingestion" / "src" / "ingestion" / "config.py").read_text(
         encoding="utf-8"
     )
-    assert "server_rendered_variant_hosts_json: str = \"{}\"" in config_source
+    assert 'server_rendered_variant_hosts_json: str = "{}"' in config_source
     assert '"www.' not in config_source
     assert '"mobile.' not in config_source
 

@@ -134,9 +134,7 @@ def alternate_recipe_document() -> FetchedDocument:
 
 
 def variant_registry() -> ServerRenderedVariantRegistry:
-    return ServerRenderedVariantRegistry.from_json(
-        '{"www.publisher.test":"mobile.publisher.test"}'
-    )
+    return ServerRenderedVariantRegistry.from_json('{"www.publisher.test":"mobile.publisher.test"}')
 
 
 class RecordingFetcher:
@@ -616,9 +614,7 @@ async def test_each_variant_fetch_failure_is_recorded_once_without_normal_fetch_
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.URL, plaintext=PRIMARY_URL.encode()
     )
-    fetcher = SequencedFetcher(
-        [primary_shell_document(), FetchError(failure, url=ALTERNATE_URL)]
-    )
+    fetcher = SequencedFetcher([primary_shell_document(), FetchError(failure, url=ALTERNATE_URL)])
 
     await ImportPipeline(repository, cipher()).run(
         job_id,
