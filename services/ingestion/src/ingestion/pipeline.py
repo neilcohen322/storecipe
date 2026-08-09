@@ -358,6 +358,15 @@ class ImportPipeline:
             return
         document = await self._load_document(job_id, token, emit_variant_checkpoint_event=True)
         await self._commit()
+        if classify_access_challenge(document) is not None:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category="access_denied",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            return
         failure: ParseError | None = None
         try:
             result = await adapters.deterministic.extract(document)
@@ -485,14 +494,7 @@ class ImportPipeline:
                     error_category=error.code.value,
                 )
             return None
-        variant = FetchedDocument(
-            requested_url=primary.requested_url,
-            final_url=primary.final_url,
-            html=fetched.html,
-            content_type=fetched.content_type,
-            byte_count=fetched.byte_count,
-        )
-        if classify_access_challenge(variant) is not None:
+        if classify_access_challenge(fetched) is not None:
             recorded = await self._repository.record_variant_fetch_failure(
                 token, FetchFailureCode.ACCESS_DENIED.value
             )
@@ -507,6 +509,13 @@ class ImportPipeline:
                     error_category=FetchFailureCode.ACCESS_DENIED.value,
                 )
             return None
+        variant = FetchedDocument(
+            requested_url=primary.requested_url,
+            final_url=primary.final_url,
+            html=fetched.html,
+            content_type=fetched.content_type,
+            byte_count=fetched.byte_count,
+        )
         content_hash = await self._repository.store_pipeline_payload(
             token,
             "variant_fetched",
