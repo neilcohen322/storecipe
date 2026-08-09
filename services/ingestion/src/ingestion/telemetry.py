@@ -22,6 +22,8 @@ class ImportEvent:
     job_id: str | None = None
     dispatch_generation: int | None = None
     stage: str | None = None
+    shell_reason: str | None = None
+    source_host: str | None = None
     attempt: int | None = None
     elapsed_ms: int | None = None
     queue_delay_ms: int | None = None

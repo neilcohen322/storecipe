@@ -92,6 +92,31 @@ disposable PostgreSQL database: the Catalog integration module applies all migra
 to that target. Set `STORECIPE_TEST_REDIS_URL` only to an isolated Redis instance.
 When either variable is unset, its integration checks report explicit skips.
 
+### Server-rendered variant smoke (operator opt-in)
+
+The checked-in `INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON={}` value is intentionally
+empty. For a live proof, an operator must set the exact deployment registry in their
+shell before starting the worker, then start the existing three-service import stack
+(`catalog-api`, `ingestion-api`, and `ingestion-worker`):
+
+```powershell
+$env:INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON = '{"<primary-host>":"<alternate-host>"}'
+docker compose up --build -d --force-recreate catalog-api ingestion-api ingestion-worker
+```
+
+Export a valid authenticated access token only in that operator shell and pass the
+approved source URL to the generic client. The API base is optional and defaults to
+`http://127.0.0.1:8001`:
+
+```powershell
+$env:STORECIPE_SMOKE_ACCESS_TOKEN = '<operator-supplied-token>'
+uv run python -m ingestion.variant_smoke --url '<approved-source-url>'
+```
+
+The client prints only `jobId`, `status`, `recipeId`, and `errorCategory`; errors expose
+only an HTTP status and a fixed safe category. Do not commit the registry, URL, token,
+or response body. CI never performs this live call.
+
 ## Contract-first rule
 
 The files under [`contracts/`](contracts/) are the authoritative cross-service
