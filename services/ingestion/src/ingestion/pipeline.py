@@ -1198,6 +1198,8 @@ class ImportPipeline:
                 return "budget_not_configured", False
             if error.code is AiExtractionFailureCode.RATE_LIMITED:
                 return "provider_rate_limited", True
+            if error.code is AiExtractionFailureCode.NOT_A_RECIPE:
+                return "access_denied", False
             if error.code in {
                 AiExtractionFailureCode.INVALID_PROVIDER_RESPONSE,
                 AiExtractionFailureCode.SCHEMA_VALIDATION_FAILED,
