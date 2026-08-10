@@ -1,0 +1,1 @@
+export { RatingControl } from "./index";
