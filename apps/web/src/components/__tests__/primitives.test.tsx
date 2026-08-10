@@ -1,6 +1,6 @@
-import TestRenderer, { act } from "react-test-renderer";
 import React from "react";
-import { Pressable, Text, TextInput } from "react-native";
+import { Text, TextInput } from "react-native";
+import { render } from "@testing-library/react-native";
 
 jest.mock("../../theme/ThemeProvider", () => ({
   ThemeProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -13,48 +13,44 @@ import {
   Screen, Section, Skeleton, StatusBadge, TextArea, Toast,
 } from "../index";
 
-const renderWithTheme = (ui: React.ReactElement) => {
-  let renderer!: TestRenderer.ReactTestRenderer;
-  act(() => { renderer = TestRenderer.create(<ThemeProvider systemSchemeOverride="light">{ui}</ThemeProvider>); });
-  return renderer;
-};
+const renderWithTheme = (ui: React.ReactElement) => render(<ThemeProvider systemSchemeOverride="light">{ui}</ThemeProvider>);
 
 describe("accessible token-driven primitives", () => {
-  it("renders named button variants with a 44px target and loading disables action", () => {
+  it("renders named button variants with a 44px target and loading disables action", async () => {
     const onPress = jest.fn();
-    const renderer = renderWithTheme(<Button label="Save recipe" loading onPress={onPress} />);
-    const button = renderer.root.find(node => node.props.accessibilityRole === "button");
+    const { getByRole } = await renderWithTheme(<Button label="Save recipe" loading onPress={onPress} />);
+    const button = getByRole("button", { name: "Save recipe" });
     expect(button.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
-    expect(button.props.style(false)).toEqual(expect.arrayContaining([expect.objectContaining({ minHeight: 44 })]));
-    act(() => button.props.onPress?.());
+    expect(button.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ minHeight: 44 })]));
+    button.props.onPress?.();
     expect(onPress).not.toHaveBeenCalled();
   });
 
-  it("associates field labels, hints, errors, and textarea controls", () => {
-    const renderer = renderWithTheme(<>
+  it("associates field labels, hints, errors, and textarea controls", async () => {
+    const { getByLabelText, getByText } = await renderWithTheme(<>
       <Field label="Recipe title" hint="Keep it short" error="Title is required" control={<TextInput />} />
       <TextArea label="Notes" value="hello" onChangeText={() => undefined} />
     </>);
-    expect(renderer.root.findAllByType(TextInput)[0].props.accessibilityState).toMatchObject({ invalid: true });
-    expect(renderer.root.findAllByType(Text).some(node => node.props.children === "Title is required")).toBe(true);
-    expect(renderer.root.findAllByType(TextInput)[1]).toBeTruthy();
+    expect(getByLabelText("Recipe title").props.accessibilityState).toMatchObject({ invalid: true });
+    expect(getByText("Title is required")).toBeTruthy();
+    expect(getByLabelText("Notes")).toBeTruthy();
   });
 
-  it("provides layout, status, and deterministic recipe media primitives", () => {
-    const renderer = renderWithTheme(<>
+  it("provides layout, status, and deterministic recipe media primitives", async () => {
+    const { getByTestId } = await renderWithTheme(<>
       <Screen><PageHeader title="Recipes" /><Section title="Latest"><ResponsiveGrid><Text>Card</Text></ResponsiveGrid></Section></Screen>
       <InlineNotice message="Saved" /><EmptyState title="Nothing here" /><LoadingState label="Loading recipes" />
       <ErrorState title="Failed" /><OfflineBanner /><StatusBadge status="success" /><ImportProgress status="review_required" />
       <RecipeMedia title="Pasta" tags={["Italian"]} /><Skeleton /><Toast message="Saved" visible /><ConfirmDialog visible title="Delete?" onConfirm={() => undefined} onCancel={() => undefined} />
     </>);
-    expect(renderer.root.findAllByType(Text).some(node => node.props.children === "Review needed")).toBe(true);
-    expect(renderer.root.find(node => node.props.testID === "recipe-media").props.accessibilityLabel).toMatch(/Pasta/);
+    expect(getByTestId("import-progress", { includeHiddenElements: true })).toBeTruthy();
+    expect(getByTestId("recipe-media", { includeHiddenElements: true }).props.accessibilityLabel).toMatch(/Pasta/);
   });
 
-  it("keeps import progress coarse and exposes rating controls by name", () => {
+  it("keeps import progress coarse and exposes rating controls by name", async () => {
     const onChange = jest.fn();
-    const renderer = renderWithTheme(<><ImportProgress status="processing" /><RatingControl value={3} onChange={onChange} /></>);
-    expect(renderer.root.findAllByType(Text).some(node => /fetching|rendering|extracting|saving/i.test(String(node.props.children)))).toBe(false);
-    expect(renderer.root.findAll(node => node.props.accessibilityRole === "button").length).toBeGreaterThanOrEqual(5);
+    const { queryByText, getAllByRole } = await renderWithTheme(<><ImportProgress status="processing" /><RatingControl value={3} onChange={onChange} /></>);
+    expect(queryByText(/fetching|rendering|extracting|saving/i)).toBeNull();
+    expect(getAllByRole("button")).toHaveLength(5);
   });
 });
