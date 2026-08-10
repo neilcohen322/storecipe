@@ -1,6 +1,10 @@
 import React from "react";
 import { Text, TextInput } from "react-native";
-import { render } from "@testing-library/react-native";
+import { fireEvent, render } from "@testing-library/react-native";
+
+jest.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ top: 10, right: 4, bottom: 12, left: 6 }),
+}));
 
 jest.mock("../../theme/ThemeProvider", () => ({
   ThemeProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -52,5 +56,43 @@ describe("accessible token-driven primitives", () => {
     const { queryByText, getAllByRole } = await renderWithTheme(<><ImportProgress status="processing" /><RatingControl value={3} onChange={onChange} /></>);
     expect(queryByText(/fetching|rendering|extracting|saving/i)).toBeNull();
     expect(getAllByRole("button")).toHaveLength(5);
+  });
+
+  it("maps every public import status without internal stage labels", async () => {
+    const statuses = ["queued", "processing", "completed", "review_required", "failed", "cancelled", "timed_out"] as const;
+    for (const status of statuses) {
+      const { getByTestId, unmount } = await renderWithTheme(<ImportProgress status={status} />);
+      const progress = getByTestId("import-progress", { includeHiddenElements: true });
+      expect(progress.props.accessibilityLabel).toMatch(/^Import status:/);
+      expect(progress.props.accessibilityLabel).not.toMatch(/fetching|rendering|extracting|saving/i);
+      await unmount();
+    }
+  });
+
+  it("owns safe-area padding, readable width, and 44px interactive targets", async () => {
+    const { getByTestId, getByRole } = await renderWithTheme(<>
+      <Screen testID="screen"><Button label="Save" /><RatingControl value={2} onChange={() => undefined} /><StatusBadge status="success" /><InlineNotice message="Notice" /><Toast message="Toast" /></Screen>
+    </>);
+    const screen = getByTestId("screen", { includeHiddenElements: true });
+    expect(screen.props.contentContainerStyle).toEqual(expect.arrayContaining([expect.objectContaining({ paddingTop: 26, paddingRight: 20, paddingBottom: 28, paddingLeft: 22 })]));
+    expect(getByTestId("screen-content", { includeHiddenElements: true }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ maxWidth: 1120 })]));
+    expect(getByRole("button", { name: "Save", includeHiddenElements: true }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ minHeight: 44 })]));
+  });
+
+  it("only exposes the focus ring while focused and keeps skeleton static for reduced motion", async () => {
+    const { getByRole, getByTestId } = await renderWithTheme(<><Button label="Focus me" /><Skeleton /></>);
+    const button = getByRole("button", { name: "Focus me", includeHiddenElements: true });
+    expect(button.props.style.some((style: { outlineWidth?: number }) => style?.outlineWidth)).toBe(false);
+    await fireEvent(button, "focus");
+    expect(getByRole("button", { name: "Focus me", includeHiddenElements: true }).props.style.some((style: { outlineWidth?: number }) => style?.outlineWidth === 2)).toBe(true);
+    expect(getByTestId("skeleton").props.style).not.toHaveProperty("animationDuration");
+  });
+
+  it("gives confirmation dialogs modal semantics and a close path", async () => {
+    const { getByTestId } = await renderWithTheme(<ConfirmDialog visible title="Delete recipe?" onConfirm={() => undefined} onCancel={() => undefined} />);
+    const dialog = getByTestId("confirm-dialog-panel", { includeHiddenElements: true });
+    expect(dialog.props.accessibilityRole).toBe("alert");
+    expect(dialog.props["aria-modal"]).toBe(true);
+    expect(dialog.props["aria-labelledby"]).toBe("confirm-dialog-title");
   });
 });
