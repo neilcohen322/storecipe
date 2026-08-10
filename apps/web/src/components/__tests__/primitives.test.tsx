@@ -1,5 +1,5 @@
 import React from "react";
-import { Text, TextInput } from "react-native";
+import { StyleSheet, Text, TextInput } from "react-native";
 import { fireEvent, render } from "@testing-library/react-native";
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -79,20 +79,67 @@ describe("accessible token-driven primitives", () => {
     expect(getByRole("button", { name: "Save", includeHiddenElements: true }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ minHeight: 44 })]));
   });
 
-  it("only exposes the focus ring while focused and keeps skeleton static for reduced motion", async () => {
-    const { getByRole, getByTestId } = await renderWithTheme(<><Button label="Focus me" /><Skeleton /></>);
+  it("shows focus rings for keyboard focus but not pointer focus", async () => {
+    const { getByRole } = await renderWithTheme(<><Button label="Focus me" /><RatingControl value={2} onChange={() => undefined} /></>);
     const button = getByRole("button", { name: "Focus me", includeHiddenElements: true });
-    expect(button.props.style.some((style: { outlineWidth?: number }) => style?.outlineWidth)).toBe(false);
-    await fireEvent(button, "focus");
-    expect(getByRole("button", { name: "Focus me", includeHiddenElements: true }).props.style.some((style: { outlineWidth?: number }) => style?.outlineWidth === 2)).toBe(true);
+    await fireEvent(button, "pointerDown");
+    await fireEvent(button, "focus", { currentTarget: { matches: () => false } });
+    expect(StyleSheet.flatten(button.props.style).outlineWidth).toBeUndefined();
+    await fireEvent(button, "blur");
+    await fireEvent(button, "focus", { currentTarget: { matches: (selector: string) => selector === ":focus-visible" } });
+    expect(StyleSheet.flatten(button.props.style).outlineWidth).toBe(2);
+
+    const rating = getByRole("button", { name: "Rate 3 out of 5", includeHiddenElements: true });
+    await fireEvent(rating, "pointerDown");
+    await fireEvent(rating, "focus", { currentTarget: { matches: () => false } });
+    expect(StyleSheet.flatten(rating.props.style).outlineWidth).toBeUndefined();
+    await fireEvent(rating, "blur");
+    await fireEvent(rating, "focus", { currentTarget: { matches: (selector: string) => selector === ":focus-visible" } });
+    expect(StyleSheet.flatten(rating.props.style).outlineWidth).toBe(2);
+  });
+
+  it("keeps skeleton rendering static", async () => {
+    const { getByTestId } = await renderWithTheme(<Skeleton />);
     expect(getByTestId("skeleton").props.style).not.toHaveProperty("animationDuration");
   });
 
-  it("gives confirmation dialogs modal semantics and a close path", async () => {
+  it("gives confirmation dialogs web dialog semantics and a close path", async () => {
     const { getByTestId } = await renderWithTheme(<ConfirmDialog visible title="Delete recipe?" onConfirm={() => undefined} onCancel={() => undefined} />);
     const dialog = getByTestId("confirm-dialog-panel", { includeHiddenElements: true });
-    expect(dialog.props.accessibilityRole).toBe("alert");
+    expect(dialog.props.role).toBe("dialog");
+    expect(dialog.props.accessibilityRole).not.toBe("alert");
     expect(dialog.props["aria-modal"]).toBe(true);
     expect(dialog.props["aria-labelledby"]).toBe("confirm-dialog-title");
+  });
+
+  it("keeps every interactive primitive at least 44 by 44", async () => {
+    const { getAllByRole, getByLabelText } = await renderWithTheme(<>
+      {(["primary", "secondary", "quiet", "icon", "danger"] as const).map((variant) => <Button key={variant} label={`${variant} action`} variant={variant} />)}
+      <Field label="Single line" control={<TextInput />} />
+      <TextArea label="Long form" />
+      <RatingControl value={2} onChange={() => undefined} />
+      <ConfirmDialog visible title="Confirm dimensions" onConfirm={() => undefined} onCancel={() => undefined} />
+    </>);
+    for (const control of getAllByRole("button", { includeHiddenElements: true })) {
+      const style = StyleSheet.flatten(control.props.style);
+      expect(style.minHeight).toBeGreaterThanOrEqual(44);
+      expect(style.minWidth).toBeGreaterThanOrEqual(44);
+    }
+    for (const label of ["Single line", "Long form"]) {
+      const style = StyleSheet.flatten(getByLabelText(label, { includeHiddenElements: true }).props.style);
+      expect(style.minHeight).toBeGreaterThanOrEqual(44);
+      expect(style.minWidth).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  it("moves focus into the dialog and returns it when the dialog closes", async () => {
+    const initialFocus = jest.fn();
+    const returnFocus = jest.fn();
+    const initialFocusRef = { current: { focus: initialFocus } };
+    const returnFocusRef = { current: { focus: returnFocus } };
+    const { rerender } = await renderWithTheme(<ConfirmDialog visible title="Focus lifecycle" onConfirm={() => undefined} onCancel={() => undefined} initialFocusRef={initialFocusRef} returnFocusRef={returnFocusRef} />);
+    expect(initialFocus).toHaveBeenCalledTimes(1);
+    await rerender(<ThemeProvider systemSchemeOverride="light"><ConfirmDialog visible={false} title="Focus lifecycle" onConfirm={() => undefined} onCancel={() => undefined} initialFocusRef={initialFocusRef} returnFocusRef={returnFocusRef} /></ThemeProvider>);
+    expect(returnFocus).toHaveBeenCalledTimes(1);
   });
 });
