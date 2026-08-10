@@ -26,7 +26,7 @@ function useUnauthorizedHandler() {
   const auth = useAuth();
   const router = useRouter();
   return () => {
-    void auth.login().catch(() => undefined);
+    void auth.logout().catch(() => undefined);
     router.replace("/");
   };
 }
