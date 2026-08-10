@@ -4,19 +4,29 @@
   "main": "index.ts",
   "dependencies": {
     "@expo/metro-runtime": "~57.0.3",
+    "@expo/vector-icons": "^15.1.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.4",
+    "expo-constants": "~57.0.10",
+    "expo-linking": "~57.0.5",
+    "expo-router": "~57.0.12",
+    "expo-splash-screen": "~57.0.6",
     "expo-status-bar": "~57.0.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
     "react-native-auth0": "^5.11.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.2",
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@react-native/jest-preset": "^0.86.2",
+    "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^30.0.0",
     "@types/react": "~19.2.2",
     "jest-expo": "^57.0.3",
+    "react-test-renderer": "19.2.3",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -28,7 +38,8 @@
     "typecheck": "tsc --noEmit"
   },
   "jest": {
-    "preset": "jest-expo"
+    "preset": "jest-expo",
+    "setupFilesAfterEnv": ["<rootDir>/jest.setup.ts"]
   },
   "private": true
 }
