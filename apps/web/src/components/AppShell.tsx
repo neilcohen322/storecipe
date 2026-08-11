@@ -8,7 +8,7 @@ import { linkItems } from "../navigation/registry";
 import type { LayoutMode } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
 import { getTheme } from "../theme/tokens";
-import { BottomNavigation } from "./BottomNavigation";
+import { BottomNavigation, COMPACT_NAVIGATION_HEIGHT } from "./BottomNavigation";
 import { Sidebar } from "./Sidebar";
 
 const SIDEBAR_STORAGE_KEY = "storecipe.sidebar-collapsed";
@@ -43,7 +43,7 @@ export function AppShell({ children, viewportWidth }: PropsWithChildren<{ viewpo
     persistCollapsedPreference(next);
     return next;
   });
-  if (mode === "compact") return <View testID="app-shell-compact" style={[styles.compact, { backgroundColor: theme.colors.canvas, paddingBottom: insets.bottom + theme.sizing.control }]}><View style={styles.content}>{children}</View><BottomNavigation /></View>;
+  if (mode === "compact") return <View testID="app-shell-compact" style={[styles.compact, { backgroundColor: theme.colors.canvas, paddingBottom: insets.bottom + COMPACT_NAVIGATION_HEIGHT }]}><View style={styles.content}>{children}</View><BottomNavigation /></View>;
   return <View testID={`app-shell-${mode}`} style={[styles.desktop, { backgroundColor: theme.colors.canvas }]}><Sidebar collapsed={collapsed} onToggle={toggleSidebar} /><View style={[styles.canvas, { paddingTop: insets.top + theme.spacing.md, paddingRight: insets.right + theme.spacing.lg, paddingBottom: insets.bottom + theme.spacing.lg, paddingLeft: theme.spacing.lg }]}><View style={styles.pageAction}>{create && <Pressable testID="page-create-action" accessibilityRole="link" accessibilityLabel={create.label} onPress={() => router.push(create.href)} style={[styles.createAction, { backgroundColor: theme.colors.accent }]}><Ionicons name={create.icon} size={theme.sizing.icon} color={theme.colors.accentContrast} /></Pressable>}</View><View style={styles.content}>{children}</View></View></View>;
 }
 

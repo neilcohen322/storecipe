@@ -1,5 +1,5 @@
 import { fireEvent, render, waitFor, within } from "@testing-library/react-native";
-import { Text } from "react-native";
+import { StyleSheet, Text } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AppShell, getLayoutMode } from "../AppShell";
@@ -11,9 +11,9 @@ jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
-const renderShell = (width: number) => render(
+const renderShell = (width: number, bottomInset = 0) => render(
   <ThemeProvider systemSchemeOverride="light">
-    <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width, height: 800 }, insets: { top: 0, right: 0, bottom: 0, left: 0 } }}>
+    <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width, height: 800 }, insets: { top: 0, right: 0, bottom: bottomInset, left: 0 } }}>
       <AppShell viewportWidth={width}><Text>Page content</Text></AppShell>
     </SafeAreaProvider>
   </ThemeProvider>,
@@ -28,6 +28,18 @@ describe("AppShell", () => {
     const { getByRole, queryByTestId } = await renderShell(390);
     expect(getByRole("link", { name: "Create" })).toBeTruthy();
     expect(queryByTestId("page-create-action")).toBeNull();
+  });
+
+  it("anchors compact navigation and reserves its safe-area-aware height for content", async () => {
+    const { getByTestId } = await renderShell(390, 20);
+    expect(StyleSheet.flatten(getByTestId("bottom-navigation").props.style)).toMatchObject({
+      position: "absolute",
+      bottom: 0,
+      left: 0,
+      right: 0,
+      paddingBottom: 20,
+    });
+    expect(StyleSheet.flatten(getByTestId("app-shell-compact").props.style).paddingBottom).toBe(64);
   });
 
   it.each([768, 1440])("suppresses Create navigation and shows the desktop page action at %s", async (width) => {
