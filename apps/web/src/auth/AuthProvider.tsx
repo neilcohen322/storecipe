@@ -21,6 +21,7 @@ export type AuthContextValue = {
   isLoading: boolean;
   isAuthenticated: boolean;
   errorMessage: string | null;
+  user: { name?: string; email?: string; picture?: string } | null;
   login(): Promise<void>;
   logout(): Promise<void>;
   getAccessToken(): Promise<string>;
@@ -71,6 +72,7 @@ function AuthSession({
       isLoading,
       isAuthenticated: user !== null,
       errorMessage: error?.message ?? null,
+      user: user ? { name: user.name, email: user.email, picture: user.picture } : null,
       login,
       logout,
       getAccessToken,

@@ -7,6 +7,7 @@ const mockReplace = jest.fn();
 jest.mock("expo-router", () => ({
   Link: () => null,
   useLocalSearchParams: () => ({ recipeId: "recipe-1" }),
+  usePathname: () => "/recipes",
   useRouter: () => ({
     back: jest.fn(),
     push: jest.fn(),

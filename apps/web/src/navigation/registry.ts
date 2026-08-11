@@ -24,3 +24,10 @@ export function moreItems(): NavigationEntry[] {
 export function desktopNavigationItems(): NavigationLink[] {
   return linkItems.filter((item) => item.id !== "create" && item.availability !== "compact");
 }
+
+/** Returns only normalized, concrete paths handled by the app's route wrappers. */
+export function isApprovedAppPath(path: string): boolean {
+  return path === "/" || path === "/recipes" || path === "/recipes/new" ||
+    /^\/recipes\/[^/]+$/.test(path) || path === "/imports" ||
+    path === "/imports/new" || path === "/account" || path === "/more";
+}

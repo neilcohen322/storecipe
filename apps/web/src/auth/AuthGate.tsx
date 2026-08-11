@@ -1,12 +1,14 @@
 import type { PropsWithChildren } from "react";
-import { useRouter } from "expo-router";
+import { Redirect, usePathname, useRouter } from "expo-router";
 
 import { LandingScreen } from "../screens/LandingScreen";
 import { useAuth } from "./AuthProvider";
+import { returnPathStorage, type ReturnPathStorage } from "./returnPathStorage";
 
-export function AuthGate({ children }: PropsWithChildren) {
+export function AuthGate({ children, returnPathStorage: storage = returnPathStorage }: PropsWithChildren<{ returnPathStorage?: ReturnPathStorage }>) {
   const auth = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   if (auth.isLoading || !auth.isAuthenticated) {
     return (
@@ -15,11 +17,17 @@ export function AuthGate({ children }: PropsWithChildren) {
         isLoading={auth.isLoading}
         isAuthenticated={auth.isAuthenticated}
         errorMessage={auth.errorMessage}
-        onLogin={() => void auth.login()}
+        onLogin={() => {
+          storage.save(pathname);
+          void auth.login();
+        }}
         onContinue={() => router.replace("/recipes")}
       />
     );
   }
+
+  const savedPath = storage.consume();
+  if (savedPath && savedPath !== pathname) return <Redirect href={savedPath} />;
 
   return children;
 }
