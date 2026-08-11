@@ -5,7 +5,7 @@ const shared = {
   sizing: { control: 44, icon: 24, touchTarget: 48 },
   radii: { sm: 8, md: 12, lg: 16, pill: 999 },
   type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 },
-  breakpoints: { compact: 0, medium: 768, expanded: 1024 },
+  breakpoints: { compact: 0, medium: 768, expanded: 1200 },
   motion: { fast: 150, normal: 250, slow: 400 },
   shadows: {
     none: { elevation: 0, shadowColor: "transparent", shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 } },
