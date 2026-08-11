@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { useEffect, useRef } from "react";
 
 import { isApprovedAppPath } from "../navigation/registry";
 
@@ -8,6 +9,7 @@ type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export type ReturnPathStorage = {
   save(path: string): void;
+  peek(): string | null;
   consume(): string | null;
   clear(): void;
 };
@@ -35,9 +37,26 @@ export function createReturnPathStorage(providedStorage?: StorageLike | null): R
   const clear = () => { if (storage) storage.removeItem(RETURN_PATH_KEY); else memoryPath = null; };
   return {
     save(path) { const normalized = normalizeReturnPath(path); if (normalized) write(normalized); else clear(); },
+    peek() { return normalizeReturnPath(read()); },
     consume() { const saved = read(); clear(); return normalizeReturnPath(saved); },
     clear,
   };
 }
 
 export const returnPathStorage = createReturnPathStorage();
+
+/** Reads during render, then clears once from a committed authenticated tree. */
+export function useCommittedReturnPath(storage: ReturnPathStorage, enabled: boolean, fallback: string): string {
+  const consumed = useRef(false);
+  const destination = enabled ? storage.peek() ?? fallback : fallback;
+  useEffect(() => {
+    if (!enabled) {
+      consumed.current = false;
+      return;
+    }
+    if (consumed.current) return;
+    consumed.current = true;
+    storage.consume();
+  }, [enabled, storage]);
+  return destination;
+}

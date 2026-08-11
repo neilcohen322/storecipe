@@ -10,7 +10,8 @@ const mockRedirect = jest.fn();
 
 jest.mock("expo-router", () => ({
   Redirect: ({ href }: { href: string }) => {
-    mockRedirect(href);
+    const { useEffect } = require("react");
+    useEffect(() => { mockRedirect(href); }, [href]);
     return null;
   },
   usePathname: () => mockPathname,
@@ -84,12 +85,50 @@ test("restores a saved approved path once after authentication", async () => {
   expect(storage.consume()).toBeNull();
 });
 
+test("clears a restored path only after the redirect has committed", async () => {
+  authenticated();
+  const events: string[] = [];
+  const backing = { value: "/account" };
+  const storage = createReturnPathStorage({
+    getItem: () => { events.push("read"); return backing.value || null; },
+    setItem: (_key, value) => { backing.value = value; },
+    removeItem: () => { events.push("clear"); backing.value = ""; },
+  });
+  mockRedirect.mockImplementation(() => { events.push("redirect"); });
+
+  await render(<AuthGate returnPathStorage={storage}><></></AuthGate>);
+
+  expect(events).toContain("redirect");
+  expect(events.indexOf("clear")).toBeGreaterThan(events.indexOf("redirect"));
+  expect(backing.value).toBe("");
+});
+
+test.each([
+  "/",
+  "/recipes",
+  "/recipes/new",
+  "/recipes/recipe-42",
+  "/imports",
+  "/imports/new",
+  "/account",
+  "/more",
+])("accepts every approved return path: %s", (path) => {
+  const backing = { value: "" };
+  const storage = createReturnPathStorage({ getItem: () => backing.value || null, setItem: (_key, value) => { backing.value = value; }, removeItem: () => { backing.value = ""; } });
+
+  storage.save(path);
+
+  expect(storage.peek()).toBe(path);
+});
+
 test("clears paths that could leave the approved in-app route surface", () => {
   for (const path of [
     "https://attacker.example/recipes",
     "//attacker.example/recipes",
     "/recipes\\recipe-42",
     "/recipes/%E0%A4%A",
+    "/recipes?next=/account",
+    "/recipes#account",
     "/unknown",
   ]) {
     const backing = { value: path };

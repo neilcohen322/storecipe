@@ -3,12 +3,13 @@ import { Redirect, usePathname, useRouter } from "expo-router";
 
 import { LandingScreen } from "../screens/LandingScreen";
 import { useAuth } from "./AuthProvider";
-import { returnPathStorage, type ReturnPathStorage } from "./returnPathStorage";
+import { returnPathStorage, type ReturnPathStorage, useCommittedReturnPath } from "./returnPathStorage";
 
 export function AuthGate({ children, returnPathStorage: storage = returnPathStorage }: PropsWithChildren<{ returnPathStorage?: ReturnPathStorage }>) {
   const auth = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const destination = useCommittedReturnPath(storage, auth.isAuthenticated, pathname);
 
   if (auth.isLoading || !auth.isAuthenticated) {
     return (
@@ -26,8 +27,7 @@ export function AuthGate({ children, returnPathStorage: storage = returnPathStor
     );
   }
 
-  const savedPath = storage.consume();
-  if (savedPath && savedPath !== pathname) return <Redirect href={savedPath} />;
+  if (destination !== pathname) return <Redirect href={destination} />;
 
   return children;
 }
