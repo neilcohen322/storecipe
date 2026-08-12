@@ -89,7 +89,7 @@ export function RecipeDetailRouteAdapter() {
   const { catalog } = useLegacyApis();
   const router = useRouter();
   const onUnauthorized = useUnauthorizedHandler();
-  const { recipeId } = useLocalSearchParams<{ recipeId: string }>();
+  const { recipeId } = useLocalSearchParams<{ recipeId?: string | string[] }>();
   return (
     <AuthGate>
       <RecipeDetailScreen

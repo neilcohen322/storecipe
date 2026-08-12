@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+import { Platform, StyleSheet, Text, View } from "react-native";
 
 import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi, Recipe } from "../api/catalog";
 import { Button, ErrorState, InlineNotice, LoadingState, OfflineBanner, PageHeader, RatingControl, RecipeMedia, Screen, Section } from "../components";
 
 type DetailError = "none" | "notFound" | "offline" | "generic";
+type ViewAccessibilityRole = NonNullable<ComponentProps<typeof View>["accessibilityRole"]>;
+
+/** React Native's current role union omits web's valid listitem role. Keep it web-only. */
+const webListItemProps: { accessibilityRole?: ViewAccessibilityRole } = Platform.OS === "web"
+  ? { accessibilityRole: "listitem" as unknown as ViewAccessibilityRole }
+  : {};
 
 export type RecipeDetailScreenProps = {
   recipeId: unknown;
@@ -38,10 +44,7 @@ export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }
   const ratingRequestId = useRef(0);
 
   const load = useCallback(async () => {
-    if (!id) {
-      setRecipe(null); setLoading(false); setError("notFound");
-      return;
-    }
+    if (!id) { setRecipe(null); setLoading(false); setError("notFound"); return; }
     const requestId = ++loadRequestId.current;
     setLoading(true); setError("none"); setRecipe(null); setRatingRetry(null);
     try {
@@ -75,8 +78,8 @@ export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }
       setRecipe((current) => current?.id === id ? { ...current, rating: rating.value } : current);
     } catch (caught) {
       if (!mounted.current || requestId !== ratingRequestId.current) return;
-      if (caught instanceof ApiUnauthorizedError) { onUnauthorized(); return; }
       setRecipe((current) => current?.id === id ? { ...current, rating: priorRating } : current);
+      if (caught instanceof ApiUnauthorizedError) { onUnauthorized(); return; }
       setRatingRetry(value);
     } finally {
       if (mounted.current && requestId === ratingRequestId.current) setSavingRating(false);
@@ -86,7 +89,7 @@ export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }
   const errorContent = error === "notFound"
     ? <ErrorState title="We couldn't find that recipe." action={<Button label="Try again" onPress={() => void load()} />} />
     : error === "offline"
-      ? <><OfflineBanner message="You’re offline. Check your connection and try again." /><Button label="Try again" onPress={() => void load()} /></>
+      ? <><OfflineBanner message={"You\u2019re offline. Check your connection and try again."} /><Button label="Try again" onPress={() => void load()} /></>
       : <ErrorState title="We couldn't load this recipe. Please try again." action={<Button label="Try again" onPress={() => void load()} />} />;
 
   return <Screen><Button label="Back to list" variant="secondary" onPress={onBack} />
@@ -95,8 +98,8 @@ export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }
       <PageHeader title={recipe.title} subtitle={[recipe.servings ? `Serves ${recipe.servings}` : null, recipe.totalMinutes ? `${recipe.totalMinutes} min` : null].filter(Boolean).join(" · ") || undefined} />
       <Section title="Rating"><Text>{recipe.rating ? `${recipe.rating} out of 5` : "Not rated"}</Text><RatingControl value={recipe.rating ?? 0} onChange={(value) => void setRating(value)} disabled={savingRating} />{ratingRetry ? <View style={styles.ratingError}><InlineNotice tone="error" message="We couldn't save your rating." /><Button label="Try rating again" variant="secondary" onPress={() => void setRating(ratingRetry)} /></View> : null}</Section>
       <View testID="recipe-detail-columns" style={styles.columns}>
-        <Section title="Ingredients" accessibilityRole="list" accessibilityLabel="Ingredients" style={styles.ingredients}>{recipe.ingredients.length ? recipe.ingredients.map((ingredient, index) => <View key={`${ingredient.rawText}-${index}`} accessibilityRole={"listitem" as never} accessibilityLabel={ingredient.rawText}><Text style={styles.listItem}>• {ingredient.rawText}</Text></View>) : <Text>None listed.</Text>}</Section>
-        <Section title="Instructions" accessibilityRole="list" accessibilityLabel="Instructions" style={styles.instructions}>{recipe.instructions.length ? recipe.instructions.map((step, index) => <View key={`${index}-${step.slice(0, 24)}`} accessibilityRole={"listitem" as never}><Text style={styles.step}>{index + 1}. {step}</Text></View>) : <Text>None listed.</Text>}</Section>
+        <Section title="Ingredients" accessibilityRole="list" accessibilityLabel="Ingredients" style={styles.ingredients}>{recipe.ingredients.length ? recipe.ingredients.map((ingredient, index) => <View key={`${ingredient.rawText}-${index}`} {...webListItemProps} accessibilityLabel={ingredient.rawText}><Text style={styles.listItem}>{"\u2022"} {ingredient.rawText}</Text></View>) : <Text>None listed.</Text>}</Section>
+        <Section title="Instructions" accessibilityRole="list" accessibilityLabel="Instructions" style={styles.instructions}>{recipe.instructions.length ? recipe.instructions.map((step, index) => <View key={`${index}-${step.slice(0, 24)}`} {...webListItemProps}><Text style={styles.step}>{index + 1}. {step}</Text></View>) : <Text>None listed.</Text>}</Section>
       </View>
     </View> : null}
   </Screen>;

@@ -91,6 +91,16 @@ test("rolls a failed rating back and offers a safe inline retry", async () => {
   expect(putRating).toHaveBeenCalledTimes(2);
 });
 
+test("rolls back an unauthorized rating before invoking a handler that keeps the screen mounted", async () => {
+  const onUnauthorized = jest.fn();
+  const screen = await render(<RecipeDetailScreen recipeId="recipe-1" catalog={catalogWith(jest.fn().mockResolvedValue(recipe), jest.fn().mockRejectedValue(new ApiUnauthorizedError()))} onBack={actions.onBack} onUnauthorized={onUnauthorized} />);
+  await waitFor(() => expect(screen.getByText("Lemon pasta")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Rate 5 out of 5" }));
+  await waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: "Rate 3 out of 5" }).props.accessibilityState).toMatchObject({ selected: true });
+  expect(screen.getByRole("button", { name: "Rate 5 out of 5" }).props.accessibilityState).toMatchObject({ selected: false });
+});
+
 test("suppresses stale load and rating responses after navigation and unmount", async () => {
   const firstLoad = deferred<Recipe>(); const secondLoad = deferred<Recipe>(); const staleRating = deferred<{ value: number }>();
   const getRecipe = jest.fn().mockReturnValueOnce(firstLoad.promise).mockReturnValueOnce(secondLoad.promise);

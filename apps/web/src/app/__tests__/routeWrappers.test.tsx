@@ -3,10 +3,11 @@ import { fireEvent, render } from "@testing-library/react-native";
 const mockLogin = jest.fn();
 const mockLogout = jest.fn();
 const mockReplace = jest.fn();
+let mockRouteParams: { recipeId?: string | string[] } = { recipeId: "recipe-1" };
 
 jest.mock("expo-router", () => ({
   Link: () => null,
-  useLocalSearchParams: () => ({ recipeId: "recipe-1" }),
+  useLocalSearchParams: () => mockRouteParams,
   usePathname: () => "/recipes",
   useRouter: () => ({
     back: jest.fn(),
@@ -45,6 +46,11 @@ jest.mock("../../screens/RecipeListScreen", () => {
   };
 });
 
+jest.mock("../../screens/RecipeDetailScreen", () => {
+  const { Text } = require("react-native");
+  return { RecipeDetailScreen: ({ recipeId }: { recipeId: unknown }) => <Text testID="detail-route-id">{Array.isArray(recipeId) ? recipeId.join(",") : recipeId ?? "missing"}</Text> };
+});
+
 import AccountRoute from "../../../app/(app)/account";
 import ImportsRoute from "../../../app/(app)/imports";
 import NewImportRoute from "../../../app/(app)/imports/new";
@@ -79,4 +85,15 @@ it("clears a stale session and returns to landing for unauthorized recipe reques
   expect(mockLogout).toHaveBeenCalledTimes(1);
   expect(mockLogin).not.toHaveBeenCalled();
   expect(mockReplace).toHaveBeenCalledWith("/");
+});
+
+it.each([
+  [undefined, "missing"],
+  [["recipe-1", "duplicate"], "recipe-1,duplicate"],
+  ["recipe-1", "recipe-1"],
+])("forwards the runtime recipeId parameter shape through the detail route wrapper", async (recipeId, expected) => {
+  mockRouteParams = recipeId === undefined ? {} : { recipeId };
+  const { getByTestId, unmount } = await render(<RecipeDetailRoute />);
+  expect(getByTestId("detail-route-id").props.children).toBe(expected);
+  await unmount();
 });
