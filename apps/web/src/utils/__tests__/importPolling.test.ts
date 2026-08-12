@@ -148,6 +148,48 @@ test("stop during in-flight poll prevents status updates and further timers", as
   expect(timers.pendingCount()).toBe(0);
 });
 
+test("resumes polling the same job after a transient non-auth error", async () => {
+  const timers = createFakeTimers();
+  const jobIds: string[] = [];
+  const errors: string[] = [];
+  let calls = 0;
+  const poller = createImportPoller({
+    getImport: async (jobId) => {
+      jobIds.push(jobId);
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("temporary transport failure");
+      }
+      return {
+        id: jobId,
+        status: "queued",
+        errorCategory: null,
+        attemptCount: 0,
+        createdRecipeId: null,
+        cancellationRequested: false,
+      };
+    },
+    isActive: () => true,
+    onTerminal: () => undefined,
+    onUnauthorized: () => undefined,
+    onError: (message) => errors.push(message),
+    isUnauthorizedError: (error) => error instanceof ApiUnauthorizedError,
+    intervalMs: 10,
+    setTimeoutFn: timers.setTimeoutFn,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+
+  poller.start("job-1");
+  await Promise.resolve();
+
+  expect(errors).toEqual(["temporary transport failure"]);
+  expect(timers.pendingCount()).toBe(1);
+
+  await timers.flushNext();
+  expect(jobIds).toEqual(["job-1", "job-1"]);
+  poller.stop();
+});
+
 test("unauthorized poll errors invoke onUnauthorized once and stop", async () => {
   let unauthorizedCalls = 0;
   let terminalCalls = 0;

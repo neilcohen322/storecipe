@@ -124,6 +124,7 @@ export function createImportPoller(options: ImportPollerOptions): ImportPoller {
           return;
         }
         options.onError(error instanceof Error ? error.message : "Failed to poll import status");
+        shouldContinue = true;
       } finally {
         inFlight = false;
       }
