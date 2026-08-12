@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, Text, TextInput } from "react-native";
+import { StyleSheet, Text, TextInput, type PressableStateCallbackType } from "react-native";
 import { fireEvent, render } from "@testing-library/react-native";
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -28,6 +28,18 @@ describe("accessible token-driven primitives", () => {
     expect(button.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ minHeight: 44 })]));
     button.props.onPress?.();
     expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it("accepts function styles typed against the complete pressable state", async () => {
+    const states: PressableStateCallbackType[] = [];
+    const style = (state: PressableStateCallbackType) => {
+      states.push(state);
+      return { opacity: state.hovered ? 0.5 : 1 };
+    };
+    const { getByRole } = await renderWithTheme(<Button label="Stateful" style={style} />);
+
+    expect(states).toEqual([expect.objectContaining({ pressed: false })]);
+    expect(StyleSheet.flatten(getByRole("button", { name: "Stateful" }).props.style).opacity).toBe(1);
   });
 
   it("associates field labels, hints, errors, and textarea controls", async () => {
