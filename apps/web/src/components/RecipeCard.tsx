@@ -1,5 +1,4 @@
-import type { ComponentProps, ComponentType } from "react";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { RecipeQueryItem } from "../api/catalog";
 import { useTheme } from "../theme/ThemeProvider";
@@ -10,12 +9,6 @@ export type RecipeCardProps = {
   onOpen(recipeId: string): void;
   view: "card" | "list";
 };
-
-type WebPressableProps = ComponentProps<typeof Pressable> & {
-  onKeyDown?: (event: { nativeEvent?: { key?: string }; preventDefault?: () => void }) => void;
-};
-
-const WebPressable = Pressable as unknown as ComponentType<WebPressableProps>;
 
 function mediaColor(recipeId: string, colors: { accent: string; success: string; warning: string; danger: string }): string {
   const palette = [colors.accent, colors.success, colors.warning, colors.danger];
@@ -29,19 +22,13 @@ export function RecipeCard({ item, onOpen, view }: RecipeCardProps) {
     recipe.totalMinutes != null ? `${recipe.totalMinutes} min` : null,
     recipe.rating != null ? `${recipe.rating}/5` : "Unrated",
   ].filter((value): value is string => value !== null);
-  const webKeyboardProps = Platform.OS === "web" ? {
-    onKeyDown: (event: { nativeEvent?: { key?: string }; preventDefault?: () => void }) => {
-      if (event.nativeEvent?.key === "Enter" || event.nativeEvent?.key === " ") { event.preventDefault?.(); onOpen(recipe.id); }
-    },
-  } : {};
 
   return (
-    <WebPressable
+    <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Open ${recipe.title}`}
       onPress={() => onOpen(recipe.id)}
       focusable
-      {...webKeyboardProps}
       style={({ pressed }) => [
         styles.container,
         view === "list" && styles.list,
@@ -56,7 +43,7 @@ export function RecipeCard({ item, onOpen, view }: RecipeCardProps) {
         <Text style={[styles.details, { color: theme.colors.mutedText }]}>{details.join(" · ")}</Text>
         {recipe.tags.length > 0 ? <Text numberOfLines={1} style={[styles.tags, { color: theme.colors.mutedText }]}>{recipe.tags.join(" · ")}</Text> : null}
       </View>
-    </WebPressable>
+    </Pressable>
   );
 }
 
