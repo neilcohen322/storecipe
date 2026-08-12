@@ -43,7 +43,7 @@ test("configures Auth0 for bearer tokens with refresh-token rotation", () => {
   expect(provider.props.clientId).toBe("client-id");
 });
 
-test("starts provider-neutral Auth0 login with the API scope and web redirect", async () => {
+test("starts Auth0-hosted Google login with the API scope and web redirect", async () => {
   process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
   process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
   process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
@@ -60,6 +60,7 @@ test("starts provider-neutral Auth0 login with the API scope and web redirect", 
 
   expect(mockAuthorize).toHaveBeenCalledWith({
     audience: "https://api.test",
+    connection: "google-oauth2",
     redirectUrl: "https://storecipe.test",
     scope: "openid profile email offline_access recipes:read recipes:write ratings:write",
   });
