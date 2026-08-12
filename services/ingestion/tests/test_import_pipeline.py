@@ -2399,9 +2399,7 @@ async def test_variant_challenge_html_is_not_used_for_extraction(
         len(challenge_html.encode("utf-8")),
     )
     fetcher = SequencedFetcher([primary_shell_document(), challenge_variant])
-    deterministic = SequencedDeterministicExtractor(
-        [ParseError(ParseFailureCode.NO_RECIPE_FOUND)]
-    )
+    deterministic = SequencedDeterministicExtractor([ParseError(ParseFailureCode.NO_RECIPE_FOUND)])
 
     await ImportPipeline(repository, cipher()).run(
         job_id,
@@ -2444,9 +2442,7 @@ async def test_variant_perfdrive_final_url_is_not_used_for_extraction(
         28,
     )
     fetcher = SequencedFetcher([primary_shell_document(), perfdrive_variant])
-    deterministic = SequencedDeterministicExtractor(
-        [ParseError(ParseFailureCode.NO_RECIPE_FOUND)]
-    )
+    deterministic = SequencedDeterministicExtractor([ParseError(ParseFailureCode.NO_RECIPE_FOUND)])
     model = RecordingModelExtractor([model_result()])
 
     await ImportPipeline(repository, cipher()).run(
