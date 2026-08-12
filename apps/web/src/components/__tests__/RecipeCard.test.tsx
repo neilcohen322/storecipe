@@ -1,4 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
+import { Platform } from "react-native";
 
 import type { RecipeQueryItem } from "../../api/catalog";
 import { RecipeCard } from "../RecipeCard";
@@ -49,10 +50,21 @@ test("opens a recipe from an accessible stable card with deterministic theme med
   expect(first.getByText("25 min · 4/5")).toBeTruthy();
 });
 
-test("activates a focused recipe card with the keyboard", async () => {
-  const onOpen = jest.fn();
-  const screen = await render(<RecipeCard item={recipe} onOpen={onOpen} view="list" />);
-  const card = screen.getByRole("button", { name: "Open Lemon pasta" });
-  await fireEvent.press(card);
-  expect(onOpen).toHaveBeenCalledWith("recipe-1");
+test("activates a focused web recipe card with Enter and Space", async () => {
+  const originalPlatform = Platform.OS;
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+  try {
+    const onOpen = jest.fn();
+    const screen = await render(<RecipeCard item={recipe} onOpen={onOpen} view="list" />);
+    const card = screen.getByRole("button", { name: "Open Lemon pasta" });
+    await fireEvent(card, "focus", { currentTarget: { matches: () => true } });
+    expect(card.props.focusable).toBe(true);
+    expect(onOpen).not.toHaveBeenCalled();
+    await fireEvent(card, "keyDown", { nativeEvent: { key: "Enter" }, preventDefault: jest.fn() });
+    await fireEvent(card, "keyDown", { nativeEvent: { key: " " }, preventDefault: jest.fn() });
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(onOpen).toHaveBeenLastCalledWith("recipe-1");
+  } finally {
+    Object.defineProperty(Platform, "OS", { configurable: true, value: originalPlatform });
+  }
 });

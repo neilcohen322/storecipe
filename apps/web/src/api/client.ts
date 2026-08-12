@@ -15,6 +15,17 @@ export class ApiUnauthorizedError extends ApiError {
   }
 }
 
+export class ApiNetworkError extends Error {
+  readonly category = "network";
+  readonly code = "NETWORK_ERROR";
+
+  constructor(cause: unknown) {
+    super("Network request failed");
+    this.name = "ApiNetworkError";
+    Object.defineProperty(this, "cause", { value: cause });
+  }
+}
+
 /** Credential states that require re-login; network/transient Auth0 failures stay retryable. */
 const UNAUTHORIZED_CREDENTIAL_MARKERS = new Set([
   "NO_CREDENTIALS",
@@ -112,8 +123,7 @@ export function createApiClient(
         headers,
       });
     } catch (err) {
-      const reason = err instanceof Error ? err.message : "network error";
-      throw new Error(`Failed to reach ${service} at ${url}: ${reason}`);
+      throw new ApiNetworkError(err);
     }
 
     if (!response.ok) {

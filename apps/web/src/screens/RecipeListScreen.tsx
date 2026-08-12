@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { TextInput, View } from "react-native";
 
-import { ApiUnauthorizedError } from "../api/client";
+import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi, ListRecipesParams, RecipeQueryItem, RecipeSort } from "../api/catalog";
 import { RecipeCard } from "../components/RecipeCard";
 import { Button, EmptyState, ErrorState, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Skeleton } from "../components";
@@ -17,7 +17,27 @@ function strings(value: RouteValue): string[] { return (Array.isArray(value) ? v
 function normalizedSet(value: RouteValue): string[] { return [...new Set(strings(value).map((entry) => entry.toLocaleLowerCase()))].sort((a, b) => a.localeCompare(b)); }
 function numberValue(value: RouteValue, minimum: number, maximum = Number.MAX_SAFE_INTEGER): number | null { const raw = Array.isArray(value) ? value[0] : value; const parsed = raw === undefined ? Number.NaN : Number(raw); return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null; }
 function isAbortError(error: unknown): boolean { return error instanceof Error && error.name === "AbortError"; }
-export function isOfflineError(error: unknown): boolean { if (!(error instanceof Error)) return false; return /network|offline|failed to fetch|failed to reach/i.test(error.message); }
+export function isOfflineError(error: unknown): boolean {
+  if (error instanceof ApiNetworkError) return true;
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; code?: unknown; cause?: unknown };
+  if (candidate.code === "ERR_NETWORK" || candidate.code === "NETWORK_ERROR") return true;
+  if (candidate.name === "TypeError" && candidate.cause && typeof candidate.cause === "object") {
+    const cause = candidate.cause as { code?: unknown };
+    return cause.code === "ERR_NETWORK" || cause.code === "NETWORK_ERROR";
+  }
+  return false;
+}
+
+export function createPaginationRequestGuard() {
+  let activeRequestId: number | null = null;
+  return {
+    isActive: () => activeRequestId !== null,
+    start: (requestId: number) => { activeRequestId = requestId; },
+    finish: (requestId: number) => { if (activeRequestId === requestId) activeRequestId = null; },
+    reset: () => { activeRequestId = null; },
+  };
+}
 
 export function normalizeRecipeListParams(route: RouteQuery): ListRecipesParams {
   const text = strings(route.text).join(" ").toLocaleLowerCase() || null;
@@ -44,17 +64,19 @@ export type RecipeListScreenProps = { catalog: ReturnType<typeof createCatalogAp
 export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, onLogout, onUnauthorized }: RecipeListScreenProps) {
   const router = useRouter(); const route = useLocalSearchParams() as RouteQuery; const routeKey = JSON.stringify(route);
   const params = useMemo(() => normalizeRecipeListParams(route), [routeKey]); const queryKey = JSON.stringify(serializeRecipeListParams(params));
-  const [items, setItems] = useState<RecipeQueryItem[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<ErrorState>("none"); const [view, setView] = useState<"card" | "list">("card");
-  const mounted = useRef(true); const requestId = useRef(0); const debounce = useRef<ReturnType<typeof setTimeout> | null>(null); const controller = useRef<AbortController | null>(null); const loadingMoreRef = useRef(false);
+  const routeSearchText = params.text ?? ""; const [items, setItems] = useState<RecipeQueryItem[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<ErrorState>("none"); const [view, setView] = useState<"card" | "list">("card"); const [searchDraft, setSearchDraft] = useState(routeSearchText);
+  const mounted = useRef(true); const requestId = useRef(0); const debounce = useRef<ReturnType<typeof setTimeout> | null>(null); const draftGeneration = useRef(0); const controller = useRef<AbortController | null>(null); const paginationGuard = useRef(createPaginationRequestGuard());
+  const previousRouteSearchText = useRef(routeSearchText);
+  if (previousRouteSearchText.current !== routeSearchText) { previousRouteSearchText.current = routeSearchText; draftGeneration.current += 1; setSearchDraft(routeSearchText); }
   void onCreate; void onImport; void onLogout;
   const navigate = useCallback((next: ListRecipesParams) => router.push({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
   const request = useCallback(async (cursor: string | null = null) => {
     const pagination = cursor !== null;
-    if (pagination && loadingMoreRef.current) return;
+    if (pagination && paginationGuard.current.isActive()) return;
     const id = ++requestId.current;
     if (!pagination) controller.current?.abort();
     const nextController = new AbortController(); if (!pagination) controller.current = nextController;
-    if (pagination) { loadingMoreRef.current = true; setLoadingMore(true); } else { setError("none"); }
+    if (pagination) { paginationGuard.current.start(id); setLoadingMore(true); } else { setError("none"); }
     try {
       const page = await catalog.listRecipes({ ...params, ...(cursor ? { cursor } : {}) }, { signal: nextController.signal });
       if (!mounted.current || id !== requestId.current) return;
@@ -64,17 +86,17 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
       if (!mounted.current || id !== requestId.current || isAbortError(caught)) return;
       if (caught instanceof ApiUnauthorizedError) onUnauthorized(); else setError(isOfflineError(caught) ? "offline" : "generic");
     } finally {
-      if (pagination) loadingMoreRef.current = false;
+      if (pagination) paginationGuard.current.finish(id);
       if (mounted.current && id === requestId.current) { setLoading(false); setLoadingMore(false); }
     }
   }, [catalog, onUnauthorized, params]);
-  useEffect(() => { mounted.current = true; void request(); return () => { mounted.current = false; controller.current?.abort(); requestId.current += 1; loadingMoreRef.current = false; }; }, [queryKey, request]);
+  useEffect(() => { mounted.current = true; void request(); return () => { mounted.current = false; controller.current?.abort(); requestId.current += 1; paginationGuard.current.reset(); }; }, [queryKey, request]);
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
-  const scheduleSearch = (text: string) => { if (debounce.current) clearTimeout(debounce.current); debounce.current = setTimeout(() => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), text })), 300); };
+  const scheduleSearch = (text: string) => { setSearchDraft(text); if (debounce.current) clearTimeout(debounce.current); const generation = ++draftGeneration.current; debounce.current = setTimeout(() => { if (draftGeneration.current === generation) navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), text })); }, 300); };
   const update = (key: keyof ListRecipesParams, value: string) => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), [key]: value }));
   const errorContent = error === "offline" ? <><OfflineBanner message="You’re offline. Check your connection and try again." /><Button label="Try again" onPress={() => void request()} /></> : <ErrorState title="We couldn't load your recipes. Please try again." action={<Button label="Try again" onPress={() => void request()} />} />;
   return <Screen><PageHeader title="Recipes" subtitle={items.length ? `${items.length} recipes loaded` : undefined} />
-    <TextInput accessibilityLabel="Search recipes" value={params.text ?? ""} onChangeText={scheduleSearch} placeholder="Search recipes" />
+    <TextInput accessibilityLabel="Search recipes" value={searchDraft} onChangeText={scheduleSearch} placeholder="Search recipes" />
     <TextInput accessibilityLabel="Required ingredients" value={params.requiredIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("requiredIngredient", event.nativeEvent.text)} placeholder="Required ingredients" />
     <TextInput accessibilityLabel="Available ingredients" value={params.availableIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("availableIngredient", event.nativeEvent.text)} placeholder="Available ingredients" />
     <TextInput accessibilityLabel="Required tags" value={params.requiredTag?.join(", ") ?? ""} onEndEditing={(event) => update("requiredTag", event.nativeEvent.text)} placeholder="Required tags" />

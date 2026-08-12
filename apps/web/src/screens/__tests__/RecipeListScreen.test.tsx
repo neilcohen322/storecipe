@@ -1,8 +1,8 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 
-import { ApiUnauthorizedError } from "../../api/client";
+import { ApiNetworkError, ApiUnauthorizedError } from "../../api/client";
 import type { RecipeQueryItem } from "../../api/catalog";
-import { RecipeListScreen } from "../RecipeListScreen";
+import { createPaginationRequestGuard, isOfflineError, RecipeListScreen } from "../RecipeListScreen";
 
 let mockRouteParams: Record<string, string | string[] | undefined> = {};
 const mockPushRoute = jest.fn();
@@ -65,11 +65,20 @@ test("presents a safe retry action after a library error", async () => {
 });
 
 test("shows an offline banner while keeping retry distinct from generic errors", async () => {
-  const listRecipes = jest.fn().mockRejectedValueOnce(new TypeError("Network request failed")).mockResolvedValueOnce({ items: [], nextCursor: null });
+  const offline = new ApiNetworkError(Object.assign(new TypeError("fetch failed"), { code: "ERR_NETWORK" }));
+  const listRecipes = jest.fn().mockRejectedValueOnce(offline).mockResolvedValueOnce({ items: [], nextCursor: null });
   const screen = await renderScreen(listRecipes);
   await waitFor(() => expect(screen.getByText("You’re offline. Check your connection and try again.")).toBeTruthy());
   await fireEvent.press(screen.getByRole("button", { name: "Try again" }));
   await waitFor(() => expect(screen.getByText("Your recipe library is empty.")).toBeTruthy());
+});
+
+test("classifies only closed transport error shapes as offline", () => {
+  expect(isOfflineError(new ApiNetworkError(Object.assign(new TypeError("fetch failed"), { code: "ERR_NETWORK" })))).toBe(true);
+  expect(isOfflineError(Object.assign(new Error("transport unavailable"), { code: "NETWORK_ERROR" }))).toBe(true);
+  expect(isOfflineError(Object.assign(new TypeError("fetch failed"), { cause: { code: "ERR_NETWORK" } }))).toBe(true);
+  expect(isOfflineError(new Error("The recipe says network and offline repeatedly"))).toBe(false);
+  expect(isOfflineError(Object.assign(new Error("offline"), { code: "VALIDATION_ERROR" }))).toBe(false);
 });
 
 test("keeps unauthorized handling distinct from retryable library failures", async () => {
@@ -96,6 +105,28 @@ test("debounces search into a history entry instead of replacing history", async
   expect(mockReplaceRoute).not.toHaveBeenCalled();
 });
 
+test("updates the search draft immediately and resyncs it from browser navigation", async () => {
+  jest.useFakeTimers();
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  const screen = await renderScreen(listRecipes);
+  await fireEvent.changeText(screen.getByLabelText("Search recipes"), "lemon");
+  expect(screen.getByLabelText("Search recipes").props.value).toBe("lemon");
+  mockRouteParams = { text: "risotto" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
+  await waitFor(() => expect(screen.getByLabelText("Search recipes").props.value).toBe("risotto"));
+});
+
+test("does not let an older search debounce overwrite newer navigation", async () => {
+  jest.useFakeTimers();
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  const screen = await renderScreen(listRecipes);
+  await fireEvent.changeText(screen.getByLabelText("Search recipes"), "lemon");
+  mockRouteParams = { text: "risotto" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
+  await act(async () => { jest.advanceTimersByTime(300); });
+  expect(mockPushRoute).not.toHaveBeenCalled();
+});
+
 test("restores route-derived values in every visible filter after back-forward navigation", async () => {
   mockRouteParams = { text: "tomato soup", requiredIngredient: ["basil", "tomato"], availableIngredient: "onion", requiredTag: ["quick", "vegan"], preferredTag: "family", maxTotalMinutes: "30", minRating: "4", ratingState: "rated", sort: ["rating:desc", "totalMinutes:asc"] };
   const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
@@ -111,7 +142,7 @@ test("restores route-derived values in every visible filter after back-forward n
   expect(screen.getByRole("button", { name: "Rated only" })).toBeTruthy();
 
   mockRouteParams = { text: "risotto", ratingState: "unrated" };
-  screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
   await waitFor(() => expect(screen.getByLabelText("Search recipes").props.value).toBe("risotto"));
   expect(screen.getByLabelText("Required ingredients").props.value).toBe("");
   expect(screen.getByRole("button", { name: "Unrated only" })).toBeTruthy();
@@ -136,6 +167,38 @@ test("ignores duplicate load-more presses before a rerender and preserves the fi
   await waitFor(() => expect(screen.getByText("2 recipes loaded")).toBeTruthy());
 });
 
+test("keeps a newer pagination guard active when a stale request finishes", () => {
+  const guard = createPaginationRequestGuard();
+  guard.start(2);
+  guard.reset(); // a newer query retires the old pagination scope
+  guard.start(4);
+  guard.finish(2);
+  expect(guard.isActive()).toBe(true);
+  guard.finish(4);
+  expect(guard.isActive()).toBe(false);
+});
+
+test("does not let a stale pagination finally clear a newer pagination guard", async () => {
+  const oldPage = deferred<Page>(); const newInitial = deferred<Page>(); const newPage = deferred<Page>();
+  const listRecipes = jest.fn()
+    .mockResolvedValueOnce({ items: [recipe], nextCursor: "cursor-1" })
+    .mockReturnValueOnce(oldPage.promise)
+    .mockReturnValueOnce(newInitial.promise)
+    .mockReturnValueOnce(newPage.promise);
+  const screen = await renderScreen(listRecipes);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Load more recipes" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Load more recipes" }));
+  mockRouteParams = { text: "risotto" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
+  await act(async () => newInitial.resolve({ items: [secondRecipe], nextCursor: "cursor-2" }));
+  await waitFor(() => expect(screen.getByText("Tomato risotto")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Load more recipes" }));
+  await act(async () => oldPage.resolve({ items: [recipe], nextCursor: "stale" }));
+  await fireEvent.press(screen.getByRole("button", { name: "Load more recipes" }));
+  expect(listRecipes).toHaveBeenCalledTimes(4);
+  await act(async () => newPage.resolve({ items: [secondRecipe], nextCursor: null }));
+});
+
 test("suppresses out-of-order pagination and search results", async () => {
   const pageTwo = deferred<Page>(); const search = deferred<Page>();
   const listRecipes = jest.fn().mockResolvedValueOnce({ items: [recipe], nextCursor: "cursor-2" }).mockReturnValueOnce(pageTwo.promise).mockReturnValueOnce(search.promise);
@@ -149,6 +212,36 @@ test("suppresses out-of-order pagination and search results", async () => {
   await act(async () => pageTwo.resolve({ items: [recipe], nextCursor: "stale-cursor" }));
   expect(screen.queryByText("Lemon pasta")).toBeNull();
   expect(screen.queryByRole("button", { name: "Load more recipes" })).toBeNull();
+});
+
+test("suppresses an unauthorized retry response after newer navigation", async () => {
+  const initial = deferred<Page>(); const retry = deferred<Page>(); const newer = deferred<Page>();
+  const listRecipes = jest.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(retry.promise).mockReturnValueOnce(newer.promise);
+  const screen = await renderScreen(listRecipes);
+  await act(async () => initial.reject(new Error("generic failure")));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+  mockRouteParams = { text: "risotto" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
+  await act(async () => newer.resolve({ items: [secondRecipe], nextCursor: null }));
+  await waitFor(() => expect(screen.getByText("Tomato risotto")).toBeTruthy());
+  await act(async () => retry.reject(new ApiUnauthorizedError()));
+  expect(actions.onUnauthorized).not.toHaveBeenCalled();
+});
+
+test("suppresses an offline retry response after newer navigation", async () => {
+  const initial = deferred<Page>(); const retry = deferred<Page>(); const newer = deferred<Page>();
+  const listRecipes = jest.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(retry.promise).mockReturnValueOnce(newer.promise);
+  const screen = await renderScreen(listRecipes);
+  await act(async () => initial.reject(new Error("generic failure")));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+  mockRouteParams = { text: "risotto" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
+  await act(async () => newer.resolve({ items: [secondRecipe], nextCursor: null }));
+  await waitFor(() => expect(screen.getByText("Tomato risotto")).toBeTruthy());
+  await act(async () => retry.reject(new ApiNetworkError({ code: "ERR_NETWORK" })));
+  expect(screen.queryByText("Youâ€™re offline. Check your connection and try again.")).toBeNull();
 });
 
 test("does not update or surface errors after an in-flight library request unmounts", async () => {
