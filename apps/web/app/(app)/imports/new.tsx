@@ -1,3 +1,3 @@
-import { ImportsRouteAdapter } from "../../../src/app/LegacyRouteAdapters";
+import { NewImportRouteAdapter } from "../../../src/app/LegacyRouteAdapters";
 
-export default ImportsRouteAdapter;
+export default NewImportRouteAdapter;

@@ -1,5 +1,42 @@
 import { ApiUnauthorizedError } from "../../api/client";
-import { createImportPoller } from "../importPolling";
+import {
+  canRetryImport,
+  createImportPoller,
+  getImportPresentation,
+} from "../importPolling";
+
+test.each([
+  ["queued", "waiting"],
+  ["processing", "working"],
+  ["completed", "complete"],
+  ["review_required", "attention"],
+  ["failed", "stopped"],
+  ["cancelled", "stopped"],
+  ["timed_out", "stopped"],
+] as const)("maps %s to the total coarse presentation %s", (status, expected) => {
+  expect(getImportPresentation({ status, errorCategory: null }).phase).toBe(expected);
+});
+
+test.each([
+  [{ status: "failed", errorCategory: "timeout" }, true],
+  [{ status: "failed", errorCategory: "connection_failure" }, true],
+  [{ status: "failed", errorCategory: "dns_failure" }, true],
+  [{ status: "failed", errorCategory: "rate_limited" }, true],
+  [{ status: "failed", errorCategory: "provider_timeout" }, true],
+  [{ status: "failed", errorCategory: "provider_rate_limited" }, true],
+  [{ status: "failed", errorCategory: "provider_temporary" }, true],
+  [{ status: "failed", errorCategory: "provider_transport" }, true],
+  [{ status: "failed", errorCategory: "catalog_transport" }, true],
+  [{ status: "timed_out", errorCategory: "import_deadline_exceeded" }, true],
+  [{ status: "failed", errorCategory: "validation_error" }, false],
+  [{ status: "cancelled", errorCategory: null }, false],
+  [{ status: "review_required", errorCategory: null }, false],
+  [{ status: "completed", errorCategory: null }, false],
+  [{ status: "failed", errorCategory: null }, false],
+  [{ status: "failed", errorCategory: "unknown_future_value" }, false],
+] as const)("allows retry only for safe terminal jobs", (job, expected) => {
+  expect(canRetryImport(job)).toBe(expected);
+});
 
 function createFakeTimers() {
   let nextId = 1;
@@ -41,7 +78,7 @@ function createFakeTimers() {
 
 test("does not overlap polls while a request is in flight", async () => {
   const timers = createFakeTimers();
-  let resolveImport: ((value: { status: "queued"; errorCategory: null }) => void) | null =
+  let resolveImport: ((value: { id: string; status: "queued"; errorCategory: null; attemptCount: number; createdRecipeId: null; cancellationRequested: boolean }) => void) | null =
     null;
   let calls = 0;
 
@@ -67,7 +104,7 @@ test("does not overlap polls while a request is in flight", async () => {
   expect(calls).toBe(1);
   expect(timers.pendingCount()).toBe(0);
 
-  resolveImport!({ status: "queued", errorCategory: null });
+  resolveImport!({ id: "job-1", status: "queued", errorCategory: null, attemptCount: 0, createdRecipeId: null, cancellationRequested: false });
   await new Promise<void>((resolve) => {
     queueMicrotask(() => queueMicrotask(resolve));
   });
@@ -81,7 +118,7 @@ test("does not overlap polls while a request is in flight", async () => {
 
 test("stop during in-flight poll prevents status updates and further timers", async () => {
   const timers = createFakeTimers();
-  let resolveImport: ((value: { status: "queued"; errorCategory: null }) => void) | null =
+  let resolveImport: ((value: { id: string; status: "queued"; errorCategory: null; attemptCount: number; createdRecipeId: null; cancellationRequested: boolean }) => void) | null =
     null;
   const statuses: string[] = [];
 
@@ -104,7 +141,7 @@ test("stop during in-flight poll prevents status updates and further timers", as
   poller.start("job-1");
   expect(statuses).toEqual(["queued"]);
   poller.stop();
-  resolveImport!({ status: "queued", errorCategory: null });
+  resolveImport!({ id: "job-1", status: "queued", errorCategory: null, attemptCount: 0, createdRecipeId: null, cancellationRequested: false });
   await Promise.resolve();
 
   expect(statuses).toEqual(["queued"]);

@@ -10,6 +10,7 @@ import { AuthGate } from "../auth/AuthGate";
 import { CreateRecipeScreen } from "../screens/CreateRecipeScreen";
 import { getLayoutMode } from "../components/AppShell";
 import { ImportScreen } from "../screens/ImportScreen";
+import { ImportHistoryScreen } from "../screens/ImportHistoryScreen";
 import { LandingScreen } from "../screens/LandingScreen";
 import { RecipeDetailScreen } from "../screens/RecipeDetailScreen";
 import { RecipeListScreen } from "../screens/RecipeListScreen";
@@ -106,12 +107,19 @@ export function RecipeDetailRouteAdapter() {
 }
 
 export function ImportsRouteAdapter() {
-  const { ingestion } = useLegacyApis();
   const router = useRouter();
-  const onUnauthorized = useUnauthorizedHandler();
   return (
     <AuthGate>
-      <ImportScreen ingestion={ingestion} onBack={() => router.back()} onUnauthorized={onUnauthorized} />
+      <ImportHistoryScreen onNewImport={() => router.push("/imports/new")} />
+    </AuthGate>
+  );
+}
+
+export function NewImportRouteAdapter() {
+  const router = useRouter();
+  return (
+    <AuthGate>
+      <ImportScreen onBack={() => router.back()} />
     </AuthGate>
   );
 }

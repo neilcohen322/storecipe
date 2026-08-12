@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "./src/auth/AuthProvider";
 import { getAuth0Config } from "./src/auth/config";
 import { CreateRecipeScreen } from "./src/screens/CreateRecipeScreen";
 import { ImportScreen } from "./src/screens/ImportScreen";
+import { ImportSessionProvider } from "./src/imports/ImportSessionProvider";
 import { LandingScreen } from "./src/screens/LandingScreen";
 import { RecipeDetailScreen } from "./src/screens/RecipeDetailScreen";
 import { RecipeListScreen } from "./src/screens/RecipeListScreen";
@@ -128,11 +129,9 @@ function AuthenticatedApp() {
       break;
     case "import":
       content = (
-        <ImportScreen
-          ingestion={ingestion}
-          onBack={() => setRoute({ name: "list" })}
-          onUnauthorized={handleUnauthorized}
-        />
+        <ImportSessionProvider ingestion={ingestion} onUnauthorized={handleUnauthorized}>
+          <ImportScreen onBack={() => setRoute({ name: "list" })} />
+        </ImportSessionProvider>
       );
       break;
     default: {
