@@ -4,10 +4,12 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { AppShell, getLayoutMode } from "../AppShell";
 import { ThemeProvider } from "../../theme/ThemeProvider";
+import { CreateRecipeScreen } from "../../screens/CreateRecipeScreen";
 
+let mockPathname = "/recipes";
 jest.mock("expo-router", () => ({
   Link: ({ children }: { children: React.ReactNode }) => children,
-  usePathname: () => "/recipes",
+  usePathname: () => mockPathname,
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 
@@ -18,6 +20,19 @@ const renderShell = (width: number, bottomInset = 0) => render(
     </SafeAreaProvider>
   </ThemeProvider>,
 );
+
+const creationCatalog = { createRecipe: jest.fn() } as unknown as React.ComponentProps<typeof CreateRecipeScreen>["catalog"];
+const renderCreateRoute = (width: number) => render(
+  <ThemeProvider systemSchemeOverride="light">
+    <SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width, height: 800 }, insets: { top: 0, right: 0, bottom: 0, left: 0 } }}>
+      <AppShell viewportWidth={width}>
+        <CreateRecipeScreen catalog={creationCatalog} onCreated={jest.fn()} onBack={jest.fn()} onUnauthorized={jest.fn()} layoutMode={getLayoutMode(width)} />
+      </AppShell>
+    </SafeAreaProvider>
+  </ThemeProvider>,
+);
+
+beforeEach(() => { mockPathname = "/recipes"; });
 
 describe("AppShell", () => {
   it.each([[390, "compact"], [768, "medium"], [1440, "expanded"]] as const)("uses %s as %s layout", (width, mode) => {
@@ -46,6 +61,21 @@ describe("AppShell", () => {
     const { getByTestId } = await renderShell(width);
     expect(within(getByTestId("desktop-sidebar")).queryByRole("link", { name: "Create" })).toBeNull();
     expect(getByTestId("page-create-action")).toBeTruthy();
+  });
+
+  it.each([[390, "compact"], [768, "medium"], [1440, "expanded"]] as const)("gives /recipes/new exactly one Create recipe primary action at %s (%s)", async (width, _mode) => {
+    mockPathname = "/recipes/new";
+    const { getAllByRole, queryByTestId, unmount } = await renderCreateRoute(width);
+    expect(getAllByRole("button", { name: "Create recipe" })).toHaveLength(1);
+    expect(queryByTestId("page-create-action")).toBeNull();
+    if (width === 390) {
+      expect(queryByTestId("create-recipe-sticky-submit")).toBeTruthy();
+      expect(queryByTestId("create-recipe-header-submit")).toBeNull();
+    } else {
+      expect(queryByTestId("create-recipe-header-submit")).toBeTruthy();
+      expect(queryByTestId("create-recipe-sticky-submit")).toBeNull();
+    }
+    await unmount();
   });
 
   it("announces the active route and lets desktop groups collapse", async () => {
