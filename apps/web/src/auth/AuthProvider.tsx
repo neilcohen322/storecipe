@@ -43,7 +43,7 @@ function AuthSession({
   audience,
   children,
 }: PropsWithChildren<{ audience: string }>) {
-  const { user, isLoading, error, authorize, clearSession, getCredentials } =
+  const { user, isLoading, error, authorize, clearSession, getApiCredentials } =
     useAuth0();
 
   const login = useCallback(async () => {
@@ -64,9 +64,9 @@ function AuthSession({
   }, [clearSession]);
 
   const getAccessToken = useCallback(async () => {
-    const credentials = await getCredentials(AUTH_SCOPE, 0, { audience });
+    const credentials = await getApiCredentials(audience, AUTH_SCOPE);
     return credentials.accessToken;
-  }, [audience, getCredentials]);
+  }, [audience, getApiCredentials]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

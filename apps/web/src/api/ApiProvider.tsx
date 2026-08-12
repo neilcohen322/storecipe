@@ -1,6 +1,6 @@
 import { createContext, type PropsWithChildren, useContext, useMemo } from "react";
 
-import { createApiClient, isUnauthorizedCredentialError } from "./client";
+import { createApiClient } from "./client";
 import { getApiBases } from "./bases";
 import { useAuth } from "../auth/AuthProvider";
 
@@ -14,17 +14,7 @@ export function ApiProvider({ children }: PropsWithChildren) {
   const auth = useAuth();
   const bases = useMemo(() => getApiBases(), []);
   const client = useMemo(
-    () =>
-      createApiClient(async () => {
-        try {
-          return await auth.getAccessToken();
-        } catch (error) {
-          if (isUnauthorizedCredentialError(error)) {
-            await auth.login();
-          }
-          throw error;
-        }
-      }, bases),
+    () => createApiClient(auth.getAccessToken, bases),
     [auth, bases],
   );
 

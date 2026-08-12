@@ -8,6 +8,7 @@ import { useAuth } from "../../auth/AuthProvider";
 const mockAuthorize = jest.fn();
 const mockClearSession = jest.fn();
 const mockGetCredentials = jest.fn();
+const mockGetApiCredentials = jest.fn();
 const originalWindow = globalThis.window;
 
 jest.mock("react-native-auth0", () => ({
@@ -19,6 +20,7 @@ jest.mock("react-native-auth0", () => ({
     authorize: mockAuthorize,
     clearSession: mockClearSession,
     getCredentials: mockGetCredentials,
+    getApiCredentials: mockGetApiCredentials,
   }),
 }));
 
@@ -42,7 +44,10 @@ beforeEach(() => {
   process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
   process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
   process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
-  mockGetCredentials.mockResolvedValue({ accessToken: "test-api-token" });
+  mockAuthorize.mockReset().mockResolvedValue(undefined);
+  mockClearSession.mockReset().mockResolvedValue(undefined);
+  mockGetCredentials.mockReset();
+  mockGetApiCredentials.mockReset().mockResolvedValue({ accessToken: "test-api-token" });
 });
 
 afterEach(() => {
@@ -109,21 +114,18 @@ it("shows Auth0 configuration guidance without mounting AuthProvider", async () 
   expect(queryByText("authenticated:function")).toBeNull();
 });
 
-it("requests login for credential errors but rethrows transient token errors", async () => {
-  mockGetCredentials.mockRejectedValueOnce(
-    Object.assign(new Error("Sign in"), { type: "NO_CREDENTIALS" }),
-  );
+it("does not authorize or fetch when the authenticated first request cannot get API credentials", async () => {
+  const credentialError = Object.assign(new Error("Sign in"), { type: "NO_CREDENTIALS" });
+  mockGetCredentials.mockRejectedValueOnce(credentialError);
+  mockGetApiCredentials.mockRejectedValueOnce(credentialError);
+  const fetchMock = jest.fn();
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
 
   const { client } = await renderWithProviders();
 
   await expect(client.getJson("/v1/recipes")).rejects.toThrow("Sign in");
-  expect(mockAuthorize).toHaveBeenCalledTimes(1);
-
-  mockAuthorize.mockClear();
-  mockGetCredentials.mockRejectedValueOnce(new Error("NO_NETWORK"));
-
-  await expect(client.getJson("/v1/recipes")).rejects.toThrow("NO_NETWORK");
   expect(mockAuthorize).not.toHaveBeenCalled();
+  expect(fetchMock).not.toHaveBeenCalled();
 });
 
 async function renderWithProviders() {

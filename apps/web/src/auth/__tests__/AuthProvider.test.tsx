@@ -23,6 +23,13 @@ function LoginButton() {
   return <Pressable accessibilityRole="button" accessibilityLabel="Sign in" onPress={() => void login()}><Text>Sign in</Text></Pressable>;
 }
 
+let readAccessToken: (() => Promise<string>) | undefined;
+
+function TokenProbe() {
+  readAccessToken = useAuth().getAccessToken;
+  return null;
+}
+
 test("persists the Auth0 web session for callback recovery", () => {
   process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
   process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
@@ -79,3 +86,40 @@ test("starts Auth0-hosted Google login with the API scope and web redirect", asy
     scope: "openid profile email offline_access recipes:read recipes:write ratings:write",
   });
 });
+
+test.each(["web", "ios"] as const)(
+  "gets the API audience access token through the supported %s credential method",
+  async (platform) => {
+    process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
+    process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
+    process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
+    jest.replaceProperty(Platform, "OS", platform);
+    const getCredentials = jest.fn();
+    const getApiCredentials = jest.fn().mockResolvedValue({
+      accessToken: "api-access-token",
+      tokenType: "Bearer",
+      expiresAt: 1_800_000_000,
+      scope: "recipes:read",
+    });
+    useAuth0.mockReturnValue({
+      user: { sub: "auth0|recipe-owner" },
+      isLoading: false,
+      error: null,
+      authorize: mockAuthorize,
+      clearSession: jest.fn(),
+      getCredentials,
+      getApiCredentials,
+    });
+
+    readAccessToken = undefined;
+    await render(<AuthProvider><TokenProbe /></AuthProvider>);
+    if (!readAccessToken) throw new Error("AuthProvider did not expose getAccessToken");
+
+    await expect(readAccessToken()).resolves.toBe("api-access-token");
+    expect(getApiCredentials).toHaveBeenCalledWith(
+      "https://api.test",
+      "openid profile email offline_access recipes:read recipes:write ratings:write",
+    );
+    expect(getCredentials).not.toHaveBeenCalled();
+  },
+);

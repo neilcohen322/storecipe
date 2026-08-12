@@ -75,14 +75,14 @@ it.each(routes)("exports a route wrapper for %s", (_path, Route) => {
   expect(Route).toEqual(expect.any(Function));
 });
 
-it("clears a stale session and returns to landing for unauthorized recipe requests", async () => {
+it("preserves the authenticated session and returns to landing for unauthorized recipe requests", async () => {
   mockLogin.mockResolvedValue(undefined);
   mockLogout.mockResolvedValue(undefined);
 
   const { getByTestId } = await render(<RecipesRoute />);
   fireEvent.press(getByTestId("unauthorized"));
 
-  expect(mockLogout).toHaveBeenCalledTimes(1);
+  expect(mockLogout).not.toHaveBeenCalled();
   expect(mockLogin).not.toHaveBeenCalled();
   expect(mockReplace).toHaveBeenCalledWith("/");
 });
