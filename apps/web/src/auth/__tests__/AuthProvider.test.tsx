@@ -23,14 +23,16 @@ function LoginButton() {
   return <Pressable accessibilityRole="button" accessibilityLabel="Sign in" onPress={() => void login()}><Text>Sign in</Text></Pressable>;
 }
 
-test("configures Auth0 for bearer tokens with refresh-token rotation", () => {
+test("persists the Auth0 web session for callback recovery", () => {
   process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
   process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
   process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
+  jest.replaceProperty(Platform, "OS", "web");
 
   const provider = AuthProvider({
     children: null,
   }) as ReactElement<{
+    cacheLocation?: "memory" | "localstorage";
     useDPoP?: boolean;
     useRefreshTokens?: boolean;
     domain?: string;
@@ -39,8 +41,20 @@ test("configures Auth0 for bearer tokens with refresh-token rotation", () => {
 
   expect(provider.props.useDPoP).toBe(false);
   expect(provider.props.useRefreshTokens).toBe(true);
+  expect(provider.props.cacheLocation).toBe("localstorage");
   expect(provider.props.domain).toBe("tenant.auth0.com");
   expect(provider.props.clientId).toBe("client-id");
+});
+
+test("leaves Auth0 session persistence to the native credentials manager", () => {
+  process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
+  process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
+  process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
+  jest.replaceProperty(Platform, "OS", "ios");
+
+  const provider = AuthProvider({ children: null }) as ReactElement;
+
+  expect(provider.props).not.toHaveProperty("cacheLocation");
 });
 
 test("starts Auth0-hosted Google login with the API scope and web redirect", async () => {

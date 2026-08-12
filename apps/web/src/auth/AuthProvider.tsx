@@ -86,13 +86,16 @@ function AuthSession({
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const { domain, clientId, audience } = getAuth0Config();
-  // Auth0Provider's public props type is platform-agnostic Auth0Options; refresh
-  // tokens are a web Auth0 SPA option consumed at runtime by the web adapter.
+  // Auth0Provider's public props type is platform-agnostic Auth0Options; these
+  // web Auth0 SPA options are consumed at runtime by the web adapter.
   const providerProps = {
     domain,
     clientId,
     useDPoP: false,
     useRefreshTokens: true,
+    ...(Platform.OS === "web"
+      ? { cacheLocation: "localstorage" as const }
+      : {}),
   } as ComponentProps<typeof ReactNativeAuth0Provider>;
 
   return (
