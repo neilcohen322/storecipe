@@ -1,14 +1,14 @@
-import { Pressable, ScrollView, Text } from "react-native";
+import { Text } from "react-native";
 
+import { Button, EmptyState, PageHeader, Screen, Section } from "../components";
 import { useImportSession } from "../imports/ImportSessionProvider";
-import { sharedStyles } from "../theme";
 import { getImportPresentation } from "../utils/importPolling";
 
 export function ImportHistoryScreen({ onNewImport }: { onNewImport(): void }) {
   const { activeJob } = useImportSession();
-  return <ScrollView style={sharedStyles.screen} contentContainerStyle={{ paddingBottom: 40 }}>
-    <Text style={sharedStyles.heading}>Imports</Text>
-    {activeJob ? <><Text style={sharedStyles.rowTitle}>Current import</Text><Text style={sharedStyles.note}>{getImportPresentation(activeJob).label}</Text></> : <><Text style={sharedStyles.rowTitle}>No active imports</Text><Text style={sharedStyles.note}>Imports started in this session appear here while they are active.</Text></>}
-    <Pressable accessibilityRole="button" onPress={onNewImport} style={sharedStyles.button}><Text style={sharedStyles.buttonText}>Import a recipe</Text></Pressable>
-  </ScrollView>;
+  return <Screen>
+    <PageHeader title="Imports" />
+    {activeJob ? <Section title="Current import"><Text>{getImportPresentation(activeJob).label}</Text></Section> : <EmptyState title="No active imports" description="Imports started in this session appear here while they are active." />}
+    <Button label="Import a recipe" onPress={onNewImport} />
+  </Screen>;
 }

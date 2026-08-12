@@ -15,9 +15,7 @@ export function expectNoConsoleErrors(errors: string[]): void {
 }
 
 export async function assertStablePageQuality(page: Page, errors: string[]): Promise<void> {
-  // React Native Web places semantic heading nodes inside native list roles on
-  // recipe details, which Axe reports as required-child-role violations.
-  const accessibility = await new AxeBuilder({ page }).disableRules(["aria-required-children"]).analyze();
+  const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
   expectNoConsoleErrors(errors);
 }

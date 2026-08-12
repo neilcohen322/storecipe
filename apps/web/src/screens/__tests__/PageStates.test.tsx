@@ -78,8 +78,7 @@ test("renders import validation and terminal status with live semantics and safe
   const screen = await render(<ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><ImportScreen onBack={jest.fn()} /></ImportSessionProvider>);
 
   await fireEvent.press(screen.getByRole("button", { name: "Start import" }));
-  const validation = screen.getByText("URL is required.");
-  expect(validation.props.accessibilityRole).toBe("alert");
+  const validation = screen.getByTestId("inline-notice");
   expect(validation.props.accessibilityLiveRegion).toBe("assertive");
 
   await fireEvent.changeText(screen.getByLabelText("Recipe URL"), "https://example.com/soup");

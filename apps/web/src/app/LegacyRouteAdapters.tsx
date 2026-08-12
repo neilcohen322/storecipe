@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { Text, useWindowDimensions, View } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useWindowDimensions } from "react-native";
 
 import { createCatalogApi } from "../api/catalog";
 import { createIngestionApi } from "../api/ingestion";
@@ -14,7 +14,6 @@ import { ImportHistoryScreen } from "../screens/ImportHistoryScreen";
 import { LandingScreen } from "../screens/LandingScreen";
 import { RecipeDetailScreen } from "../screens/RecipeDetailScreen";
 import { RecipeListScreen } from "../screens/RecipeListScreen";
-import { sharedStyles } from "../theme";
 
 function useLegacyApis() {
   const { client } = useApi();
@@ -121,17 +120,5 @@ export function NewImportRouteAdapter() {
     <AuthGate>
       <ImportScreen onBack={() => router.back()} />
     </AuthGate>
-  );
-}
-
-export function TemporaryRoutePlaceholder({ title }: { title: "Account" | "More" }) {
-  return (
-    <View style={sharedStyles.centered}>
-      <Text style={sharedStyles.heading}>{title}</Text>
-      <Text style={sharedStyles.body}>This area is being prepared for the responsive shell.</Text>
-      <Link href="/recipes" style={sharedStyles.buttonText}>
-        Back to recipes
-      </Link>
-    </View>
   );
 }

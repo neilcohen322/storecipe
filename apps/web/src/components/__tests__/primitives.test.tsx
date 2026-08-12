@@ -51,6 +51,16 @@ describe("accessible token-driven primitives", () => {
     expect(getByTestId("recipe-media", { includeHiddenElements: true }).props.accessibilityLabel).toMatch(/Pasta/);
   });
 
+  it("keeps section headings outside semantic lists", async () => {
+    const { getByLabelText } = await renderWithTheme(
+      <Section title="Ingredients" accessibilityRole="list" accessibilityLabel="Ingredients">
+        <Text accessibilityRole="text">Tomato</Text>
+      </Section>,
+    );
+    const list = getByLabelText("Ingredients");
+    expect(list.props.children).not.toContainEqual(expect.objectContaining({ props: expect.objectContaining({ accessibilityRole: "header" }) }));
+  });
+
   it("keeps import progress coarse and exposes rating controls by name", async () => {
     const onChange = jest.fn();
     const { queryByText, getAllByRole } = await renderWithTheme(<><ImportProgress status="processing" /><RatingControl value={3} onChange={onChange} /></>);

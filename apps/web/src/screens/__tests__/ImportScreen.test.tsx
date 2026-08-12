@@ -1,7 +1,10 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
 
+jest.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) }));
+
 import type { createIngestionApi } from "../../api/ingestion";
 import { ImportSessionProvider } from "../../imports/ImportSessionProvider";
+import { ThemeProvider } from "../../theme/ThemeProvider";
 import { ImportScreen } from "../ImportScreen";
 
 function ingestionWith(overrides: Partial<ReturnType<typeof createIngestionApi>> = {}) {
@@ -14,7 +17,7 @@ function ingestionWith(overrides: Partial<ReturnType<typeof createIngestionApi>>
 }
 
 async function renderScreen(ingestion = ingestionWith()) {
-  return await render(<ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><ImportScreen onBack={jest.fn()} /></ImportSessionProvider>);
+  return await render(<ThemeProvider systemSchemeOverride="light"><ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><ImportScreen onBack={jest.fn()} /></ImportSessionProvider></ThemeProvider>);
 }
 
 test("switches source modes and validates the active normalized source", async () => {
