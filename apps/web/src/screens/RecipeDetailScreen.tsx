@@ -1,130 +1,105 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 
-import { ApiUnauthorizedError } from "../api/client";
+import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi, Recipe } from "../api/catalog";
-import { colors, sharedStyles } from "../theme";
+import { Button, ErrorState, InlineNotice, LoadingState, OfflineBanner, PageHeader, RatingControl, RecipeMedia, Screen, Section } from "../components";
 
-const RATING_VALUES = [1, 2, 3, 4, 5] as const;
+type DetailError = "none" | "notFound" | "offline" | "generic";
 
 export type RecipeDetailScreenProps = {
-  recipeId: string;
+  recipeId: unknown;
   catalog: ReturnType<typeof createCatalogApi>;
   onBack(): void;
   onUnauthorized(): void;
 };
 
-export function RecipeDetailScreen({
-  recipeId,
-  catalog,
-  onBack,
-  onUnauthorized,
-}: RecipeDetailScreenProps) {
+function routeRecipeId(value: unknown): string | null {
+  return typeof value === "string" && value.trim() && !/\s/.test(value) ? value.trim() : null;
+}
+
+function isOfflineError(error: unknown): boolean {
+  return error instanceof ApiNetworkError || (typeof error === "object" && error !== null && ((error as { code?: unknown }).code === "ERR_NETWORK" || (error as { code?: unknown }).code === "NETWORK_ERROR"));
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { status?: unknown }).status === 404;
+}
+
+export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }: RecipeDetailScreenProps) {
+  const id = routeRecipeId(recipeId);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(Boolean(id));
+  const [error, setError] = useState<DetailError>(id ? "none" : "notFound");
   const [savingRating, setSavingRating] = useState(false);
+  const [ratingRetry, setRatingRetry] = useState<number | null>(null);
+  const mounted = useRef(true);
+  const loadRequestId = useRef(0);
+  const ratingRequestId = useRef(0);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const next = await catalog.getRecipe(recipeId);
-      setRecipe(next);
-    } catch (err) {
-      if (err instanceof ApiUnauthorizedError) {
-        onUnauthorized();
-        return;
-      }
-      setError(err instanceof Error ? err.message : "Failed to load recipe");
-    } finally {
-      setLoading(false);
+    if (!id) {
+      setRecipe(null); setLoading(false); setError("notFound");
+      return;
     }
-  }, [catalog, onUnauthorized, recipeId]);
+    const requestId = ++loadRequestId.current;
+    setLoading(true); setError("none"); setRecipe(null); setRatingRetry(null);
+    try {
+      const next = await catalog.getRecipe(id);
+      if (!mounted.current || requestId !== loadRequestId.current) return;
+      setRecipe(next);
+    } catch (caught) {
+      if (!mounted.current || requestId !== loadRequestId.current) return;
+      if (caught instanceof ApiUnauthorizedError) { onUnauthorized(); return; }
+      setError(isNotFoundError(caught) ? "notFound" : isOfflineError(caught) ? "offline" : "generic");
+    } finally {
+      if (mounted.current && requestId === loadRequestId.current) setLoading(false);
+    }
+  }, [catalog, id, onUnauthorized]);
 
   useEffect(() => {
+    mounted.current = true;
     void load();
+    return () => { mounted.current = false; loadRequestId.current += 1; ratingRequestId.current += 1; };
   }, [load]);
 
-  const setRating = async (value: (typeof RATING_VALUES)[number]) => {
-    setSavingRating(true);
-    setError(null);
+  const setRating = async (value: number) => {
+    if (!id || !recipe || savingRating || value < 1 || value > 5) return;
+    const requestId = ++ratingRequestId.current;
+    const priorRating = recipe.rating;
+    setSavingRating(true); setRatingRetry(null);
+    setRecipe((current) => current?.id === id ? { ...current, rating: value } : current);
     try {
-      const rating = await catalog.putRating(recipeId, value);
-      setRecipe((prev) => (prev ? { ...prev, rating: rating.value } : prev));
-    } catch (err) {
-      if (err instanceof ApiUnauthorizedError) {
-        onUnauthorized();
-        return;
-      }
-      setError(err instanceof Error ? err.message : "Failed to save rating");
+      const rating = await catalog.putRating(id, value as 1 | 2 | 3 | 4 | 5);
+      if (!mounted.current || requestId !== ratingRequestId.current) return;
+      setRecipe((current) => current?.id === id ? { ...current, rating: rating.value } : current);
+    } catch (caught) {
+      if (!mounted.current || requestId !== ratingRequestId.current) return;
+      if (caught instanceof ApiUnauthorizedError) { onUnauthorized(); return; }
+      setRecipe((current) => current?.id === id ? { ...current, rating: priorRating } : current);
+      setRatingRetry(value);
     } finally {
-      setSavingRating(false);
+      if (mounted.current && requestId === ratingRequestId.current) setSavingRating(false);
     }
   };
 
-  return (
-    <ScrollView style={sharedStyles.screen} contentContainerStyle={{ paddingBottom: 40 }}>
-      <Pressable accessibilityRole="button" onPress={onBack} style={sharedStyles.buttonSecondary}>
-        <Text style={sharedStyles.buttonText}>Back to list</Text>
-      </Pressable>
+  const errorContent = error === "notFound"
+    ? <ErrorState title="We couldn't find that recipe." action={<Button label="Try again" onPress={() => void load()} />} />
+    : error === "offline"
+      ? <><OfflineBanner message="You’re offline. Check your connection and try again." /><Button label="Try again" onPress={() => void load()} /></>
+      : <ErrorState title="We couldn't load this recipe. Please try again." action={<Button label="Try again" onPress={() => void load()} />} />;
 
-      {loading ? (
-        <ActivityIndicator color={colors.badge} style={{ marginTop: 24 }} />
-      ) : error && !recipe ? (
-        <Text style={sharedStyles.error}>{error}</Text>
-      ) : recipe ? (
-        <View style={{ marginTop: 16 }}>
-          <Text style={sharedStyles.heading}>{recipe.title}</Text>
-
-          <Text style={sharedStyles.label}>Rating</Text>
-          <View style={sharedStyles.buttonRow}>
-            {RATING_VALUES.map((value) => {
-              const selected = recipe.rating === value;
-              return (
-                <Pressable
-                  key={value}
-                  accessibilityRole="button"
-                  disabled={savingRating}
-                  onPress={() => void setRating(value)}
-                  style={selected ? sharedStyles.button : sharedStyles.buttonSecondary}
-                >
-                  <Text style={sharedStyles.buttonText}>{value}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          {error ? <Text style={sharedStyles.error}>{error}</Text> : null}
-
-          <Text style={[sharedStyles.label, { marginTop: 16 }]}>Ingredients</Text>
-          {recipe.ingredients.length === 0 ? (
-            <Text style={sharedStyles.body}>None listed.</Text>
-          ) : (
-            recipe.ingredients.map((ingredient, index) => (
-              <Text key={`${ingredient.rawText}-${index}`} style={sharedStyles.body}>
-                • {ingredient.rawText}
-              </Text>
-            ))
-          )}
-
-          <Text style={[sharedStyles.label, { marginTop: 16 }]}>Instructions</Text>
-          {recipe.instructions.length === 0 ? (
-            <Text style={sharedStyles.body}>None listed.</Text>
-          ) : (
-            recipe.instructions.map((step, index) => (
-              <Text key={`${index}-${step.slice(0, 24)}`} style={[sharedStyles.body, { marginBottom: 8 }]}>
-                {index + 1}. {step}
-              </Text>
-            ))
-          )}
-        </View>
-      ) : null}
-    </ScrollView>
-  );
+  return <Screen><Button label="Back to list" variant="secondary" onPress={onBack} />
+    {loading ? <LoadingState label="Loading recipe" /> : error !== "none" && !recipe ? errorContent : recipe ? <View style={styles.detail}>
+      <View testID="recipe-detail-media" style={styles.mediaSlot}><RecipeMedia title={recipe.title} tags={recipe.tags} /></View>
+      <PageHeader title={recipe.title} subtitle={[recipe.servings ? `Serves ${recipe.servings}` : null, recipe.totalMinutes ? `${recipe.totalMinutes} min` : null].filter(Boolean).join(" · ") || undefined} />
+      <Section title="Rating"><Text>{recipe.rating ? `${recipe.rating} out of 5` : "Not rated"}</Text><RatingControl value={recipe.rating ?? 0} onChange={(value) => void setRating(value)} disabled={savingRating} />{ratingRetry ? <View style={styles.ratingError}><InlineNotice tone="error" message="We couldn't save your rating." /><Button label="Try rating again" variant="secondary" onPress={() => void setRating(ratingRetry)} /></View> : null}</Section>
+      <View testID="recipe-detail-columns" style={styles.columns}>
+        <Section title="Ingredients" accessibilityRole="list" accessibilityLabel="Ingredients" style={styles.ingredients}>{recipe.ingredients.length ? recipe.ingredients.map((ingredient, index) => <View key={`${ingredient.rawText}-${index}`} accessibilityRole={"listitem" as never} accessibilityLabel={ingredient.rawText}><Text style={styles.listItem}>• {ingredient.rawText}</Text></View>) : <Text>None listed.</Text>}</Section>
+        <Section title="Instructions" accessibilityRole="list" accessibilityLabel="Instructions" style={styles.instructions}>{recipe.instructions.length ? recipe.instructions.map((step, index) => <View key={`${index}-${step.slice(0, 24)}`} accessibilityRole={"listitem" as never}><Text style={styles.step}>{index + 1}. {step}</Text></View>) : <Text>None listed.</Text>}</Section>
+      </View>
+    </View> : null}
+  </Screen>;
 }
+
+const styles = StyleSheet.create({ detail: { gap: 16 }, mediaSlot: { minHeight: 280, width: "100%" }, columns: { flexDirection: "row", flexWrap: "wrap", gap: 24 }, ingredients: { flexGrow: 1, flexBasis: 280 }, instructions: { flexGrow: 2, flexBasis: 520 }, listItem: { marginBottom: 8 }, step: { marginBottom: 12, lineHeight: 24 }, ratingError: { gap: 8 } });
