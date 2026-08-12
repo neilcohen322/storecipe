@@ -1,4 +1,5 @@
 import type { NavigationAction, NavigationEntry, NavigationLink } from "./types";
+import type { Availability } from "./types";
 
 export const navigationRegistry: readonly NavigationEntry[] = [
   { kind: "link", id: "recipes", label: "Recipes", icon: "book-outline", href: "/recipes", group: "workspace", availability: "all", authorization: "authenticated", routeMatch: "prefix", mobilePlacement: "primary" },
@@ -17,8 +18,11 @@ export function mobilePrimaryItems(): NavigationLink[] {
   return linkItems.filter((item) => item.mobilePlacement === "primary");
 }
 
-export function moreItems(): NavigationEntry[] {
-  return navigationRegistry.filter((item) => item.kind === "action" || (item.kind === "link" && item.mobilePlacement === "overflow"));
+export function moreItems(availability: Availability): NavigationEntry[] {
+  return navigationRegistry.filter((item) =>
+    (item.availability === "all" || item.availability === availability) &&
+    (item.kind === "action" || item.mobilePlacement === "overflow"),
+  );
 }
 
 export function desktopNavigationItems(): NavigationLink[] {

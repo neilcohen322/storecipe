@@ -1,11 +1,14 @@
 import { useRouter } from "expo-router";
 
 import { useAuth } from "../src/auth/AuthProvider";
-import { Button, EmptyState, Screen } from "../src/components";
+import { Button, EmptyState, LoadingState, Screen } from "../src/components";
 
 export default function NotFoundRoute() {
   const auth = useAuth();
   const router = useRouter();
+  if (auth.isLoading) {
+    return <Screen><LoadingState label="Checking session" /></Screen>;
+  }
   const destination = auth.isAuthenticated ? "/recipes" : "/";
   const label = auth.isAuthenticated ? "Return to recipes" : "Return to sign in";
   return (
