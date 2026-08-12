@@ -5,7 +5,12 @@ import { ApiProvider } from "../api/ApiProvider";
 import { AuthProvider } from "../auth/AuthProvider";
 import { getAuth0Config } from "../auth/config";
 import { LandingScreen } from "../screens/LandingScreen";
+import { MockAuthProvider } from "../testing/MockAuthProvider";
 import { ThemeProvider } from "../theme/ThemeProvider";
+
+function isE2EMode(): boolean {
+  return process.env.EXPO_PUBLIC_E2E_MODE === "true";
+}
 
 function isAuth0Configured(): boolean {
   try {
@@ -17,15 +22,16 @@ function isAuth0Configured(): boolean {
 }
 
 export function AppProviders({ children }: PropsWithChildren) {
+  const Auth = isE2EMode() ? MockAuthProvider : AuthProvider;
   const authConfigured = isAuth0Configured();
 
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        {authConfigured ? (
-          <AuthProvider>
+        {authConfigured || isE2EMode() ? (
+          <Auth>
             <ApiProvider>{children}</ApiProvider>
-          </AuthProvider>
+          </Auth>
         ) : (
           <LandingScreen
             authConfigured={false}

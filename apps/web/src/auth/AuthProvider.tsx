@@ -27,7 +27,7 @@ export type AuthContextValue = {
   getAccessToken(): Promise<string>;
 };
 
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+export const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 function webRedirectUrl(): string | undefined {
   if (Platform.OS !== "web") {

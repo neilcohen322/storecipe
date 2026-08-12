@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { usePathname, useRouter } from "expo-router";
+import type { ComponentProps } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -9,6 +10,8 @@ import { useTheme } from "../theme/ThemeProvider";
 import { getTheme } from "../theme/tokens";
 
 export const COMPACT_NAVIGATION_HEIGHT = getTheme("light").sizing.control;
+type ViewAccessibilityRole = NonNullable<ComponentProps<typeof View>["accessibilityRole"]>;
+const navigationRole = "navigation" as unknown as ViewAccessibilityRole;
 
 function isActive(item: NavigationLink, pathname: string): boolean {
   return item.routeMatch === "exact" ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -19,7 +22,7 @@ export function BottomNavigation() {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const router = useRouter();
-  return <View testID="bottom-navigation" accessibilityRole="tablist" style={[styles.nav, { minHeight: COMPACT_NAVIGATION_HEIGHT, backgroundColor: theme.colors.elevatedSurface, borderColor: theme.colors.border, paddingBottom: insets.bottom }]}>{mobilePrimaryItems().map((item) => {
+  return <View testID="bottom-navigation" accessibilityRole={navigationRole} accessibilityLabel="Primary navigation" style={[styles.nav, { minHeight: COMPACT_NAVIGATION_HEIGHT, backgroundColor: theme.colors.elevatedSurface, borderColor: theme.colors.border, paddingBottom: insets.bottom }]}>{mobilePrimaryItems().map((item) => {
     const active = isActive(item, pathname);
     return <Pressable key={item.id} accessibilityRole="link" accessibilityLabel={item.label} accessibilityHint={active ? "Current page" : "Navigate to page"} accessibilityState={{ selected: active }} onPress={() => router.push(item.href)} style={[styles.item, { minWidth: COMPACT_NAVIGATION_HEIGHT, minHeight: COMPACT_NAVIGATION_HEIGHT }]}>
       <Ionicons name={item.icon} size={theme.sizing.icon} color={active ? theme.colors.accent : theme.colors.mutedText} />

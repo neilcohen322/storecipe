@@ -8,6 +8,7 @@ import { useAuth } from "../../auth/AuthProvider";
 const mockAuthorize = jest.fn();
 const mockClearSession = jest.fn();
 const mockGetCredentials = jest.fn();
+const originalWindow = globalThis.window;
 
 jest.mock("react-native-auth0", () => ({
   Auth0Provider: ({ children }: { children: React.ReactNode }) => children,
@@ -37,10 +38,48 @@ function ProviderProbe() {
 }
 
 beforeEach(() => {
+  delete process.env.EXPO_PUBLIC_E2E_MODE;
   process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
   process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
   process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
   mockGetCredentials.mockResolvedValue({ accessToken: "test-api-token" });
+});
+
+afterEach(() => {
+  Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+});
+
+it("uses fixture authentication only when the build-time E2E flag is true", async () => {
+  process.env.EXPO_PUBLIC_E2E_MODE = "true";
+  delete process.env.EXPO_PUBLIC_AUTH0_DOMAIN;
+
+  const { getByText } = await render(
+    <AppProviders>
+      <ProviderProbe />
+    </AppProviders>,
+  );
+
+  expect(getByText("anonymous:function")).toBeOnTheScreen();
+});
+
+it("cannot activate fixture authentication from URL or storage in a normal build", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: { href: "https://storecipe.test/?e2e=true", search: "?e2e=true" },
+      localStorage: { getItem: jest.fn(() => "true") },
+    },
+  });
+  delete process.env.EXPO_PUBLIC_AUTH0_DOMAIN;
+
+  const { getByText, queryByText } = await render(
+    <AppProviders>
+      <ProviderProbe />
+    </AppProviders>,
+  );
+
+  expect(getByText(/Set EXPO_PUBLIC_AUTH0_DOMAIN/)).toBeOnTheScreen();
+  expect(queryByText("anonymous:function")).toBeNull();
 });
 
 it("exposes Auth0 state and the authenticated API client to provider descendants", async () => {

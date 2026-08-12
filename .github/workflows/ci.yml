@@ -86,7 +86,18 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
-      - run: pnpm test
+      - run: pnpm test --runInBand
+      - run: pnpm run build:web
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run test:e2e
+      - name: Upload Playwright failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-diagnostics
+          path: apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   images:
     runs-on: ubuntu-latest
