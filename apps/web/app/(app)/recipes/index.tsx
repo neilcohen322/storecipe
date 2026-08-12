@@ -1,3 +1,5 @@
 import { RecipesRouteAdapter } from "../../../src/app/LegacyRouteAdapters";
 
-export default RecipesRouteAdapter;
+export default function RecipesIndexRoute() {
+  return <RecipesRouteAdapter />;
+}
