@@ -42,8 +42,8 @@ export function ImportScreen({ onBack }: ImportScreenProps) {
     {tab === "url" ? <><Text style={sharedStyles.label}>Recipe URL</Text><TextInput accessibilityLabel="Recipe URL" value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} placeholder="https://example.com/recipe" placeholderTextColor={colors.note} style={sharedStyles.input} /></> : <><Text style={sharedStyles.label}>Recipe text</Text><TextInput accessibilityLabel="Recipe text" value={text} onChangeText={setText} multiline numberOfLines={10} placeholder="Paste recipe text…" placeholderTextColor={colors.note} style={[sharedStyles.input, { minHeight: 160, textAlignVertical: "top" }]} /></>}
     {activePresentation ? <View accessibilityLiveRegion="polite"><Text style={sharedStyles.note}>{activePresentation.label}</Text></View> : null}
     {session.terminalSummary ? <View accessibilityLiveRegion="polite"><Text style={sharedStyles.note}>{terminalCopy(session.terminalSummary.status)}</Text>{session.terminalSummary.canRetry ? <Pressable accessibilityRole="button" onPress={() => void session.retryImport()} style={sharedStyles.buttonSecondary}><Text style={sharedStyles.buttonText}>Retry import</Text></Pressable> : null}</View> : null}
-    {validationError ? <Text style={sharedStyles.error}>{validationError}</Text> : null}
-    {session.error ? <Text style={sharedStyles.error}>{session.error}</Text> : null}
+    {validationError ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={sharedStyles.error}>{validationError}</Text> : null}
+    {session.error ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={sharedStyles.error}>{session.error}</Text> : null}
     <Pressable accessibilityRole="button" disabled={session.isStarting} onPress={submit} style={sharedStyles.button}>{session.isStarting ? <ActivityIndicator color={colors.badge} /> : <Text style={sharedStyles.buttonText}>Start import</Text>}</Pressable>
   </ScrollView>;
 }

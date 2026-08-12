@@ -25,7 +25,7 @@ export function LandingScreen({ authConfigured, isLoading, isAuthenticated, erro
               : isAuthenticated ? <Pressable accessibilityRole="button" accessibilityLabel="Continue to recipes" onPress={onContinue} style={[styles.button, { backgroundColor: theme.colors.accent }]}><Text style={[styles.buttonText, { color: theme.colors.accentContrast }]}>Continue to recipes</Text></Pressable>
                 : <Pressable accessibilityRole="button" accessibilityLabel="Continue with Google" onPress={onLogin} style={[styles.button, { backgroundColor: theme.colors.accent }]}><Text style={[styles.buttonText, { color: theme.colors.accentContrast }]}>Continue with Google</Text></Pressable>}
         </View>
-        {errorMessage ? <Text style={[styles.error, { color: theme.colors.danger }]}>{errorMessage}</Text> : null}
+        {errorMessage ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={[styles.error, { color: theme.colors.danger }]}>We couldn't sign you in. Please try again.</Text> : null}
         <Text style={[styles.note, { color: theme.colors.mutedText }]}>Sign in securely with Google to access your library.</Text>
       </View>
       <View accessibilityLabel="Recipe library preview" style={[styles.preview, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>

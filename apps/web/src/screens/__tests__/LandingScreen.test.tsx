@@ -57,7 +57,8 @@ test("keeps a cancelled login on the landing view", async () => {
   );
 
   expect(screen.getByRole("button", { name: "Continue with Google" })).toBeTruthy();
-  expect(screen.getByText("Login cancelled")).toBeTruthy();
+  expect(screen.getByText("We couldn't sign you in. Please try again.")).toBeTruthy();
+  expect(screen.queryByText("Login cancelled")).toBeNull();
 });
 
 test("redirects an authenticated root visit to recipes", async () => {
