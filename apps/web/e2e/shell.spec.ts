@@ -1,7 +1,6 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-import { assertNoHorizontalOverflow, captureConsoleErrors, expectNoConsoleErrors, installApiInterceptions } from "./support";
+import { assertNoHorizontalOverflow, assertStablePageQuality, captureConsoleErrors, installApiInterceptions } from "./support";
 
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -27,9 +26,6 @@ test("renders the responsive shell, restores history, and has no serious accessi
   await assertNoHorizontalOverflow(page);
   expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
 
-  const accessibility = await new AxeBuilder({ page }).analyze();
-  expect(accessibility.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
-
   await page.getByRole("button", { name: "Open Weeknight tomato pasta" }).click();
   await expect(page).toHaveURL(/\/recipes\/recipe-weeknight-pasta$/);
   await page.goBack();
@@ -38,7 +34,7 @@ test("renders the responsive shell, restores history, and has no serious accessi
   await page.goForward();
   await expect(page.getByRole("heading", { name: "Weeknight tomato pasta" })).toBeVisible();
 
-  expectNoConsoleErrors(errors);
+  await assertStablePageQuality(page, errors);
 });
 
 test("supports keyboard navigation with visible focus", async ({ page }) => {

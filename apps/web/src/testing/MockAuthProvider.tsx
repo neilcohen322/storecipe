@@ -5,7 +5,7 @@ import { AuthContext, type AuthContextValue } from "../auth/AuthProvider";
 
 const fixtureUser = {
   name: "E2E Recipe Owner",
-  email: "recipe.owner@example.test",
+  email: "storecipe-e2e-fixture-only-marker@example.test",
 };
 
 export const E2E_AUTH_STORAGE_KEY = "storecipe.e2e-authenticated";

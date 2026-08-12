@@ -2,15 +2,10 @@ import type { PropsWithChildren } from "react";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ApiProvider } from "../api/ApiProvider";
-import { AuthProvider } from "../auth/AuthProvider";
 import { getAuth0Config } from "../auth/config";
 import { LandingScreen } from "../screens/LandingScreen";
-import { MockAuthProvider } from "../testing/MockAuthProvider";
 import { ThemeProvider } from "../theme/ThemeProvider";
-
-function isE2EMode(): boolean {
-  return process.env.EXPO_PUBLIC_E2E_MODE === "true";
-}
+import { AuthProvider, isE2EFixtureBuild } from "@storecipe/auth-provider";
 
 function isAuth0Configured(): boolean {
   try {
@@ -22,16 +17,15 @@ function isAuth0Configured(): boolean {
 }
 
 export function AppProviders({ children }: PropsWithChildren) {
-  const Auth = isE2EMode() ? MockAuthProvider : AuthProvider;
   const authConfigured = isAuth0Configured();
 
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        {authConfigured || isE2EMode() ? (
-          <Auth>
+        {authConfigured || isE2EFixtureBuild ? (
+          <AuthProvider>
             <ApiProvider>{children}</ApiProvider>
-          </Auth>
+          </AuthProvider>
         ) : (
           <LandingScreen
             authConfigured={false}

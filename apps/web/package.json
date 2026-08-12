@@ -38,11 +38,15 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:web": "expo export --platform web",
+    "test:production-bundle": "node ./scripts/verify-production-bundle.mjs",
     "test": "jest",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "jest": {
+    "moduleNameMapper": {
+      "^@storecipe/auth-provider$": "<rootDir>/src/app/ProductionAuthProvider.tsx"
+    },
     "preset": "jest-expo",
     "testPathIgnorePatterns": [
       "/node_modules/",

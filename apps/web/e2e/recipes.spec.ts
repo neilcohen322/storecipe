@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { captureConsoleErrors, expectNoConsoleErrors, installApiInterceptions } from "./support";
+import { assertStablePageQuality, captureConsoleErrors, installApiInterceptions } from "./support";
 
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -16,10 +16,11 @@ test("searches, opens a recipe, and saves a rating", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Weeknight tomato pasta" })).toBeVisible();
   await page.getByRole("button", { name: "Rate 5 out of 5" }).click();
   await expect(page.getByText("5 out of 5")).toBeVisible();
-  expectNoConsoleErrors(errors);
+  await assertStablePageQuality(page, errors);
 });
 
 test("validates and creates a recipe", async ({ page }, testInfo) => {
+  const errors = captureConsoleErrors(page);
   await page.goto("/recipes/new");
   const submit = page.getByRole("button", { name: "Create recipe" });
   await submit.click();
@@ -33,13 +34,16 @@ test("validates and creates a recipe", async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/recipes\/created-e2e-recipe$/);
   await expect(page.getByRole("heading", { name: "Browser baked pasta" })).toBeVisible();
   if (testInfo.project.name.startsWith("compact")) await expect(page.getByTestId("create-recipe-sticky-submit")).toHaveCount(0);
+  await assertStablePageQuality(page, errors);
 });
 
 test("supports a fresh direct entry to a dynamic recipe route", async ({ browser, baseURL }) => {
   const context = await browser.newContext({ storageState: ".playwright/auth.json", reducedMotion: "reduce" });
   const page = await context.newPage();
+  const errors = captureConsoleErrors(page);
   await installApiInterceptions(page);
   await page.goto(`${baseURL}/recipes/recipe-weeknight-pasta`);
   await expect(page.getByRole("heading", { name: "Weeknight tomato pasta" })).toBeVisible();
+  await assertStablePageQuality(page, errors);
   await context.close();
 });

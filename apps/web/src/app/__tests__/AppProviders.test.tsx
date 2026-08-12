@@ -49,7 +49,7 @@ afterEach(() => {
   Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
 });
 
-it("uses fixture authentication only when the build-time E2E flag is true", async () => {
+it("does not activate fixture authentication from a runtime E2E flag in the production seam", async () => {
   process.env.EXPO_PUBLIC_E2E_MODE = "true";
   delete process.env.EXPO_PUBLIC_AUTH0_DOMAIN;
 
@@ -59,7 +59,7 @@ it("uses fixture authentication only when the build-time E2E flag is true", asyn
     </AppProviders>,
   );
 
-  expect(getByText("anonymous:function")).toBeOnTheScreen();
+  expect(getByText(/Set EXPO_PUBLIC_AUTH0_DOMAIN/)).toBeOnTheScreen();
 });
 
 it("cannot activate fixture authentication from URL or storage in a normal build", async () => {

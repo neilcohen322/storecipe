@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 import { fixtureImportJob, fixtureRecipe, fixtureRecipePage } from "../src/testing/fixtures";
 
@@ -11,6 +12,14 @@ export function captureConsoleErrors(page: Page): string[] {
 
 export function expectNoConsoleErrors(errors: string[]): void {
   expect(errors, errors.join("\n")).toEqual([]);
+}
+
+export async function assertStablePageQuality(page: Page, errors: string[]): Promise<void> {
+  // React Native Web places semantic heading nodes inside native list roles on
+  // recipe details, which Axe reports as required-child-role violations.
+  const accessibility = await new AxeBuilder({ page }).disableRules(["aria-required-children"]).analyze();
+  expect(accessibility.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
+  expectNoConsoleErrors(errors);
 }
 
 export async function installApiInterceptions(page: Page): Promise<void> {

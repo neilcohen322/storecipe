@@ -1,7 +1,6 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-import { captureConsoleErrors, expectNoConsoleErrors, installApiInterceptions } from "./support";
+import { assertStablePageQuality, captureConsoleErrors, installApiInterceptions } from "./support";
 
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -18,7 +17,5 @@ test("validates an import and presents queued, processing, and completed states"
   await expect(page.getByText("Waiting to start")).toBeVisible();
   await expect(page.getByText("Import in progress")).toBeVisible({ timeout: 4_000 });
   await expect(page.getByText("Your recipe import is complete.")).toBeVisible({ timeout: 7_000 });
-  const accessibility = await new AxeBuilder({ page }).analyze();
-  expect(accessibility.violations.filter((violation) => ["critical", "serious"].includes(violation.impact ?? ""))).toEqual([]);
-  expectNoConsoleErrors(errors);
+  await assertStablePageQuality(page, errors);
 });
