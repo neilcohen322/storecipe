@@ -26,8 +26,8 @@ jest.mock("../../screens/LandingScreen", () => {
   const { Pressable, Text } = require("react-native");
   return {
     LandingScreen: ({ onLogin }: { onLogin(): void }) => (
-      <Pressable accessibilityRole="button" accessibilityLabel="Continue with Google" onPress={onLogin}>
-        <Text>Continue with Google</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Sign in" onPress={onLogin}>
+        <Text>Sign in</Text>
       </Pressable>
     ),
   };
@@ -62,13 +62,13 @@ beforeEach(() => {
   mockPathname = "/recipes/recipe-42";
 });
 
-test("preserves an approved unauthenticated deep link when Google login starts", async () => {
+test("preserves an approved unauthenticated deep link when login starts", async () => {
   unauthenticated();
   const backing = { value: "" };
   const storage = createReturnPathStorage({ getItem: () => backing.value || null, setItem: (_key, value) => { backing.value = value; }, removeItem: () => { backing.value = ""; } });
 
   const screen = await render(<AuthGate returnPathStorage={storage}><></></AuthGate>);
-  fireEvent.press(screen.getByRole("button", { name: "Continue with Google" }));
+  fireEvent.press(screen.getByRole("button", { name: "Sign in" }));
 
   expect(storage.consume()).toBe("/recipes/recipe-42");
   expect(mockLogin).toHaveBeenCalledTimes(1);

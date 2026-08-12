@@ -5,7 +5,7 @@ import { ApiProvider } from "../api/ApiProvider";
 import { getAuth0Config } from "../auth/config";
 import { LandingScreen } from "../screens/LandingScreen";
 import { ThemeProvider } from "../theme/ThemeProvider";
-import { AuthProvider, isE2EFixtureBuild } from "@storecipe/auth-provider";
+import { AuthProvider, authPresentation, isE2EFixtureBuild } from "@storecipe/auth-provider";
 
 function isAuth0Configured(): boolean {
   try {
@@ -28,6 +28,7 @@ export function AppProviders({ children }: PropsWithChildren) {
           </AuthProvider>
         ) : (
           <LandingScreen
+            authPresentation={authPresentation}
             authConfigured={false}
             isLoading={false}
             isAuthenticated={false}

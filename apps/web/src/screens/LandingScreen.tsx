@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useTheme } from "../theme/ThemeProvider";
 
 export type LandingScreenProps = {
+  authPresentation: "auth0" | "demo";
   authConfigured: boolean;
   isLoading: boolean;
   isAuthenticated: boolean;
@@ -11,8 +12,9 @@ export type LandingScreenProps = {
   onContinue(): void;
 };
 
-export function LandingScreen({ authConfigured, isLoading, isAuthenticated, errorMessage, onLogin, onContinue }: LandingScreenProps) {
+export function LandingScreen({ authPresentation, authConfigured, isLoading, isAuthenticated, errorMessage, onLogin, onContinue }: LandingScreenProps) {
   const { theme } = useTheme();
+  const loginLabel = authPresentation === "demo" ? "Explore demo" : "Sign in";
   return (
     <View style={[styles.screen, { backgroundColor: theme.colors.canvas }]}>
       <View style={styles.copy}>
@@ -23,10 +25,10 @@ export function LandingScreen({ authConfigured, isLoading, isAuthenticated, erro
           {!authConfigured ? <Text style={[styles.error, { color: theme.colors.danger }]}>Set EXPO_PUBLIC_AUTH0_DOMAIN, EXPO_PUBLIC_AUTH0_CLIENT_ID, and EXPO_PUBLIC_AUTH0_AUDIENCE to enable login.</Text>
             : isLoading ? <Text style={[styles.note, { color: theme.colors.mutedText }]}>Checking session…</Text>
               : isAuthenticated ? <Pressable accessibilityRole="button" accessibilityLabel="Continue to recipes" onPress={onContinue} style={[styles.button, { backgroundColor: theme.colors.accent }]}><Text style={[styles.buttonText, { color: theme.colors.accentContrast }]}>Continue to recipes</Text></Pressable>
-                : <Pressable accessibilityRole="button" accessibilityLabel="Continue with Google" onPress={onLogin} style={[styles.button, { backgroundColor: theme.colors.accent }]}><Text style={[styles.buttonText, { color: theme.colors.accentContrast }]}>Continue with Google</Text></Pressable>}
+                : <Pressable accessibilityRole="button" accessibilityLabel={loginLabel} onPress={onLogin} style={[styles.button, { backgroundColor: theme.colors.accent }]}><Text style={[styles.buttonText, { color: theme.colors.accentContrast }]}>{loginLabel}</Text></Pressable>}
         </View>
         {errorMessage ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={[styles.error, { color: theme.colors.danger }]}>We couldn't sign you in. Please try again.</Text> : null}
-        <Text style={[styles.note, { color: theme.colors.mutedText }]}>Sign in securely with Google to access your library.</Text>
+        <Text style={[styles.note, { color: theme.colors.mutedText }]}>Authentication is handled securely.</Text>
       </View>
       <View accessibilityLabel="Recipe library preview" style={[styles.preview, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
         <Text style={[styles.previewTitle, { color: theme.colors.text }]}>Recipe library</Text>

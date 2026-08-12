@@ -1,7 +1,9 @@
 import { fireEvent, render } from "@testing-library/react-native";
 
 import IndexRoute from "../../../app/index";
+import { authPresentation as productionAuthPresentation } from "../../app/ProductionAuthProvider";
 import { LandingScreen } from "../LandingScreen";
+import { authPresentation as fixtureAuthPresentation } from "../../testing/E2EAuthProvider";
 import { ThemeProvider } from "../../theme/ThemeProvider";
 
 const mockRootRedirect = jest.fn();
@@ -24,10 +26,11 @@ function renderWithTheme(ui: React.ReactElement) {
   return render(<ThemeProvider systemSchemeOverride="light">{ui}</ThemeProvider>);
 }
 
-test("presents one Google sign-in action alongside the local recipe preview", async () => {
+test("presents neutral Auth0 sign-in alongside the local recipe preview", async () => {
   const onLogin = jest.fn();
   const screen = await renderWithTheme(
     <LandingScreen
+      authPresentation={productionAuthPresentation}
       authConfigured
       isLoading={false}
       isAuthenticated={false}
@@ -36,17 +39,35 @@ test("presents one Google sign-in action alongside the local recipe preview", as
     />,
   );
 
-  fireEvent.press(screen.getByRole("button", { name: "Continue with Google" }));
+  fireEvent.press(screen.getByRole("button", { name: "Sign in" }));
 
   expect(onLogin).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Your recipes, gathered in one calm place.")).toBeTruthy();
   expect(screen.getByLabelText("Recipe library preview")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Log in" })).toBeNull();
+  expect(screen.getByText("Authentication is handled securely.")).toBeTruthy();
+  expect(screen.queryByText(/Google/i)).toBeNull();
+});
+
+test("presents the fixture authentication as an explicit demo", async () => {
+  const screen = await renderWithTheme(
+    <LandingScreen
+      authPresentation={fixtureAuthPresentation}
+      authConfigured
+      isLoading={false}
+      isAuthenticated={false}
+      onLogin={jest.fn()}
+      onContinue={jest.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "Explore demo" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
 });
 
 test("keeps a cancelled login on the landing view", async () => {
   const screen = await renderWithTheme(
     <LandingScreen
+      authPresentation={productionAuthPresentation}
       authConfigured
       isLoading={false}
       isAuthenticated={false}
@@ -56,7 +77,7 @@ test("keeps a cancelled login on the landing view", async () => {
     />,
   );
 
-  expect(screen.getByRole("button", { name: "Continue with Google" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
   expect(screen.getByText("We couldn't sign you in. Please try again.")).toBeTruthy();
   expect(screen.queryByText("Login cancelled")).toBeNull();
 });

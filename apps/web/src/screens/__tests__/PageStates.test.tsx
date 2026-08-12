@@ -38,12 +38,12 @@ beforeEach(() => jest.clearAllMocks());
 
 test("renders landing auth loading and a live, sanitized login error", async () => {
   const rawError = "https://provider.example/callback access_token=secret";
-  const screen = await render(<LandingScreen authConfigured isLoading isAuthenticated={false} onLogin={jest.fn()} onContinue={jest.fn()} />);
+  const screen = await render(<LandingScreen authPresentation="auth0" authConfigured isLoading isAuthenticated={false} onLogin={jest.fn()} onContinue={jest.fn()} />);
 
   expect(screen.getByText("Checking session…")).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
 
-  await screen.rerender(<LandingScreen authConfigured isLoading={false} isAuthenticated={false} errorMessage={rawError} onLogin={jest.fn()} onContinue={jest.fn()} />);
+  await screen.rerender(<LandingScreen authPresentation="auth0" authConfigured isLoading={false} isAuthenticated={false} errorMessage={rawError} onLogin={jest.fn()} onContinue={jest.fn()} />);
   const safeError = screen.getByText("We couldn't sign you in. Please try again.");
   expect(safeError.props.accessibilityRole).toBe("alert");
   expect(safeError.props.accessibilityLiveRegion).toBe("assertive");

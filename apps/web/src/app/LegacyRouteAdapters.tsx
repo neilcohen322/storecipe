@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useWindowDimensions } from "react-native";
+import { authPresentation } from "@storecipe/auth-provider";
 
 import { createCatalogApi } from "../api/catalog";
 import { createIngestionApi } from "../api/ingestion";
@@ -37,6 +38,7 @@ export function LandingRouteAdapter() {
   const router = useRouter();
   return (
     <LandingScreen
+      authPresentation={authPresentation}
       authConfigured
       isLoading={auth.isLoading}
       isAuthenticated={auth.isAuthenticated}

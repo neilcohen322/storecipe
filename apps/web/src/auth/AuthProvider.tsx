@@ -52,7 +52,6 @@ function AuthSession({
     const redirectUrl = webRedirectUrl();
     await authorize({
       audience,
-      connection: "google-oauth2",
       scope: AUTH_SCOPE,
       ...(redirectUrl ? { redirectUrl } : {}),
     });

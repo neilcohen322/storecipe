@@ -54,5 +54,5 @@ test("logs out through the responsive navigation", async ({ page }, testInfo) =>
   await page.goto(testInfo.project.name.startsWith("compact") ? "/more" : "/account");
   await page.getByRole("button", { name: /log ?out/i }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("button", { name: "Continue with Google" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Explore demo" })).toBeVisible();
 });

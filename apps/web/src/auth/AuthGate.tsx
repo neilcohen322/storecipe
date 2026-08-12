@@ -1,5 +1,6 @@
 import type { PropsWithChildren } from "react";
 import { Redirect, usePathname, useRouter } from "expo-router";
+import { authPresentation } from "@storecipe/auth-provider";
 
 import { LandingScreen } from "../screens/LandingScreen";
 import { useAuth } from "./AuthProvider";
@@ -14,6 +15,7 @@ export function AuthGate({ children, returnPathStorage: storage = returnPathStor
   if (auth.isLoading || !auth.isAuthenticated) {
     return (
       <LandingScreen
+        authPresentation={authPresentation}
         authConfigured
         isLoading={auth.isLoading}
         isAuthenticated={auth.isAuthenticated}

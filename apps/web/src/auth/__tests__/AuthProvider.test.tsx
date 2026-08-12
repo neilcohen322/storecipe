@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { fireEvent, render } from "@testing-library/react-native";
-import { Pressable, Text } from "react-native";
+import { Platform, Pressable, Text } from "react-native";
 
 import { AuthProvider, useAuth } from "../AuthProvider";
 
@@ -11,10 +11,16 @@ jest.mock("react-native-auth0", () => ({
 
 const { useAuth0 } = jest.requireMock("react-native-auth0") as { useAuth0: jest.Mock };
 const mockAuthorize = jest.fn();
+const originalWindow = globalThis.window;
+
+afterEach(() => {
+  jest.restoreAllMocks();
+  Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
+});
 
 function LoginButton() {
   const { login } = useAuth();
-  return <Pressable accessibilityRole="button" accessibilityLabel="Continue with Google" onPress={() => void login()}><Text>Continue with Google</Text></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel="Sign in" onPress={() => void login()}><Text>Sign in</Text></Pressable>;
 }
 
 test("configures Auth0 for bearer tokens with refresh-token rotation", () => {
@@ -37,15 +43,24 @@ test("configures Auth0 for bearer tokens with refresh-token rotation", () => {
   expect(provider.props.clientId).toBe("client-id");
 });
 
-test("starts login through the Google Auth0 connection", async () => {
+test("starts provider-neutral Auth0 login with the API scope and web redirect", async () => {
   process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
   process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
   process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { location: { origin: "https://storecipe.test" } },
+  });
+  jest.replaceProperty(Platform, "OS", "web");
   mockAuthorize.mockReset().mockResolvedValue(undefined);
   useAuth0.mockReturnValue({ user: null, isLoading: false, error: null, authorize: mockAuthorize, clearSession: jest.fn(), getCredentials: jest.fn() });
 
   const screen = await render(<AuthProvider><LoginButton /></AuthProvider>);
-  fireEvent.press(screen.getByRole("button", { name: "Continue with Google" }));
+  fireEvent.press(screen.getByRole("button", { name: "Sign in" }));
 
-  expect(mockAuthorize).toHaveBeenCalledWith(expect.objectContaining({ connection: "google-oauth2", audience: "https://api.test" }));
+  expect(mockAuthorize).toHaveBeenCalledWith({
+    audience: "https://api.test",
+    redirectUrl: "https://storecipe.test",
+    scope: "openid profile email offline_access recipes:read recipes:write ratings:write",
+  });
 });
