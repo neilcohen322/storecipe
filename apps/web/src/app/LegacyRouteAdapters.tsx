@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { Text, View } from "react-native";
+import { Text, useWindowDimensions, View } from "react-native";
 
 import { createCatalogApi } from "../api/catalog";
 import { createIngestionApi } from "../api/ingestion";
@@ -8,6 +8,7 @@ import { useApi } from "../api/ApiProvider";
 import { useAuth } from "../auth/AuthProvider";
 import { AuthGate } from "../auth/AuthGate";
 import { CreateRecipeScreen } from "../screens/CreateRecipeScreen";
+import { getLayoutMode } from "../components/AppShell";
 import { ImportScreen } from "../screens/ImportScreen";
 import { LandingScreen } from "../screens/LandingScreen";
 import { RecipeDetailScreen } from "../screens/RecipeDetailScreen";
@@ -71,6 +72,7 @@ export function NewRecipeRouteAdapter() {
   const { catalog } = useLegacyApis();
   const router = useRouter();
   const onUnauthorized = useUnauthorizedHandler();
+  const { width } = useWindowDimensions();
   return (
     <AuthGate>
       <CreateRecipeScreen
@@ -80,6 +82,7 @@ export function NewRecipeRouteAdapter() {
         }
         onBack={() => router.back()}
         onUnauthorized={onUnauthorized}
+        layoutMode={getLayoutMode(width)}
       />
     </AuthGate>
   );
