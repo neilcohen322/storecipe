@@ -36,7 +36,7 @@ const recipe: RecipeQueryItem = {
   match: null,
 };
 
-test("opens a recipe from an accessible stable card with deterministic media", async () => {
+test("opens a recipe from an accessible stable card with deterministic theme media", async () => {
   const onOpen = jest.fn();
   const first = await render(<RecipeCard item={recipe} onOpen={onOpen} view="card" />);
   const firstMedia = first.getByTestId("recipe-card-media-recipe-1");
@@ -47,4 +47,12 @@ test("opens a recipe from an accessible stable card with deterministic media", a
   expect(onOpen).toHaveBeenCalledWith("recipe-1");
   expect(initialMediaStyle).toEqual(expect.arrayContaining([expect.objectContaining({ backgroundColor: "#b7791f" })]));
   expect(first.getByText("25 min · 4/5")).toBeTruthy();
+});
+
+test("activates a focused recipe card with the keyboard", async () => {
+  const onOpen = jest.fn();
+  const screen = await render(<RecipeCard item={recipe} onOpen={onOpen} view="list" />);
+  const card = screen.getByRole("button", { name: "Open Lemon pasta" });
+  await fireEvent.press(card);
+  expect(onOpen).toHaveBeenCalledWith("recipe-1");
 });

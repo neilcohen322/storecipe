@@ -10,10 +10,9 @@ export type RecipeCardProps = {
   view: "card" | "list";
 };
 
-const mediaColors = ["#2d6a4f", "#527060", "#b7791f", "#b42318"];
-
-function mediaColor(recipeId: string): string {
-  return mediaColors[recipeId.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % mediaColors.length];
+function mediaColor(recipeId: string, colors: { accent: string; success: string; warning: string; danger: string }): string {
+  const palette = [colors.accent, colors.success, colors.warning, colors.danger];
+  return palette[recipeId.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % palette.length];
 }
 
 export function RecipeCard({ item, onOpen, view }: RecipeCardProps) {
@@ -35,7 +34,7 @@ export function RecipeCard({ item, onOpen, view }: RecipeCardProps) {
         { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, opacity: pressed ? 0.78 : 1 },
       ]}
     >
-      <View testID={`recipe-card-media-${recipe.id}`} style={[styles.mediaSlot, { backgroundColor: mediaColor(recipe.id) }]}>
+      <View testID={`recipe-card-media-${recipe.id}`} style={[styles.mediaSlot, { backgroundColor: mediaColor(recipe.id, theme.colors) }]}>
         <RecipeMedia title={recipe.title} tags={recipe.tags} />
       </View>
       <View style={styles.copy}>
