@@ -30,6 +30,10 @@ function TokenProbe() {
   return null;
 }
 
+function getReadAccessToken() {
+  return readAccessToken;
+}
+
 test("persists the Auth0 web session for callback recovery", () => {
   process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
   process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
@@ -113,9 +117,10 @@ test.each(["web", "ios"] as const)(
 
     readAccessToken = undefined;
     await render(<AuthProvider><TokenProbe /></AuthProvider>);
-    if (!readAccessToken) throw new Error("AuthProvider did not expose getAccessToken");
+    const getAccessToken = getReadAccessToken();
+    if (!getAccessToken) throw new Error("AuthProvider did not expose getAccessToken");
 
-    await expect(readAccessToken()).resolves.toBe("api-access-token");
+    await expect(getAccessToken()).resolves.toBe("api-access-token");
     expect(getApiCredentials).toHaveBeenCalledWith(
       "https://api.test",
       "openid profile email offline_access recipes:read recipes:write ratings:write",
