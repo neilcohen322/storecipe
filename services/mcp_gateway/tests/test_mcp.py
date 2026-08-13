@@ -16,6 +16,12 @@ from storecipe_mcp.models import (
     IngredientView,
     RatingView,
     RecipeCreate,
+    RecipeFacetBounds,
+    RecipeFacetBrowseRequest,
+    RecipeFacetPage,
+    RecipeFacetSelectionsRequest,
+    RecipeFacetSelectionsResponse,
+    RecipeFacetSort,
     RecipeQueryPage,
     RecipeQueryRequest,
     RecipeView,
@@ -56,6 +62,34 @@ def _recipe_create() -> RecipeCreate:
     )
 
 
+def _facet_page() -> RecipeFacetPage:
+    return RecipeFacetPage(
+        ingredients=[],
+        ingredient_next_cursor=None,
+        tags=[],
+        tag_next_cursor=None,
+        total_minutes=None,
+        rating=RecipeFacetBounds(min=1, max=5),
+        rating_state=["any", "rated", "unrated"],
+        sort=RecipeFacetSort(
+            unconditional=[
+                "rating:asc",
+                "rating:desc",
+                "totalMinutes:asc",
+                "totalMinutes:desc",
+                "createdAt:asc",
+                "createdAt:desc",
+                "updatedAt:asc",
+                "updatedAt:desc",
+                "title:asc",
+                "title:desc",
+            ],
+            requires_available_ingredient=["ingredientCoverage:asc", "ingredientCoverage:desc"],
+            requires_preferred_tag=["tagCoverage:asc", "tagCoverage:desc"],
+        ),
+    )
+
+
 class RecordingCatalog:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
@@ -77,6 +111,18 @@ class RecordingCatalog:
     async def rate_recipe(self, recipe_id: UUID, value: int, token: str) -> RatingView:
         self.calls.append(("rate_recipe", (recipe_id, value, token)))
         return RatingView(value=value)
+
+    async def list_recipe_query_options(
+        self, request: RecipeFacetBrowseRequest, token: str
+    ) -> RecipeFacetPage:
+        self.calls.append(("list_recipe_query_options", (request, token)))
+        return _facet_page()
+
+    async def resolve_recipe_query_selections(
+        self, request: RecipeFacetSelectionsRequest, token: str
+    ) -> RecipeFacetSelectionsResponse:
+        self.calls.append(("resolve_recipe_query_selections", (request, token)))
+        return RecipeFacetSelectionsResponse(ingredients=[], tags=[])
 
 
 class FakeOboProvider:
@@ -142,7 +188,14 @@ async def test_gateway_exposes_exact_typed_tools_with_approved_contracts(
 
     tools = {tool.name: tool for tool in await server.list_tools()}
 
-    assert set(tools) == {"query_recipes", "get_recipe", "create_recipe", "rate_recipe"}
+    assert set(tools) == {
+        "query_recipes",
+        "get_recipe",
+        "create_recipe",
+        "rate_recipe",
+        "list_recipe_query_options",
+        "resolve_recipe_query_selections",
+    }
     assert set(server._tool_scopes) == set(tools)
     assert tools["query_recipes"].inputSchema["properties"].keys() == {"request"}
     assert tools["get_recipe"].inputSchema["properties"].keys() == {"recipe_id"}
@@ -151,24 +204,34 @@ async def test_gateway_exposes_exact_typed_tools_with_approved_contracts(
         "recipe",
     }
     assert tools["rate_recipe"].inputSchema["properties"].keys() == {"recipe_id", "value"}
+    assert tools["list_recipe_query_options"].inputSchema["properties"].keys() == {"request"}
+    assert tools["resolve_recipe_query_selections"].inputSchema["properties"].keys() == {
+        "request"
+    }
 
     expected_scopes = {
         "query_recipes": "recipes:read",
         "get_recipe": "recipes:read",
         "create_recipe": "recipes:write",
         "rate_recipe": "ratings:write",
+        "list_recipe_query_options": "recipes:read",
+        "resolve_recipe_query_selections": "recipes:read",
     }
     expected_annotations = {
         "query_recipes": (True, False, True, False),
         "get_recipe": (True, False, True, False),
         "create_recipe": (False, False, True, False),
         "rate_recipe": (False, True, True, False),
+        "list_recipe_query_options": (True, False, True, False),
+        "resolve_recipe_query_selections": (True, False, True, False),
     }
     expected_outputs = {
         "query_recipes": RecipeQueryPage,
         "get_recipe": RecipeView,
         "create_recipe": RecipeView,
         "rate_recipe": RatingView,
+        "list_recipe_query_options": RecipeFacetPage,
+        "resolve_recipe_query_selections": RecipeFacetSelectionsResponse,
     }
     for name, tool in tools.items():
         assert tool.meta == {
@@ -183,6 +246,7 @@ async def test_gateway_exposes_exact_typed_tools_with_approved_contracts(
         ) == expected_annotations[name]
         assert tool.outputSchema is not None
         assert tool.outputSchema == expected_outputs[name].model_json_schema()
+        assert "legal" not in (tool.description or "").lower()
 
     forbidden_argument_names = {
         "user_id",
@@ -221,6 +285,8 @@ async def test_gateway_exposes_exact_typed_tools_with_approved_contracts(
             {"recipe_id": str(RECIPE_ID), "value": 4},
             "rate_recipe",
         ),
+        ("list_recipe_query_options", {"request": {}}, "list_recipe_query_options"),
+        ("resolve_recipe_query_selections", {"request": {}}, "resolve_recipe_query_selections"),
     ],
 )
 async def test_tools_exchange_mcp_token_and_forward_api_token_to_catalog(
@@ -242,6 +308,8 @@ async def test_tools_exchange_mcp_token_and_forward_api_token_to_catalog(
                 "get_recipe": ["recipes:read"],
                 "create_recipe": ["recipes:write"],
                 "rate_recipe": ["ratings:write"],
+                "list_recipe_query_options": ["recipes:read"],
+                "resolve_recipe_query_selections": ["recipes:read"],
             }[name]
         ),
     )
@@ -337,6 +405,31 @@ async def test_catalog_error_is_unwrapped_and_translated_without_cause_leak(
     assert result.content[0].text == "Catalog is temporarily unavailable."
     assert "secret upstream body" not in result.content[0].text
     assert "temporary_catalog_failure" not in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_stale_recipe_facet_cursor_maps_to_fixed_message_without_body_leakage(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StaleFacetCatalog(RecordingCatalog):
+        async def list_recipe_query_options(
+            self, request: RecipeFacetBrowseRequest, token: str
+        ) -> RecipeFacetPage:
+            raise CatalogClientError(
+                "stale_recipe_facet_cursor", retryable=False
+            ) from RuntimeError("secret stale cursor body and token")
+
+    server = _server(settings, StaleFacetCatalog())
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:read"))
+
+    result = await server.call_tool("list_recipe_query_options", {"request": {}})
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is True
+    assert result.content[0].text == "The recipe facet cursor is stale."
+    assert "secret stale cursor body" not in result.content[0].text
+    assert "stale_recipe_facet_cursor" not in result.content[0].text
 
 
 @pytest.mark.asyncio

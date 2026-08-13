@@ -221,5 +221,84 @@ class RatingView(ApiModel):
     value: Annotated[int, Field(ge=1, le=5)]
 
 
+class RecipeFacetBrowseRequest(ApiModel):
+    ingredient_limit: Annotated[int, Field(ge=1, le=500)] = 200
+    tag_limit: Annotated[int, Field(ge=1, le=500)] = 200
+    ingredient_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    tag_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    ingredient_q: Annotated[str | None, Field(max_length=200)] = None
+    tag_q: Annotated[str | None, Field(max_length=64)] = None
+
+    @field_validator("ingredient_q", "tag_q", mode="before")
+    @classmethod
+    def _normalize_q(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return normalize_query_text(value) or None
+
+
+class RecipeFacetBounds(ApiModel):
+    min: int
+    max: int
+
+
+class RecipeFacetSort(ApiModel):
+    unconditional: list[str]
+    requires_available_ingredient: list[str]
+    requires_preferred_tag: list[str]
+
+
+class RecipeFacetPage(ApiModel):
+    ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]]
+    ingredient_next_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]]
+    tag_next_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    total_minutes: RecipeFacetBounds | None = None
+    rating: RecipeFacetBounds
+    rating_state: list[Literal["any", "rated", "unrated"]]
+    sort: RecipeFacetSort
+
+
+class RecipeFacetSelectionsRequest(ApiModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        str_strip_whitespace=False,
+        extra="forbid",
+    )
+
+    ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=96
+    )
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=32
+    )
+
+    @field_validator("ingredients", "tags")
+    @classmethod
+    def _unique_requested_names(cls, value: list[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not normalize_query_text(item):
+                raise ValueError("List items cannot be empty after normalization")
+            if item in seen:
+                continue
+            seen.add(item)
+            unique.append(item)
+        return unique
+
+
+class RecipeFacetSelectionItem(ApiModel):
+    requested_name: str
+    normalized_name: str
+    observed: bool
+
+
+class RecipeFacetSelectionsResponse(ApiModel):
+    ingredients: list[RecipeFacetSelectionItem]
+    tags: list[RecipeFacetSelectionItem]
+
+
 # The Catalog contract names the nested ingredient schema simply Ingredient.
 Ingredient = IngredientCreate
