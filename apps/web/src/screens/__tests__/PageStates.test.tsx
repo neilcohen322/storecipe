@@ -11,10 +11,19 @@ const mockReplace = jest.fn();
 const mockPush = jest.fn();
 const mockUseAuth = jest.fn();
 
-jest.mock("expo-router", () => ({
-  useLocalSearchParams: () => ({}),
-  useRouter: () => ({ push: mockPush, replace: mockReplace }),
-}));
+jest.mock("expo-router", () => {
+  const { useEffect } = require("react");
+  return {
+    useLocalSearchParams: () => ({}),
+    useRouter: () => ({ push: mockPush, replace: mockReplace }),
+    useFocusEffect: (callback: () => void | (() => void)) => {
+      useEffect(() => {
+        const cleanup = callback();
+        return typeof cleanup === "function" ? cleanup : undefined;
+      }, [callback]);
+    },
+  };
+});
 jest.mock("../../auth/AuthProvider", () => ({
   useAuth: () => mockUseAuth(),
 }));
@@ -56,7 +65,20 @@ test("renders recipe loading, safe retry, and semantic empty states from real re
   let rejectInitial!: (reason: unknown) => void;
   const initialRequest = new Promise<never>((_resolve, reject) => { rejectInitial = reject; });
   const listRecipes = jest.fn().mockReturnValueOnce(initialRequest).mockResolvedValueOnce({ items: [], nextCursor: null });
-  const catalog = { listRecipes } as unknown as React.ComponentProps<typeof RecipeListScreen>["catalog"];
+  const catalog = {
+    listRecipes,
+    listRecipeFacets: jest.fn().mockResolvedValue({
+      ingredients: [],
+      ingredientNextCursor: null,
+      tags: [],
+      tagNextCursor: null,
+      totalMinutes: null,
+      rating: { min: 1, max: 5 },
+      ratingState: ["any", "rated", "unrated"],
+      sort: { unconditional: [], requiresAvailableIngredient: [], requiresPreferredTag: [] },
+    }),
+    resolveRecipeFacetSelections: jest.fn().mockResolvedValue({ ingredients: [], tags: [] }),
+  } as unknown as React.ComponentProps<typeof RecipeListScreen>["catalog"];
   const screen = await render(<RecipeListScreen catalog={catalog} onOpenDetail={jest.fn()} onCreate={jest.fn()} onImport={jest.fn()} onLogout={jest.fn()} onUnauthorized={jest.fn()} />);
 
   expect(screen.getAllByTestId("recipe-card-skeleton")).toHaveLength(3);

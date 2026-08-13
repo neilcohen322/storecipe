@@ -1,17 +1,26 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 
-import { ApiNetworkError, ApiUnauthorizedError } from "../../api/client";
-import type { RecipeQueryItem } from "../../api/catalog";
+import { ApiError, ApiNetworkError, ApiUnauthorizedError } from "../../api/client";
+import type { RecipeFacetPage, RecipeFacetSelectionsResponse, RecipeQueryItem } from "../../api/catalog";
 import { createPaginationRequestGuard, isOfflineError, RecipeListScreen } from "../RecipeListScreen";
 
 let mockRouteParams: Record<string, string | string[] | undefined> = {};
 const mockPushRoute = jest.fn();
 const mockReplaceRoute = jest.fn();
 const mockRouter = { push: mockPushRoute, replace: mockReplaceRoute };
-jest.mock("expo-router", () => ({
-  useLocalSearchParams: () => mockRouteParams,
-  useRouter: () => mockRouter,
-}));
+jest.mock("expo-router", () => {
+  const { useEffect } = require("react");
+  return {
+    useLocalSearchParams: () => mockRouteParams,
+    useRouter: () => mockRouter,
+    useFocusEffect: (callback: () => void | (() => void)) => {
+      useEffect(() => {
+        const cleanup = callback();
+        return typeof cleanup === "function" ? cleanup : undefined;
+      }, [callback]);
+    },
+  };
+});
 
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -37,10 +46,40 @@ jest.mock("../../theme/ThemeProvider", () => ({
 const recipe: RecipeQueryItem = { recipe: { id: "recipe-1", title: "Lemon pasta", sourceUrl: null, servings: 4, prepMinutes: 10, cookMinutes: 15, totalMinutes: 25, ingredients: [], instructions: [], tags: ["pasta"], rating: 4 }, match: null };
 const secondRecipe: RecipeQueryItem = { ...recipe, recipe: { ...recipe.recipe, id: "recipe-2", title: "Tomato risotto" } };
 type Page = { items: RecipeQueryItem[]; nextCursor: string | null };
+type CatalogExtras = { listRecipeFacets?: jest.Mock; resolveRecipeFacetSelections?: jest.Mock };
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; }); return { promise, resolve, reject }; }
-function catalogWith(listRecipes: jest.Mock) { return { listRecipes } as unknown as React.ComponentProps<typeof RecipeListScreen>["catalog"]; }
+function defaultFacetPage(overrides: Partial<RecipeFacetPage> = {}): RecipeFacetPage {
+  return {
+    ingredients: ["basil", "tomato"],
+    ingredientNextCursor: null,
+    tags: ["family", "weeknight"],
+    tagNextCursor: null,
+    totalMinutes: { min: 15, max: 90 },
+    rating: { min: 1, max: 5 },
+    ratingState: ["any", "rated", "unrated"],
+    sort: {
+      unconditional: ["rating:asc", "rating:desc", "totalMinutes:asc", "totalMinutes:desc", "createdAt:asc", "createdAt:desc", "updatedAt:asc", "updatedAt:desc", "title:asc", "title:desc"],
+      requiresAvailableIngredient: ["ingredientCoverage:asc", "ingredientCoverage:desc"],
+      requiresPreferredTag: ["tagCoverage:asc", "tagCoverage:desc"],
+    },
+    ...overrides,
+  };
+}
+function echoResolve(body: { ingredients?: string[]; tags?: string[] } = {}): RecipeFacetSelectionsResponse {
+  return {
+    ingredients: (body.ingredients ?? []).map((requestedName) => ({ requestedName, normalizedName: requestedName, observed: true })),
+    tags: (body.tags ?? []).map((requestedName) => ({ requestedName, normalizedName: requestedName, observed: true })),
+  };
+}
+function catalogWith(listRecipes: jest.Mock, extras: CatalogExtras = {}) {
+  return {
+    listRecipes,
+    listRecipeFacets: extras.listRecipeFacets ?? jest.fn().mockResolvedValue(defaultFacetPage()),
+    resolveRecipeFacetSelections: extras.resolveRecipeFacetSelections ?? jest.fn().mockImplementation(async (body: { ingredients?: string[]; tags?: string[] }) => echoResolve(body)),
+  } as unknown as React.ComponentProps<typeof RecipeListScreen>["catalog"];
+}
 const actions = { onOpenDetail: jest.fn(), onCreate: jest.fn(), onImport: jest.fn(), onLogout: jest.fn(), onUnauthorized: jest.fn() };
-const renderScreen = (listRecipes: jest.Mock) => render(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
+const renderScreen = (listRecipes: jest.Mock, extras: CatalogExtras = {}) => render(<RecipeListScreen catalog={catalogWith(listRecipes, extras)} {...actions} />);
 
 beforeEach(() => { jest.clearAllMocks(); jest.useRealTimers(); mockRouteParams = {}; });
 afterEach(() => { jest.useRealTimers(); });
@@ -132,22 +171,24 @@ test("restores route-derived values in every visible filter after back-forward n
   const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
   const screen = await renderScreen(listRecipes);
   await waitFor(() => expect(screen.getByLabelText("Search recipes").props.value).toBe("tomato soup"));
-  expect(screen.getByLabelText("Required ingredients").props.value).toBe("basil, tomato");
-  expect(screen.getByLabelText("Available ingredients").props.value).toBe("onion");
-  expect(screen.getByLabelText("Required tags").props.value).toBe("quick, vegan");
-  expect(screen.getByLabelText("Preferred tags").props.value).toBe("family");
-  expect(screen.getByLabelText("Maximum total minutes").props.value).toBe("30");
-  expect(screen.getByLabelText("Minimum rating").props.value).toBe("4");
+  expect(screen.getByRole("button", { name: "Remove basil" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Remove tomato" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Remove onion" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Remove quick" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Remove vegan" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Remove family" })).toBeTruthy();
+  expect(screen.getByLabelText("30 minutes")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "4 and up" }).props.accessibilityState).toMatchObject({ selected: true });
   expect(screen.getByRole("button", { name: "Highest rated" }).props.accessibilityState).toMatchObject({ selected: true });
   expect(screen.queryByDisplayValue("rating:desc, totalMinutes:asc")).toBeNull();
-  expect(screen.queryByDisplayValue("requiredIngredient")).toBeNull();
+  expect(screen.queryByText("requiredIngredient")).toBeNull();
   expect(screen.getByText("Required ingredients")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Rated only" })).toBeTruthy();
 
   mockRouteParams = { text: "risotto", ratingState: "unrated" };
   await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes)} {...actions} />);
   await waitFor(() => expect(screen.getByLabelText("Search recipes").props.value).toBe("risotto"));
-  expect(screen.getByLabelText("Required ingredients").props.value).toBe("");
+  expect(screen.queryByRole("button", { name: "Remove basil" })).toBeNull();
   expect(screen.getByRole("button", { name: "Unrated only" })).toBeTruthy();
   await waitFor(() => expect(listRecipes).toHaveBeenCalledTimes(2));
 });
@@ -159,12 +200,6 @@ test("sorts with named choices instead of raw query-parameter strings", async ()
   expect(screen.queryByDisplayValue("updatedAt:desc")).toBeNull();
   await fireEvent.press(screen.getByRole("button", { name: "Highest rated" }));
   expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { sort: ["rating:desc"] } });
-});
-
-test("commits filters as history entries", async () => {
-  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
-  await fireEvent(screen.getByLabelText("Required ingredients"), "endEditing", { nativeEvent: { text: " Tomato, basil " } });
-  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { requiredIngredient: [" Tomato, basil "] } });
 });
 
 test("ignores duplicate load-more presses before a rerender and preserves the first page", async () => {
@@ -262,3 +297,261 @@ test("does not update or surface errors after an in-flight library request unmou
   await act(async () => stale.resolve({ items: [recipe], nextCursor: null }));
   expect(actions.onUnauthorized).not.toHaveBeenCalled();
 });
+
+test("shows observed ingredient options with a human label", async () => {
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "tomato" }).length).toBeGreaterThan(0));
+  expect(screen.getByText("Required ingredients")).toBeTruthy();
+  expect(screen.getByLabelText("Required ingredients")).toBeTruthy();
+  expect(screen.queryByText("requiredIngredient")).toBeNull();
+});
+
+test("selecting an observed option pushes history and free text does not add", async () => {
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "tomato" }).length).toBeGreaterThan(0));
+  await fireEvent.press(screen.getAllByRole("button", { name: "tomato" })[0]);
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { requiredIngredient: ["tomato"] } });
+  await fireEvent.changeText(screen.getByLabelText("Required ingredients"), "ketchup");
+  expect(mockPushRoute).not.toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ requiredIngredient: expect.arrayContaining(["ketchup"]) }) }));
+  expect(screen.queryByRole("button", { name: "Remove ketchup" })).toBeNull();
+});
+
+test("treats a comma-containing ingredient URL value as one chip", async () => {
+  mockRouteParams = { requiredIngredient: "salt, divided" };
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
+  await waitFor(() => expect(screen.getByText("salt, divided")).toBeTruthy());
+  expect(screen.getByRole("button", { name: "Remove salt, divided" })).toBeTruthy();
+});
+
+test("shows an unavailable chip only after observed false", async () => {
+  const pending = deferred<RecipeFacetSelectionsResponse>();
+  const resolveRecipeFacetSelections = jest.fn().mockReturnValueOnce(pending.promise);
+  mockRouteParams = { requiredIngredient: "ghost pepper" };
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections });
+  await waitFor(() => expect(screen.getByText("ghost pepper")).toBeTruthy());
+  expect(screen.queryByText("unavailable")).toBeNull();
+  await act(async () => pending.resolve({
+    ingredients: [{ requestedName: "ghost pepper", normalizedName: "ghost pepper", observed: false }],
+    tags: [],
+  }));
+  await waitFor(() => expect(screen.getByText("unavailable")).toBeTruthy());
+  expect(screen.getByText("ghost pepper")).toBeTruthy();
+});
+
+test("rewrites canonical ingredient names with replace instead of push", async () => {
+  const resolveRecipeFacetSelections = jest.fn()
+    .mockResolvedValueOnce({
+      ingredients: [{ requestedName: "Straße", normalizedName: "strasse", observed: true }],
+      tags: [],
+    })
+    .mockResolvedValue({
+      ingredients: [{ requestedName: "strasse", normalizedName: "strasse", observed: true }],
+      tags: [],
+    });
+  mockRouteParams = { requiredIngredient: "Straße" };
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  const screen = await renderScreen(listRecipes, { resolveRecipeFacetSelections });
+  await waitFor(() => expect(mockReplaceRoute).toHaveBeenCalledTimes(1));
+  expect(mockReplaceRoute).toHaveBeenCalledWith({ pathname: "/recipes", params: { requiredIngredient: ["strasse"] } });
+  expect(mockPushRoute).not.toHaveBeenCalled();
+  mockReplaceRoute.mockClear();
+  mockRouteParams = { requiredIngredient: "strasse" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(listRecipes, { resolveRecipeFacetSelections })} {...actions} />);
+  await waitFor(() => expect(resolveRecipeFacetSelections).toHaveBeenCalledTimes(2));
+  expect(mockReplaceRoute).not.toHaveBeenCalled();
+  expect(mockPushRoute).not.toHaveBeenCalled();
+});
+
+test("resolves selections after back-forward even when focus callback identity is unchanged", async () => {
+  const resolveRecipeFacetSelections = jest.fn().mockImplementation(async (body: { ingredients?: string[] }) => echoResolve(body));
+  mockRouteParams = { requiredIngredient: "basil" };
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  const catalog = catalogWith(listRecipes, { resolveRecipeFacetSelections });
+  const screen = await render(<RecipeListScreen catalog={catalog} {...actions} />);
+  await waitFor(() => expect(resolveRecipeFacetSelections).toHaveBeenCalledTimes(1));
+  mockRouteParams = { requiredIngredient: "tomato" };
+  await screen.rerender(<RecipeListScreen catalog={catalog} {...actions} />);
+  await waitFor(() => expect(resolveRecipeFacetSelections).toHaveBeenCalledTimes(2));
+  expect(resolveRecipeFacetSelections.mock.calls[1][0]).toEqual(expect.objectContaining({ ingredients: expect.arrayContaining(["tomato"]) }));
+});
+
+test("debounces isolated ingredient-lane search without clobbering the other lane", async () => {
+  jest.useFakeTimers();
+  const listRecipeFacets = jest.fn()
+    .mockResolvedValueOnce(defaultFacetPage())
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["zucchini"] }))
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basmati"] }));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
+  await act(async () => { await Promise.resolve(); });
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(1));
+  await fireEvent.changeText(screen.getByLabelText("Required ingredients"), "zuc");
+  await act(async () => { jest.advanceTimersByTime(299); });
+  expect(listRecipeFacets.mock.calls.some((call) => call[0]?.ingredientQ === "zuc")).toBe(false);
+  await act(async () => { jest.advanceTimersByTime(1); });
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(2));
+  const searchParams = listRecipeFacets.mock.calls[1][0];
+  expect(searchParams).toEqual(expect.objectContaining({ ingredientQ: "zuc" }));
+  expect(searchParams).not.toHaveProperty("ingredientCursor");
+  expect(searchParams).not.toHaveProperty("tagQ");
+  await waitFor(() => expect(screen.getByRole("button", { name: "zucchini" })).toBeTruthy());
+  expect(screen.getAllByRole("button", { name: "basil" }).length).toBeGreaterThan(0);
+  expect(screen.getAllByRole("button", { name: "tomato" }).length).toBeGreaterThan(0);
+  await fireEvent.changeText(screen.getByLabelText("Available ingredients"), "bas");
+  await act(async () => { jest.advanceTimersByTime(300); });
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(screen.getByRole("button", { name: "basmati" })).toBeTruthy());
+  expect(screen.getByRole("button", { name: "zucchini" })).toBeTruthy();
+});
+
+test("load more merges unique first-seen names and then disappears", async () => {
+  const listRecipeFacets = jest.fn()
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["tomato"], ingredientNextCursor: null }));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Load more options" }).length).toBeGreaterThan(0));
+  await fireEvent.press(screen.getAllByRole("button", { name: "Load more options" })[0]);
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(2));
+  expect(listRecipeFacets.mock.calls[1][0]).toEqual(expect.objectContaining({ ingredientCursor: "cursor-1" }));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "tomato" }).length).toBeGreaterThan(0));
+  expect(screen.getAllByRole("button", { name: "basil" }).length).toBeGreaterThan(0);
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Load more options" }).length).toBe(1));
+});
+
+test("stale facet cursor 409 clears only that lane and restarts page one", async () => {
+  const listRecipeFacets = jest.fn()
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))
+    .mockRejectedValueOnce(new ApiError("stale", 409))
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["garlic"], ingredientNextCursor: null }));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Load more options" }).length).toBeGreaterThan(0));
+  await fireEvent.press(screen.getAllByRole("button", { name: "Load more options" })[0]);
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "garlic" }).length).toBeGreaterThan(0));
+  expect(screen.getAllByRole("button", { name: "basil" }).length).toBeGreaterThan(0);
+  expect(listRecipeFacets).toHaveBeenCalledTimes(3);
+  expect(listRecipeFacets.mock.calls[2][0]).not.toHaveProperty("ingredientCursor");
+});
+
+test("any duration and no minimum omit params and unrated clears min rating", async () => {
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  const catalog = catalogWith(listRecipes);
+  const screen = await render(<RecipeListScreen catalog={catalog} {...actions} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "90 minutes" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "90 minutes" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { maxTotalMinutes: "90" } });
+  await fireEvent.press(screen.getByRole("button", { name: "Any duration" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: {} });
+  await fireEvent.press(screen.getByRole("button", { name: "4 and up" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { minRating: "4" } });
+  await fireEvent.press(screen.getByRole("button", { name: "No minimum" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: {} });
+  mockRouteParams = { minRating: "4" };
+  await screen.rerender(<RecipeListScreen catalog={catalog} {...actions} />);
+  await fireEvent.press(screen.getByRole("button", { name: "Unrated only" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { ratingState: "unrated" } });
+});
+
+test("coverage sort chips appear only with supporting filters", async () => {
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  const catalog = catalogWith(listRecipes);
+  const screen = await render(<RecipeListScreen catalog={catalog} {...actions} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Recently updated" })).toBeTruthy());
+  expect(screen.queryByRole("button", { name: "Best ingredient match" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Best tag match" })).toBeNull();
+  mockRouteParams = { availableIngredient: "basil", preferredTag: "family" };
+  await screen.rerender(<RecipeListScreen catalog={catalog} {...actions} />);
+  expect(screen.getByRole("button", { name: "Best ingredient match" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Best tag match" })).toBeTruthy();
+  mockRouteParams = { availableIngredient: "basil", preferredTag: "family", sort: "ingredientCoverage:desc" };
+  await screen.rerender(<RecipeListScreen catalog={catalog} {...actions} />);
+  await fireEvent.press(screen.getByRole("button", { name: "Remove basil" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { preferredTag: ["family"] } });
+});
+
+test("time control keeps out-of-range bookmarks until edited and supports max zero", async () => {
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  mockRouteParams = { maxTotalMinutes: "999" };
+  const screen = await renderScreen(listRecipes);
+  await waitFor(() => expect(screen.getByText("outside current range")).toBeTruthy());
+  expect(mockPushRoute).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole("button", { name: "Decrease duration" }));
+  expect(mockPushRoute).toHaveBeenCalled();
+  const clamped = Number((mockPushRoute.mock.calls.at(-1)?.[0] as { params: { maxTotalMinutes: string } }).params.maxTotalMinutes);
+  expect(clamped).toBeGreaterThanOrEqual(0);
+  expect(clamped).toBeLessThanOrEqual(90);
+  mockPushRoute.mockClear();
+  mockRouteParams = { maxTotalMinutes: "45" };
+  const unavailable = await renderScreen(listRecipes, { listRecipeFacets: jest.fn().mockResolvedValue(defaultFacetPage({ totalMinutes: null })) });
+  await waitFor(() => expect(unavailable.getByText("unavailable")).toBeTruthy());
+  await fireEvent.press(unavailable.getByRole("button", { name: "Clear 45 minutes" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: {} });
+  mockRouteParams = {};
+  const zeroMax = await renderScreen(listRecipes, { listRecipeFacets: jest.fn().mockResolvedValue(defaultFacetPage({ totalMinutes: { min: 0, max: 0 } })) });
+  await waitFor(() => expect(zeroMax.getByRole("button", { name: "0 minutes" })).toBeTruthy());
+  await fireEvent.press(zeroMax.getByRole("button", { name: "0 minutes" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { maxTotalMinutes: "0" } });
+});
+
+test("facet failure shows an inline notice without clearing recipes", async () => {
+  const listRecipeFacets = jest.fn().mockRejectedValue(new Error("https://provider.example/facets access_token=secret"));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [recipe], nextCursor: null }), { listRecipeFacets });
+  await waitFor(() => expect(screen.getByText("Lemon pasta")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("We couldn't load filter options. Please try again.")).toBeTruthy());
+  expect(screen.queryByText("https://provider.example/facets access_token=secret")).toBeNull();
+  expect(screen.getByTestId("inline-notice")).toBeTruthy();
+});
+
+test("facet 401 triggers unauthorized and list 414 stays a generic retry", async () => {
+  const unauthorizedFacets = jest.fn().mockRejectedValue(new ApiUnauthorizedError());
+  await renderScreen(jest.fn().mockResolvedValue({ items: [recipe], nextCursor: null }), { listRecipeFacets: unauthorizedFacets });
+  await waitFor(() => expect(actions.onUnauthorized).toHaveBeenCalledTimes(1));
+  actions.onUnauthorized.mockClear();
+  const screen = await renderScreen(jest.fn().mockRejectedValue(new ApiError("URI too long", 414)));
+  await waitFor(() => expect(screen.getByText("We couldn't load your recipes. Please try again.")).toBeTruthy());
+  expect(actions.onUnauthorized).not.toHaveBeenCalled();
+});
+
+test("loads facets on focus and does not refetch when only min rating changes", async () => {
+  const listRecipeFacets = jest.fn().mockResolvedValue(defaultFacetPage());
+  const listRecipes = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+  const catalog = catalogWith(listRecipes, { listRecipeFacets });
+  const screen = await render(<RecipeListScreen catalog={catalog} {...actions} />);
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(1));
+  mockRouteParams = { minRating: "4" };
+  await screen.rerender(<RecipeListScreen catalog={catalog} {...actions} />);
+  expect(listRecipeFacets).toHaveBeenCalledTimes(1);
+});
+
+test("ignores a stale selection resolve after back-forward navigation", async () => {
+  const pending = deferred<RecipeFacetSelectionsResponse>();
+  const resolveRecipeFacetSelections = jest.fn()
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValue({ ingredients: [{ requestedName: "onion", normalizedName: "onion", observed: true }], tags: [] });
+  mockRouteParams = { requiredIngredient: "Straße" };
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections });
+  mockRouteParams = { requiredIngredient: "onion" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections })} {...actions} />);
+  await act(async () => pending.resolve({
+    ingredients: [{ requestedName: "Straße", normalizedName: "strasse", observed: true }],
+    tags: [],
+  }));
+  expect(mockReplaceRoute).not.toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ requiredIngredient: ["strasse"] }) }));
+  expect(screen.getByText("onion")).toBeTruthy();
+  expect(screen.queryByText("strasse")).toBeNull();
+});
+
+test("applies canonical names to the latest params after an unrelated rating edit", async () => {
+  const pending = deferred<RecipeFacetSelectionsResponse>();
+  const resolveRecipeFacetSelections = jest.fn().mockReturnValueOnce(pending.promise);
+  mockRouteParams = { requiredIngredient: "Straße" };
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections });
+  await fireEvent.press(screen.getByRole("button", { name: "4 and up" }));
+  expect(mockPushRoute).toHaveBeenCalled();
+  mockRouteParams = { requiredIngredient: "Straße", minRating: "4" };
+  await screen.rerender(<RecipeListScreen catalog={catalogWith(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections })} {...actions} />);
+  await act(async () => pending.resolve({
+    ingredients: [{ requestedName: "Straße", normalizedName: "strasse", observed: true }],
+    tags: [],
+  }));
+  expect(mockReplaceRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { requiredIngredient: ["strasse"], minRating: "4" } });
+});
+
