@@ -12,12 +12,13 @@ test("renders the responsive shell, restores history, and has no serious accessi
   await page.goto("/recipes?text=pasta&requiredIngredient=tomato&availableIngredient=garlic&requiredTag=weeknight&preferredTag=vegetarian&maxTotalMinutes=30&minRating=4&ratingState=rated&sort=rating%3Adesc");
   await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
   await expect(page.getByLabel("Search recipes")).toHaveValue("pasta");
-  await expect(page.getByLabel("Required ingredients")).toHaveValue("tomato");
-  await expect(page.getByLabel("Available ingredients")).toHaveValue("garlic");
-  await expect(page.getByLabel("Required tags")).toHaveValue("weeknight");
-  await expect(page.getByLabel("Preferred tags")).toHaveValue("vegetarian");
-  await expect(page.getByLabel("Maximum total minutes")).toHaveValue("30");
-  await expect(page.getByLabel("Minimum rating")).toHaveValue("4");
+  await expect(page.getByLabel("Required ingredients")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove tomato" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove garlic" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove weeknight" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove vegetarian" })).toBeVisible();
+  await expect(page.getByLabel("30 minutes")).toBeVisible();
+  await expect(page.getByRole("button", { name: "4 and up" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Highest rated" })).toBeVisible();
 
   const compact = testInfo.project.name.startsWith("compact");

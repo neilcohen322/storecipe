@@ -37,6 +37,20 @@ test("validates and creates a recipe", async ({ page }, testInfo) => {
   await assertStablePageQuality(page, errors);
 });
 
+test("filters with observed pickers instead of raw query parameter fields", async ({ page }) => {
+  const errors = captureConsoleErrors(page);
+  await page.goto("/recipes");
+  await page.getByLabel("Required ingredients").fill("tom");
+  const tomatoes = page.getByRole("button", { name: "tomatoes" }).first();
+  await expect(tomatoes).toBeVisible();
+  await tomatoes.click();
+  await expect(page).toHaveURL(/requiredIngredient=tomatoes/);
+  await expect(page.getByText("requiredIngredient")).toHaveCount(0);
+  await page.getByRole("button", { name: "Any duration" }).click();
+  await expect(page).not.toHaveURL(/maxTotalMinutes=/);
+  await assertStablePageQuality(page, errors);
+});
+
 test("supports a fresh direct entry to a dynamic recipe route", async ({ browser, baseURL }) => {
   const context = await browser.newContext({ storageState: ".playwright/auth.json", reducedMotion: "reduce" });
   const page = await context.newPage();

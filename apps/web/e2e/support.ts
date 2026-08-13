@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-import { fixtureImportJob, fixtureRecipe, fixtureRecipePage } from "../src/testing/fixtures";
+import { fixtureImportJob, fixtureRecipe, fixtureRecipeFacetSelections, fixtureRecipeFacets, fixtureRecipePage } from "../src/testing/fixtures";
 
 export function captureConsoleErrors(page: Page): string[] {
   const errors: string[] = [];
@@ -35,6 +35,11 @@ export async function installApiInterceptions(page: Page): Promise<void> {
     if (url.pathname === "/v1/imports/import-e2e-job") {
       const statuses = ["queued", "processing", "completed"] as const;
       return route.fulfill({ json: fixtureImportJob(statuses[Math.min(importPoll++, statuses.length - 1)]), headers: cors });
+    }
+    if (url.pathname === "/v1/recipe-facets" && request.method() === "GET") return route.fulfill({ json: fixtureRecipeFacets, headers: cors });
+    if (url.pathname === "/v1/recipe-facet-selections" && request.method() === "POST") {
+      const body = (request.postDataJSON() ?? {}) as { ingredients?: string[]; tags?: string[] };
+      return route.fulfill({ json: fixtureRecipeFacetSelections(body), headers: cors });
     }
     return route.fulfill({ status: 404, json: { detail: "Unmatched E2E request" }, headers: cors });
   });
