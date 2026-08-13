@@ -10,11 +10,11 @@ export type DurationFilterProps = {
 };
 
 function isInRange(value: number, observed: { min: number; max: number }) {
-  return value >= observed.min && value <= observed.max;
+  return value >= 0 && value <= observed.max;
 }
 
 function clamp(value: number, observed: { min: number; max: number }) {
-  return Math.min(observed.max, Math.max(observed.min, value));
+  return Math.max(0, Math.min(observed.max, value));
 }
 
 export function DurationFilter({ observed, value, onChange }: DurationFilterProps) {
@@ -29,7 +29,7 @@ export function DurationFilter({ observed, value, onChange }: DurationFilterProp
     if (!observed || value === null) return;
     const bounded = clamp(value, observed);
     const next = direction === "decrease"
-      ? Math.max(observed.min, bounded - 1)
+      ? Math.max(0, bounded - 1)
       : Math.min(observed.max, bounded + 1);
     onChange(next);
   };

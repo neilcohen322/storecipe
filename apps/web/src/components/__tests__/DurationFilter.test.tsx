@@ -60,6 +60,16 @@ test("unavailable time when observed is null", async () => {
   expect(onChange).toHaveBeenCalledWith(null);
 });
 
+test("bookmark below observed min is in range", async () => {
+  const onChange = jest.fn();
+  const screen = await render(
+    <DurationFilter observed={{ min: 15, max: 90 }} value={5} onChange={onChange} />,
+  );
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.queryByText("outside current range")).toBeNull();
+  expect(screen.getByRole("button", { name: "Decrease duration" })).toBeTruthy();
+});
+
 test("out of range bookmark is not clamped until edited", async () => {
   const onChange = jest.fn();
   const screen = await render(
