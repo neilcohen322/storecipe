@@ -1,4 +1,5 @@
 import {
+  ApiNetworkError,
   ApiUnauthorizedError,
   createApiClient,
   isUnauthorizedCredentialError,
@@ -90,6 +91,17 @@ test("transient Auth0/network token failures are not unauthorized", async () => 
   });
 
   await expect(client.getJson("/v1/recipes")).rejects.toBe(networkError);
+});
+
+test("wraps fetch transport failures in the closed ApiNetworkError type", async () => {
+  const transportFailure = Object.assign(new TypeError("fetch failed"), { code: "ERR_NETWORK" });
+  globalThis.fetch = jest.fn().mockRejectedValue(transportFailure) as unknown as typeof fetch;
+  const client = createApiClient(async () => "token", {
+    catalog: "http://catalog.test",
+    ingestion: "http://ingestion.test",
+  });
+
+  await expect(client.getJson("/v1/recipes")).rejects.toBeInstanceOf(ApiNetworkError);
 });
 
 test("createRecipe reuses caller-supplied idempotency key", async () => {

@@ -1,197 +1,51 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useState } from "react";
+import { TextInput, View } from "react-native";
 
-import { ApiUnauthorizedError } from "../api/client";
-import type { createIngestionApi } from "../api/ingestion";
-import { colors, sharedStyles } from "../theme";
-import {
-  resolveImportIdempotencyAttempt,
-  type ImportIdempotencyAttempt,
-} from "../utils/idempotencySession";
-import { createImportPoller, type ImportPoller } from "../utils/importPolling";
+import { Button, Field, InlineNotice, PageHeader, Screen, Section, TextArea } from "../components";
+import { useImportSession } from "../imports/ImportSessionProvider";
+import { getImportPresentation } from "../utils/importPolling";
 
 type ImportTab = "url" | "text";
+export type ImportScreenProps = { onBack(): void };
 
-export type ImportScreenProps = {
-  ingestion: ReturnType<typeof createIngestionApi>;
-  onBack(): void;
-  onUnauthorized(): void;
-};
+function terminalCopy(status: NonNullable<ReturnType<typeof useImportSession>["terminalSummary"]>["status"]): string {
+  switch (status) {
+    case "completed": return "Your recipe import is complete.";
+    case "review_required": return "This import needs your review before it can be added.";
+    case "failed": return "This import failed.";
+    case "cancelled": return "This import was cancelled.";
+    case "timed_out": return "This import took too long and stopped.";
+  }
+}
 
-export function ImportScreen({
-  ingestion,
-  onBack,
-  onUnauthorized,
-}: ImportScreenProps) {
+export function ImportScreen({ onBack }: ImportScreenProps) {
   const [tab, setTab] = useState<ImportTab>("url");
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [statusText, setStatusText] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
-  const attemptRef = useRef<ImportIdempotencyAttempt | null>(null);
-  const ingestionRef = useRef(ingestion);
-  const onUnauthorizedRef = useRef(onUnauthorized);
-  const pollerRef = useRef<ImportPoller | null>(null);
-
-  ingestionRef.current = ingestion;
-  onUnauthorizedRef.current = onUnauthorized;
-
-  if (pollerRef.current === null) {
-    pollerRef.current = createImportPoller({
-      getImport: (jobId) => ingestionRef.current.getImport(jobId),
-      isActive: () => mountedRef.current,
-      onStatus: (next) => setStatusText(next),
-      onTerminal: () => {
-        attemptRef.current = null;
-        setSubmitting(false);
-      },
-      onUnauthorized: () => onUnauthorizedRef.current(),
-      onError: (message) => {
-        // Keep key/job so retry resumes the same attempt instead of duplicating.
-        setError(message);
-        setSubmitting(false);
-      },
-      isUnauthorizedError: (err) => err instanceof ApiUnauthorizedError,
-    });
-  }
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      pollerRef.current?.stop();
-    };
-  }, []);
-
-  const submit = async () => {
-    setError(null);
-    setStatusText(null);
-
-    if (tab === "url" && !url.trim()) {
-      setError("URL is required.");
-      return;
-    }
-    if (tab === "text" && !text.trim()) {
-      setError("Recipe text is required.");
-      return;
-    }
-
-    const fingerprint =
-      tab === "url" ? `url:${url.trim()}` : `text:${text.trim()}`;
-    const attempt = resolveImportIdempotencyAttempt(attemptRef.current, fingerprint);
-    attemptRef.current = attempt;
-
-    setSubmitting(true);
-    try {
-      let jobId = attempt.jobId;
-      if (jobId === null) {
-        const submission =
-          tab === "url"
-            ? await ingestion.createUrlImport(url.trim(), {
-                idempotencyKey: attempt.session.key,
-              })
-            : await ingestion.createTextImport(text.trim(), {
-                idempotencyKey: attempt.session.key,
-              });
-        jobId = submission.jobId;
-        attemptRef.current = { session: attempt.session, jobId };
-      }
-      if (!mountedRef.current) {
-        return;
-      }
-      pollerRef.current?.start(jobId);
-    } catch (err) {
-      if (!mountedRef.current) {
-        return;
-      }
-      setSubmitting(false);
-      if (err instanceof ApiUnauthorizedError) {
-        onUnauthorized();
-        return;
-      }
-      setError(err instanceof Error ? err.message : "Failed to start import");
-    }
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const session = useImportSession();
+  const activePresentation = session.activeJob ? getImportPresentation(session.activeJob) : null;
+  const submit = () => {
+    const value = tab === "url" ? url : text;
+    if (!value.trim()) { setValidationError(tab === "url" ? "URL is required." : "Recipe text is required."); return; }
+    setValidationError(null);
+    void session.startImport({ mode: tab, value });
   };
-
-  return (
-    <ScrollView style={sharedStyles.screen} contentContainerStyle={{ paddingBottom: 40 }}>
-      <Pressable accessibilityRole="button" onPress={onBack} style={sharedStyles.buttonSecondary}>
-        <Text style={sharedStyles.buttonText}>Back to list</Text>
-      </Pressable>
-
-      <Text style={[sharedStyles.heading, { marginTop: 16 }]}>Import recipe</Text>
-
-      <View style={sharedStyles.buttonRow}>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => setTab("url")}
-          style={tab === "url" ? sharedStyles.button : sharedStyles.buttonSecondary}
-        >
-          <Text style={sharedStyles.buttonText}>URL</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => setTab("text")}
-          style={tab === "text" ? sharedStyles.button : sharedStyles.buttonSecondary}
-        >
-          <Text style={sharedStyles.buttonText}>Text</Text>
-        </Pressable>
+  return <Screen>
+    <Button label="Back to imports" variant="secondary" onPress={onBack} />
+    <PageHeader title="Import recipe" subtitle="Some imports may take longer than others." />
+    <Section>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
+        <Button label="URL" variant={tab === "url" ? "primary" : "secondary"} onPress={() => setTab("url")} />
+        <Button label="Text" variant={tab === "text" ? "primary" : "secondary"} onPress={() => setTab("text")} />
       </View>
-
-      {tab === "url" ? (
-        <>
-          <Text style={sharedStyles.label}>Recipe URL</Text>
-          <TextInput
-            value={url}
-            onChangeText={setUrl}
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="https://example.com/recipe"
-            placeholderTextColor={colors.note}
-            style={sharedStyles.input}
-          />
-        </>
-      ) : (
-        <>
-          <Text style={sharedStyles.label}>Recipe text</Text>
-          <TextInput
-            value={text}
-            onChangeText={setText}
-            multiline
-            numberOfLines={10}
-            placeholder="Paste recipe text…"
-            placeholderTextColor={colors.note}
-            style={[sharedStyles.input, { minHeight: 160, textAlignVertical: "top" }]}
-          />
-        </>
-      )}
-
-      {statusText ? (
-        <Text style={sharedStyles.note}>Status: {statusText}</Text>
-      ) : null}
-      {error ? <Text style={sharedStyles.error}>{error}</Text> : null}
-
-      <Pressable
-        accessibilityRole="button"
-        disabled={submitting}
-        onPress={() => void submit()}
-        style={sharedStyles.button}
-      >
-        {submitting ? (
-          <ActivityIndicator color={colors.badge} />
-        ) : (
-          <Text style={sharedStyles.buttonText}>Start import</Text>
-        )}
-      </Pressable>
-    </ScrollView>
-  );
+    </Section>
+    {tab === "url" ? <Field label="Recipe URL" control={<TextInput value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} placeholder="https://example.com/recipe" />} /> : <TextArea label="Recipe text" value={text} onChangeText={setText} numberOfLines={10} placeholder="Paste recipe text…" />}
+    {activePresentation ? <InlineNotice tone="info" message={activePresentation.label} /> : null}
+    {session.terminalSummary ? <InlineNotice tone={session.terminalSummary.status === "completed" ? "success" : session.terminalSummary.status === "failed" ? "error" : session.terminalSummary.status === "review_required" || session.terminalSummary.status === "timed_out" ? "warning" : "info"} message={terminalCopy(session.terminalSummary.status)} /> : null}
+    {session.terminalSummary?.canRetry ? <Button label="Retry import" variant="secondary" onPress={() => void session.retryImport()} /> : null}
+    {validationError ? <InlineNotice tone="error" message={validationError} /> : null}
+    {session.error ? <InlineNotice tone="error" message={session.error} /> : null}
+    <Button label="Start import" loading={session.isStarting} onPress={submit} />
+  </Screen>;
 }

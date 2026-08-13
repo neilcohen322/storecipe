@@ -81,6 +81,29 @@ Copy `EXPO_PUBLIC_AUTH0_DOMAIN`, `EXPO_PUBLIC_AUTH0_CLIENT_ID`, and
 `EXPO_PUBLIC_CATALOG_API_URL` / `EXPO_PUBLIC_INGESTION_API_URL`. Live Google login
 against the development Auth0 SPA is working for local Compose; MCP tunnel / DCR /
 OBO proof remains Week 13 (stable public MCP URL).
+### Expo client operation
+
+Run the web client with `pnpm run web`; run native development with `pnpm run android`
+or `pnpm run ios` from `apps/web`. The current Auth0 SPA registration must use these
+exact local web URLs for both callback and logout: `http://localhost:8081`; its Allowed
+Web Origins value is also `http://localhost:8081`. Native Auth0 redirect URLs are not
+configured yet because this Expo config deliberately has no iOS bundle identifier or
+Android application ID; add those identifiers and their platform-specific Auth0 URLs
+as part of a native-release change, not as a wildcard local setting.
+
+Expo Router owns browser history and these routes: `/`, `/recipes`,
+`/recipes/new`, `/recipes/:recipeId`, `/imports`, `/imports/new`, `/account`, and
+`/more`. Theme starts in system mode, follows OS changes while in that mode, and
+persists an explicit light, dark, or system choice locally.
+
+Browser E2E fixtures are compiled in only when `EXPO_PUBLIC_E2E_MODE=true`; normal
+production exports select the real Auth0 provider. `pnpm run test:production-bundle`
+rebuilds without that variable and fails if E2E fixture markers appear in `dist`.
+Playwright retains traces and screenshots only on failure in `apps/web/test-results`;
+inspect that directory (or the CI `playwright-failure-diagnostics` artifact) when a
+browser gate fails. Recipe artwork is deterministic placeholder-only media until the
+later object-storage work.
+
 ## Quality checks
 
 ```powershell

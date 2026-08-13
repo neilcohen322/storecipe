@@ -72,7 +72,9 @@ Push-Location apps/web
 try {
     Invoke-Step 'pnpm install (frozen)' { pnpm install --frozen-lockfile }
     Invoke-Step 'pnpm typecheck' { pnpm run typecheck }
-    Invoke-Step 'pnpm test' { pnpm test }
+    Invoke-Step 'pnpm test' { pnpm test --runInBand }
+    Invoke-Step 'pnpm production web export' { pnpm run build:web }
+    Invoke-Step 'pnpm browser tests' { pnpm run test:e2e }
 } finally {
     Pop-Location
 }

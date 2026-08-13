@@ -7,7 +7,7 @@ export function parseRecipeLines(value: string): string[] {
 
 export type RecipeCreateFingerprintInput = {
   title: string;
-  ingredients: ReadonlyArray<{ rawText: string; name: string }>;
+  ingredients: readonly string[];
   instructions: readonly string[];
 };
 

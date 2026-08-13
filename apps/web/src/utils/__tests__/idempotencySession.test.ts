@@ -33,21 +33,15 @@ test("rotates key when the payload fingerprint changes", () => {
   expect(created).toBe(2);
 });
 
-test("recipe fingerprint ignores whitespace-only form edits", () => {
-  const ingredients = parseRecipeLines("flour\n\n  salt  \n").map((rawText) => ({
-    rawText,
-    name: rawText,
-  }));
+test("recipe fingerprint is exactly the normalized title, ingredients, and instructions", () => {
+  const ingredients = parseRecipeLines("flour\n\n  salt  \n");
   const instructions = parseRecipeLines("mix\n  \nbake\n");
   const compact = fingerprintRecipeCreate({
     title: "Soup",
     ingredients,
     instructions,
   });
-  const paddedIngredients = parseRecipeLines("flour\n\n\n  salt  \n\n").map((rawText) => ({
-    rawText,
-    name: rawText,
-  }));
+  const paddedIngredients = parseRecipeLines("flour\n\n\n  salt  \n\n");
   const paddedInstructions = parseRecipeLines("mix\n\n\nbake\n\n");
   const padded = fingerprintRecipeCreate({
     title: "Soup",
@@ -56,6 +50,7 @@ test("recipe fingerprint ignores whitespace-only form edits", () => {
   });
 
   expect(padded).toBe(compact);
+  expect(compact).toBe(JSON.stringify({ title: "Soup", ingredients: ["flour", "salt"], instructions: ["mix", "bake"] }));
 });
 
 test("import attempt keeps jobId across same-payload retries", () => {

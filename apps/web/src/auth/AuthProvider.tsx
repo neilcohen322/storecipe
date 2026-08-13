@@ -21,12 +21,13 @@ export type AuthContextValue = {
   isLoading: boolean;
   isAuthenticated: boolean;
   errorMessage: string | null;
+  user: { name?: string; email?: string; picture?: string } | null;
   login(): Promise<void>;
   logout(): Promise<void>;
   getAccessToken(): Promise<string>;
 };
 
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+export const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 function webRedirectUrl(): string | undefined {
   if (Platform.OS !== "web") {
@@ -42,7 +43,7 @@ function AuthSession({
   audience,
   children,
 }: PropsWithChildren<{ audience: string }>) {
-  const { user, isLoading, error, authorize, clearSession, getCredentials } =
+  const { user, isLoading, error, authorize, clearSession, getApiCredentials } =
     useAuth0();
 
   const login = useCallback(async () => {
@@ -51,6 +52,7 @@ function AuthSession({
     const redirectUrl = webRedirectUrl();
     await authorize({
       audience,
+      connection: "google-oauth2",
       scope: AUTH_SCOPE,
       ...(redirectUrl ? { redirectUrl } : {}),
     });
@@ -62,15 +64,16 @@ function AuthSession({
   }, [clearSession]);
 
   const getAccessToken = useCallback(async () => {
-    const credentials = await getCredentials(AUTH_SCOPE, 0, { audience });
+    const credentials = await getApiCredentials(audience, AUTH_SCOPE);
     return credentials.accessToken;
-  }, [audience, getCredentials]);
+  }, [audience, getApiCredentials]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       isLoading,
       isAuthenticated: user !== null,
       errorMessage: error?.message ?? null,
+      user: user ? { name: user.name, email: user.email, picture: user.picture } : null,
       login,
       logout,
       getAccessToken,
@@ -83,13 +86,16 @@ function AuthSession({
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const { domain, clientId, audience } = getAuth0Config();
-  // Auth0Provider's public props type is platform-agnostic Auth0Options; refresh
-  // tokens are a web Auth0 SPA option consumed at runtime by the web adapter.
+  // Auth0Provider's public props type is platform-agnostic Auth0Options; these
+  // web Auth0 SPA options are consumed at runtime by the web adapter.
   const providerProps = {
     domain,
     clientId,
     useDPoP: false,
     useRefreshTokens: true,
+    ...(Platform.OS === "web"
+      ? { cacheLocation: "localstorage" as const }
+      : {}),
   } as ComponentProps<typeof ReactNativeAuth0Provider>;
 
   return (

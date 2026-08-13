@@ -1,0 +1,1 @@
+export { RecipeMedia } from "./index";

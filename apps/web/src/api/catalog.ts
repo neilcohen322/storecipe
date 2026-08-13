@@ -85,7 +85,11 @@ export type ListRecipesParams = {
   limit?: number;
 };
 
-function buildRecipeQueryPath(params?: ListRecipesParams): string {
+export type ListRecipesOptions = {
+  signal?: AbortSignal;
+};
+
+export function buildRecipeQueryPath(params?: ListRecipesParams): string {
   if (!params) {
     return "/v1/recipes";
   }
@@ -115,8 +119,16 @@ function buildRecipeQueryPath(params?: ListRecipesParams): string {
 }
 
 export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
-  const listRecipes = (params?: ListRecipesParams): Promise<RecipeQueryPage> =>
-    client.getJson<RecipeQueryPage>(buildRecipeQueryPath(params));
+  const listRecipes = async (params?: ListRecipesParams, options: ListRecipesOptions = {}): Promise<RecipeQueryPage> => {
+    const page = await client.getJson<unknown>(buildRecipeQueryPath(params), options);
+    if (!page || typeof page !== "object" || !Array.isArray((page as { items?: unknown }).items)) {
+      throw new Error("Invalid recipe library response");
+    }
+    return {
+      items: (page as { items: RecipeQueryItem[] }).items,
+      nextCursor: typeof (page as { nextCursor?: unknown }).nextCursor === "string" ? (page as { nextCursor: string }).nextCursor : null,
+    };
+  };
 
   const getRecipe = (id: string): Promise<Recipe> =>
     client.getJson<Recipe>(`/v1/recipes/${id}`);
