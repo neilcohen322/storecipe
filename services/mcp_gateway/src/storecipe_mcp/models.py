@@ -290,6 +290,13 @@ class RecipeFacetSelectionsRequest(ApiModel):
 
 
 class RecipeFacetSelectionItem(ApiModel):
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+        str_strip_whitespace=False,
+        extra="forbid",
+    )
+
     requested_name: str
     normalized_name: str
     observed: bool

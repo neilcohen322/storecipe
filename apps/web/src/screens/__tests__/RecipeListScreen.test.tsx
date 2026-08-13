@@ -403,6 +403,28 @@ test("debounces isolated ingredient-lane search without clobbering the other lan
   expect(screen.getByRole("button", { name: "zucchini" })).toBeTruthy();
 });
 
+test("does not paint a stale lane search after the user types again", async () => {
+  jest.useFakeTimers();
+  const firstSearch = deferred<RecipeFacetPage>();
+  const listRecipeFacets = jest.fn()
+    .mockResolvedValueOnce(defaultFacetPage())
+    .mockReturnValueOnce(firstSearch.promise)
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["ketchup"] }));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
+  await act(async () => { await Promise.resolve(); });
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(1));
+  await fireEvent.changeText(screen.getByLabelText("Required ingredients"), "tom");
+  await act(async () => { jest.advanceTimersByTime(300); });
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(2));
+  await fireEvent.changeText(screen.getByLabelText("Required ingredients"), "toma");
+  await act(async () => { firstSearch.resolve(defaultFacetPage({ ingredients: ["stale-match"] })); });
+  expect(screen.queryByRole("button", { name: "stale-match" })).toBeNull();
+  await act(async () => { jest.advanceTimersByTime(300); });
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(screen.getByRole("button", { name: "ketchup" })).toBeTruthy());
+  expect(screen.queryByRole("button", { name: "stale-match" })).toBeNull();
+});
+
 test("load more merges unique first-seen names and then disappears", async () => {
   const listRecipeFacets = jest.fn()
     .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))

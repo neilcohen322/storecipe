@@ -155,6 +155,8 @@ class RecipeFacetSelectionsRequest(ApiModel):
 
 
 class RecipeFacetSelectionItem(ApiModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
     requested_name: str
     normalized_name: str
     observed: bool

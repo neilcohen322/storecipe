@@ -311,6 +311,8 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
 
   const searchLane = (id: LaneId, value: string) => {
     const runtime = runtimes.current[id];
+    runtime.controller?.abort();
+    runtime.generation += 1;
     patchLane(id, { search: value, nextCursor: null });
     if (runtime.debounce) clearTimeout(runtime.debounce);
     runtime.debounce = setTimeout(() => {

@@ -10,6 +10,7 @@ from storecipe_mcp.models import (
     RatingView,
     RecipeCreate,
     RecipeCreateIdempotencyKey,
+    RecipeFacetSelectionItem,
     RecipeQueryPage,
     RecipeQueryRequest,
     RecipeView,
@@ -222,3 +223,15 @@ def test_recipe_create_idempotency_key_accepts_uuid_like_values() -> None:
     value = "550e8400-e29b-41d4-a716-446655440000"
 
     assert TypeAdapter(RecipeCreateIdempotencyKey).validate_python(value) == value
+
+
+def test_facet_selection_item_preserves_padded_requested_name() -> None:
+    item = RecipeFacetSelectionItem.model_validate(
+        {
+            "requestedName": "  tomato  ",
+            "normalizedName": "tomato",
+            "observed": True,
+        }
+    )
+    assert item.requested_name == "  tomato  "
+    assert item.model_dump(by_alias=True)["requestedName"] == "  tomato  "

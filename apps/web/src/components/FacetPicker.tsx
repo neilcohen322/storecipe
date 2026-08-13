@@ -60,7 +60,6 @@ export function FacetPicker({
         value={search}
         onChangeText={onSearch}
         accessibilityLabel={label}
-        editable={!loading}
         style={[
           styles.search,
           {

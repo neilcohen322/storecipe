@@ -65,6 +65,27 @@ test("renders selected chips and observed option buttons", async () => {
   expect(onRemove).toHaveBeenCalledWith("basil");
 });
 
+test("search stays editable while loading", async () => {
+  const onSearch = jest.fn();
+  const screen = await render(
+    <FacetPicker
+      label="Required ingredients"
+      selected={[]}
+      options={[]}
+      search=""
+      onSearch={onSearch}
+      hasMore={false}
+      loadingMore={false}
+      onLoadMore={jest.fn()}
+      loading
+      onAdd={jest.fn()}
+      onRemove={jest.fn()}
+    />,
+  );
+  await fireEvent.changeText(screen.getByLabelText("Required ingredients"), "ketchup");
+  expect(onSearch).toHaveBeenCalledWith("ketchup");
+});
+
 test("load more is available until the next cursor is null", async () => {
   const onLoadMore = jest.fn();
   const first = await render(

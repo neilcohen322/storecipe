@@ -327,6 +327,25 @@ async def test_facet_selections_map_requested_names_with_catalog_casefold(
 
 
 @pytest.mark.asyncio
+async def test_facet_selections_preserve_padded_requested_name(
+    api_client: AsyncClient,
+) -> None:
+    await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "facets-padded-tomato"},
+        json=_payload(),
+    )
+    response = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["  tomato  "]},
+    )
+    assert response.status_code == 200
+    assert response.json()["ingredients"] == [
+        {"requestedName": "  tomato  ", "normalizedName": "tomato", "observed": True}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_empty_library_returns_unobserved_results_for_supplied_names(
     api_client: AsyncClient,
 ) -> None:
