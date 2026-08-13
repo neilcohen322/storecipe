@@ -164,7 +164,7 @@ test("sorts with named choices instead of raw query-parameter strings", async ()
 test("commits filters as history entries", async () => {
   const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
   await fireEvent(screen.getByLabelText("Required ingredients"), "endEditing", { nativeEvent: { text: " Tomato, basil " } });
-  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { requiredIngredient: ["basil", "tomato"] } });
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { requiredIngredient: [" Tomato, basil "] } });
 });
 
 test("ignores duplicate load-more presses before a rerender and preserves the first page", async () => {

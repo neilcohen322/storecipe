@@ -7,12 +7,23 @@ import type { createCatalogApi, ListRecipesParams, RecipeQueryItem, RecipeSort }
 import { RecipeCard } from "../components/RecipeCard";
 import { Button, EmptyState, ErrorState, Field, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Section, Skeleton } from "../components";
 import { useTheme } from "../theme/ThemeProvider";
+import {
+  DEFAULT_SORT,
+  normalizeRecipeListParams,
+  serializeRecipeListParams,
+  type RouteQuery,
+} from "./recipeListParams";
 
-type RouteValue = string | string[] | undefined;
-type RouteQuery = Record<string, RouteValue>;
+export {
+  applyCanonicalSelections,
+  DEFAULT_SORT,
+  dropDependentSorts,
+  normalizeRecipeListParams,
+  routeStrings,
+  sameStringList,
+  serializeRecipeListParams,
+} from "./recipeListParams";
 type LibraryError = "none" | "offline" | "generic";
-const SORTS: RecipeSort[] = ["ingredientCoverage:asc", "ingredientCoverage:desc", "tagCoverage:asc", "tagCoverage:desc", "rating:asc", "rating:desc", "totalMinutes:asc", "totalMinutes:desc", "createdAt:asc", "createdAt:desc", "updatedAt:asc", "updatedAt:desc", "title:asc", "title:desc"];
-const DEFAULT_SORT: RecipeSort[] = ["updatedAt:desc"];
 const SORT_CHOICES: { value: RecipeSort; label: string }[] = [
   { value: "updatedAt:desc", label: "Recently updated" },
   { value: "createdAt:desc", label: "Newest" },
@@ -32,9 +43,6 @@ function sortChoices(params: ListRecipesParams): { value: RecipeSort; label: str
   ];
 }
 
-function strings(value: RouteValue): string[] { return (Array.isArray(value) ? value : value ? [value] : []).flatMap((entry) => entry.split(",")).map((entry) => entry.trim().replace(/\s+/g, " ")).filter(Boolean); }
-function normalizedSet(value: RouteValue): string[] { return [...new Set(strings(value).map((entry) => entry.toLocaleLowerCase()))].sort((a, b) => a.localeCompare(b)); }
-function numberValue(value: RouteValue, minimum: number, maximum = Number.MAX_SAFE_INTEGER): number | null { const raw = Array.isArray(value) ? value[0] : value; const parsed = raw === undefined ? Number.NaN : Number(raw); return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null; }
 function isAbortError(error: unknown): boolean { return error instanceof Error && error.name === "AbortError"; }
 export function isOfflineError(error: unknown): boolean {
   if (error instanceof ApiNetworkError) return true;
@@ -56,26 +64,6 @@ export function createPaginationRequestGuard() {
     finish: (requestId: number) => { if (activeRequestId === requestId) activeRequestId = null; },
     reset: () => { activeRequestId = null; },
   };
-}
-
-export function normalizeRecipeListParams(route: RouteQuery): ListRecipesParams {
-  const text = strings(route.text).join(" ").toLocaleLowerCase() || null;
-  const requiredIngredient = normalizedSet(route.requiredIngredient); const availableIngredient = normalizedSet(route.availableIngredient);
-  const requiredTag = normalizedSet(route.requiredTag); const preferredTag = normalizedSet(route.preferredTag);
-  const seenSortFields = new Set<string>();
-  const sort = strings(route.sort).filter((entry): entry is RecipeSort => (SORTS as string[]).includes(entry)).filter((entry) => { const field = entry.split(":")[0]; if (seenSortFields.has(field)) return false; seenSortFields.add(field); return true; }).filter((entry) => entry.split(":")[0] !== "ingredientCoverage" || availableIngredient.length > 0).filter((entry) => entry.split(":")[0] !== "tagCoverage" || preferredTag.length > 0);
-  const ratingState = route.ratingState === "rated" || route.ratingState === "unrated" ? route.ratingState : "any";
-  const maxTotalMinutes = numberValue(route.maxTotalMinutes, 0); const minRating = ratingState === "unrated" ? null : numberValue(route.minRating, 1, 5);
-  return { ...(text ? { text } : {}), ...(requiredIngredient.length ? { requiredIngredient } : {}), ...(availableIngredient.length ? { availableIngredient } : {}), ...(requiredTag.length ? { requiredTag } : {}), ...(preferredTag.length ? { preferredTag } : {}), ...(maxTotalMinutes !== null ? { maxTotalMinutes } : {}), ...(minRating !== null ? { minRating } : {}), ...(ratingState !== "any" ? { ratingState } : {}), sort: sort.length ? sort : DEFAULT_SORT, limit: 20 };
-}
-
-export function serializeRecipeListParams(params: ListRecipesParams): Record<string, string | string[]> {
-  const { limit: _limit, cursor: _cursor, ...query } = params; const serialized: Record<string, string | string[]> = {};
-  for (const key of ["text", "requiredIngredient", "availableIngredient", "requiredTag", "preferredTag", "maxTotalMinutes", "minRating", "ratingState", "sort"] as const) {
-    const value = query[key]; if (value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0) || (key === "ratingState" && value === "any") || (key === "sort" && Array.isArray(value) && value.join("|") === DEFAULT_SORT.join("|"))) continue;
-    serialized[key] = Array.isArray(value) ? value : String(value);
-  }
-  return serialized;
 }
 
 export type RecipeListScreenProps = { catalog: ReturnType<typeof createCatalogApi>; onOpenDetail(recipeId: string): void; onCreate(): void; onImport(): void; onLogout(): void; onUnauthorized(): void; };
