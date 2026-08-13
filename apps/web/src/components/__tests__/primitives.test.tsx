@@ -34,7 +34,7 @@ describe("accessible token-driven primitives", () => {
     const states: PressableStateCallbackType[] = [];
     const style = (state: PressableStateCallbackType) => {
       states.push(state);
-      return { opacity: state.hovered ? 0.5 : 1 };
+      return { opacity: state.pressed ? 0.5 : 1 };
     };
     const { getByRole } = await renderWithTheme(<Button label="Stateful" style={style} />);
 
