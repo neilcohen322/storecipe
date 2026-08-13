@@ -21,6 +21,7 @@ from catalog.services.errors import (
     InvalidCursor,
     InvalidFilter,
     RecipeNotFound,
+    StaleRecipeFacetCursor,
     StaleRecipeQueryCursor,
 )
 
@@ -31,7 +32,7 @@ token_verifier = build_token_verifier(settings)
 def _status_for(exc: CatalogError) -> int:
     if isinstance(exc, RecipeNotFound):
         return status.HTTP_404_NOT_FOUND
-    if isinstance(exc, StaleRecipeQueryCursor):
+    if isinstance(exc, StaleRecipeQueryCursor | StaleRecipeFacetCursor):
         return status.HTTP_409_CONFLICT
     if isinstance(exc, IdempotencyConflict):
         return status.HTTP_409_CONFLICT
@@ -46,14 +47,18 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
         raise exc
     detail = "Recipe not found." if isinstance(exc, RecipeNotFound) else str(exc)
     problem_type = (
-        f"{PROBLEM_TYPE_BASE}/stale_recipe_query_cursor"
+        f"{PROBLEM_TYPE_BASE}/stale_recipe_facet_cursor"
+        if isinstance(exc, StaleRecipeFacetCursor)
+        else f"{PROBLEM_TYPE_BASE}/stale_recipe_query_cursor"
         if isinstance(exc, StaleRecipeQueryCursor)
         else f"{PROBLEM_TYPE_BASE}/idempotency_conflict"
         if isinstance(exc, IdempotencyConflict)
         else None
     )
     extra: dict[str, object] | None = None
-    if isinstance(exc, StaleRecipeQueryCursor):
+    if isinstance(exc, StaleRecipeFacetCursor):
+        extra = {"errorCategory": "stale_recipe_facet_cursor"}
+    elif isinstance(exc, StaleRecipeQueryCursor):
         extra = {"errorCategory": "stale_recipe_query_cursor"}
     elif isinstance(exc, IdempotencyConflict):
         extra = {"errorCategory": "idempotency_conflict"}

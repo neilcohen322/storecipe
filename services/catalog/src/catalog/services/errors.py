@@ -10,7 +10,7 @@ for a stable import path.
 
 from uuid import UUID
 
-from catalog.errors import CatalogError, InvalidCursor, StaleRecipeQueryCursor
+from catalog.errors import CatalogError, InvalidCursor, StaleRecipeFacetCursor, StaleRecipeQueryCursor
 
 __all__ = [
     "CatalogError",
@@ -18,6 +18,7 @@ __all__ = [
     "InvalidCursor",
     "InvalidFilter",
     "RecipeNotFound",
+    "StaleRecipeFacetCursor",
     "StaleRecipeQueryCursor",
 ]
 

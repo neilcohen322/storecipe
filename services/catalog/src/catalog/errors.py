@@ -17,3 +17,10 @@ class StaleRecipeQueryCursor(CatalogError):
 
     def __init__(self) -> None:
         super().__init__("Recipe query cursor is stale.")
+
+
+class StaleRecipeFacetCursor(CatalogError):
+    """A valid facet cursor belongs to an older catalog version."""
+
+    def __init__(self) -> None:
+        super().__init__("Recipe facet cursor is stale.")
