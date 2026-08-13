@@ -202,6 +202,24 @@ paths:
         "409": {$ref: "#/components/responses/StaleRecipeFacetCursor"}
         "414": {$ref: "#/components/responses/UriTooLong"}
         "422": {$ref: "#/components/responses/ValidationError"}
+  /v1/recipe-facet-selections:
+    post:
+      operationId: resolveRecipeFacetSelections
+      description: Requires the `recipes:read` scope. Resolves requested names to Catalog canonical form and exact observed membership.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RecipeFacetSelectionsRequest"}
+      responses:
+        "200":
+          description: Canonical names and observed membership for requested facet selections
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecipeFacetSelectionsResponse"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
@@ -549,6 +567,36 @@ components:
           type: array
           items: {type: string, enum: [any, rated, unrated]}
         sort: {$ref: "#/components/schemas/RecipeFacetSort"}
+    RecipeFacetSelectionsRequest:
+      type: object
+      properties:
+        ingredients:
+          type: array
+          maxItems: 96
+          default: []
+          items: {type: string, minLength: 1, maxLength: 200}
+        tags:
+          type: array
+          maxItems: 32
+          default: []
+          items: {type: string, minLength: 1, maxLength: 64}
+    RecipeFacetSelection:
+      type: object
+      required: [requestedName, normalizedName, observed]
+      properties:
+        requestedName: {type: string}
+        normalizedName: {type: string}
+        observed: {type: boolean}
+    RecipeFacetSelectionsResponse:
+      type: object
+      required: [ingredients, tags]
+      properties:
+        ingredients:
+          type: array
+          items: {$ref: "#/components/schemas/RecipeFacetSelection"}
+        tags:
+          type: array
+          items: {$ref: "#/components/schemas/RecipeFacetSelection"}
     ImportAccepted:
       type: object
       required: [jobId, status]

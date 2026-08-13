@@ -11,12 +11,17 @@ from catalog.recipe_facets import (
     RecipeFacetBrowseRequest,
     RecipeFacetCursor,
     RecipeFacetPage,
+    RecipeFacetSelectionItem,
+    RecipeFacetSelectionsRequest,
+    RecipeFacetSelectionsResponse,
     encode_facet_cursor,
     facet_search_hash,
     validate_facet_cursor,
 )
+from catalog.recipe_queries import normalize_query_text
 from catalog.repositories.recipe_facets import (
     fetch_distinct_facet_names,
+    fetch_observed_names,
     fetch_total_minutes_bounds,
 )
 from catalog.services.users import resolve_user
@@ -117,4 +122,45 @@ async def browse_recipe_facets(
         rating=RECIPE_FACET_RATING,
         rating_state=list(RECIPE_FACET_RATING_STATES),
         sort=RECIPE_FACET_SORT,
+    )
+
+
+async def _resolve_kind(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    kind: FacetKind,
+    requested: list[str],
+) -> list[RecipeFacetSelectionItem]:
+    normalized_names = [normalize_query_text(name) for name in requested]
+    observed = await fetch_observed_names(session, user_id, kind=kind, names=normalized_names)
+    return [
+        RecipeFacetSelectionItem(
+            requested_name=name,
+            normalized_name=normalized,
+            observed=normalized in observed,
+        )
+        for name, normalized in zip(requested, normalized_names, strict=True)
+    ]
+
+
+async def resolve_recipe_facet_selections(
+    session: AsyncSession,
+    subject: str,
+    request: RecipeFacetSelectionsRequest,
+) -> RecipeFacetSelectionsResponse:
+    user = await resolve_user(session, subject)
+    return RecipeFacetSelectionsResponse(
+        ingredients=await _resolve_kind(
+            session,
+            user_id=user.id,
+            kind=FacetKind.INGREDIENT,
+            requested=request.ingredients,
+        ),
+        tags=await _resolve_kind(
+            session,
+            user_id=user.id,
+            kind=FacetKind.TAG,
+            requested=request.tags,
+        ),
     )

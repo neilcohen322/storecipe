@@ -108,6 +108,22 @@ def test_openapi_31_uses_type_unions_instead_of_legacy_nullable() -> None:
     assert parameter_schemas["cursor"]["type"] == ["string", "null"]
 
 
+def test_recipe_facet_selections_post_documents_resolution_contract() -> None:
+    contract = _contract()
+    operation = contract["paths"]["/v1/recipe-facet-selections"]["post"]
+    schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    if "$ref" in schema:
+        schema = contract["components"]["schemas"][schema["$ref"].rsplit("/", 1)[-1]]
+    ingredients = schema["properties"]["ingredients"]
+    tags = schema["properties"]["tags"]
+    assert ingredients["maxItems"] == 96
+    assert ingredients["items"] == {"type": "string", "minLength": 1, "maxLength": 200}
+    assert tags["maxItems"] == 32
+    assert tags["items"] == {"type": "string", "minLength": 1, "maxLength": 64}
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema == {"$ref": "#/components/schemas/RecipeFacetSelectionsResponse"}
+
+
 def test_recipe_facets_get_documents_browse_contract() -> None:
     contract = _contract()
     operation = contract["paths"]["/v1/recipe-facets"]["get"]

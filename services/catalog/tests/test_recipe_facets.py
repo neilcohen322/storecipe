@@ -295,3 +295,114 @@ async def test_omitting_min_rating_includes_unrated_recipes(api_client: AsyncCli
     filtered_ids = {item["recipe"]["id"] for item in filtered.json()["items"]}
     assert rated.json()["id"] in filtered_ids
     assert unrated.json()["id"] not in filtered_ids
+
+
+@pytest.mark.asyncio
+async def test_facet_selections_map_requested_names_with_catalog_casefold(
+    api_client: AsyncClient,
+) -> None:
+    await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "facets-strasse"},
+        json=_payload(
+            ingredients=[
+                {"rawText": "Straße", "name": "Straße"},
+                {"rawText": "tomato", "name": "tomato"},
+            ],
+            tags=["Weeknight"],
+        ),
+    )
+    response = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["Straße", "tomato", "tomato"], "tags": ["Weeknight"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["ingredients"] == [
+        {"requestedName": "Straße", "normalizedName": "strasse", "observed": True},
+        {"requestedName": "tomato", "normalizedName": "tomato", "observed": True},
+    ]
+    assert response.json()["tags"] == [
+        {"requestedName": "Weeknight", "normalizedName": "weeknight", "observed": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_empty_library_returns_unobserved_results_for_supplied_names(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["ghost"], "tags": []},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "ingredients": [{"requestedName": "ghost", "normalizedName": "ghost", "observed": False}],
+        "tags": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_empty_library_with_empty_body_returns_empty_arrays(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post("/v1/recipe-facet-selections", json={})
+    assert response.status_code == 200
+    assert response.json() == {"ingredients": [], "tags": []}
+
+
+@pytest.mark.asyncio
+async def test_facet_selections_reject_empty_and_overlong_arrays(
+    api_client: AsyncClient,
+) -> None:
+    empty_item = await api_client.post("/v1/recipe-facet-selections", json={"ingredients": ["   "]})
+    too_many = await api_client.post(
+        "/v1/recipe-facet-selections", json={"ingredients": ["x"] * 97}
+    )
+    assert empty_item.status_code == 422
+    assert too_many.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_membership_does_not_depend_on_browse_page(
+    api_client: AsyncClient,
+) -> None:
+    await api_client.post(
+        "/v1/recipes", headers={"Idempotency-Key": "facets-page"}, json=_payload()
+    )
+    page = await api_client.get("/v1/recipe-facets", params={"ingredientLimit": 1})
+    assert "zucchini" not in page.json()["ingredients"]
+    resolved = await api_client.post(
+        "/v1/recipe-facet-selections", json={"ingredients": ["zucchini"]}
+    )
+    assert resolved.json()["ingredients"] == [
+        {"requestedName": "zucchini", "normalizedName": "zucchini", "observed": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_facet_selections_membership_is_owner_scoped(
+    api_client: AsyncClient,
+) -> None:
+    current_subject = "auth0|owner-b"
+
+    async def principal_for_request() -> Principal:
+        return Principal(
+            subject=current_subject,
+            scopes=frozenset({"recipes:read", "recipes:write"}),
+            claims={},
+        )
+
+    app.dependency_overrides[get_principal] = principal_for_request
+    await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "facets-saffron"},
+        json=_payload(ingredients=[{"rawText": "saffron", "name": "saffron"}]),
+    )
+    current_subject = "auth0|owner-a"
+    response = await api_client.post(
+        "/v1/recipe-facet-selections", json={"ingredients": ["saffron"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["ingredients"] == [
+        {"requestedName": "saffron", "normalizedName": "saffron", "observed": False}
+    ]

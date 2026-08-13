@@ -129,6 +129,42 @@ class RecipeFacetPage(ApiModel):
     sort: RecipeFacetSort
 
 
+class RecipeFacetSelectionsRequest(ApiModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
+
+    ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=96
+    )
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=32
+    )
+
+    @field_validator("ingredients", "tags")
+    @classmethod
+    def unique_requested_names(cls, value: list[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not normalize_query_text(item):
+                raise ValueError("List items cannot be empty after normalization")
+            if item in seen:
+                continue
+            seen.add(item)
+            unique.append(item)
+        return unique
+
+
+class RecipeFacetSelectionItem(ApiModel):
+    requested_name: str
+    normalized_name: str
+    observed: bool
+
+
+class RecipeFacetSelectionsResponse(ApiModel):
+    ingredients: list[RecipeFacetSelectionItem]
+    tags: list[RecipeFacetSelectionItem]
+
+
 RECIPE_FACET_RATING = RecipeFacetBounds(min=1, max=5)
 RECIPE_FACET_RATING_STATES: list[Literal["any", "rated", "unrated"]] = ["any", "rated", "unrated"]
 RECIPE_FACET_SORT = RecipeFacetSort(
