@@ -32,4 +32,4 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   </View>;
 }
 
-const styles = StyleSheet.create({ sidebar: { minHeight: "100%", borderRightWidth: 1, padding: 8, gap: 16 }, toggle: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }, group: { gap: 8 }, link: { minWidth: 44, minHeight: 44, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 } });
+const styles = StyleSheet.create({ sidebar: { flex: 1, minWidth: 0, borderRightWidth: 1, padding: 8, gap: 16 }, toggle: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }, group: { gap: 8 }, link: { minWidth: 44, minHeight: 44, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 } });

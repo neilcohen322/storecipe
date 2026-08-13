@@ -15,7 +15,7 @@ export function MoreScreen({ onNavigate, onLogout }: { onNavigate(href: Href): v
   return (
     <ScrollView
       testID="more-scroll-view"
-      style={{ backgroundColor: theme.colors.canvas }}
+      style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.canvas }}
       contentContainerStyle={styles.screen}
     >
       <Text accessibilityRole="header" style={[styles.title, { color: theme.colors.text }]}>More</Text>

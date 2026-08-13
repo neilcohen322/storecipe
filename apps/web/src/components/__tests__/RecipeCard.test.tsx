@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
-import { Platform } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 
 import type { RecipeQueryItem } from "../../api/catalog";
 import { RecipeCard } from "../RecipeCard";
@@ -47,6 +47,7 @@ test("opens a recipe from an accessible stable card with deterministic theme med
 
   expect(onOpen).toHaveBeenCalledWith("recipe-1");
   expect(initialMediaStyle).toEqual(expect.arrayContaining([expect.objectContaining({ backgroundColor: "#b7791f" })]));
+  expect(StyleSheet.flatten(initialMediaStyle)).toEqual(expect.objectContaining({ minHeight: 140, width: "100%" }));
   expect(first.getByText("25 min · 4/5")).toBeTruthy();
 });
 

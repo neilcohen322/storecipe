@@ -55,6 +55,11 @@ describe("AppShell", () => {
       paddingBottom: 20,
     });
     expect(StyleSheet.flatten(getByTestId("app-shell-compact").props.style).paddingBottom).toBe(64);
+    expect(StyleSheet.flatten(getByTestId("app-shell-content").props.style)).toMatchObject({
+      flex: 1,
+      minHeight: 0,
+      minWidth: 0,
+    });
   });
 
   it.each([768, 1440])("suppresses Create navigation and shows the desktop page action at %s", async (width) => {

@@ -35,7 +35,7 @@ export function RecipeCard({ item, onOpen, view }: RecipeCardProps) {
         { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, opacity: pressed ? 0.78 : 1 },
       ]}
     >
-      <View testID={`recipe-card-media-${recipe.id}`} style={[styles.mediaSlot, { backgroundColor: mediaColor(recipe.id, theme.colors) }]}>
+      <View testID={`recipe-card-media-${recipe.id}`} style={[styles.mediaSlot, view === "list" && styles.listMedia, { backgroundColor: mediaColor(recipe.id, theme.colors) }]}>
         <RecipeMedia title={recipe.title} tags={recipe.tags} />
       </View>
       <View style={styles.copy}>
@@ -48,10 +48,11 @@ export function RecipeCard({ item, onOpen, view }: RecipeCardProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { minHeight: 44, borderWidth: 1, borderRadius: 16, overflow: "hidden" },
+  container: { minHeight: 44, width: "100%", maxWidth: "100%", borderWidth: 1, borderRadius: 16, overflow: "hidden" },
   list: { flexDirection: "row" },
-  mediaSlot: { minHeight: 8 },
-  copy: { padding: 16, gap: 4, flex: 1 },
+  mediaSlot: { minHeight: 140, width: "100%" },
+  listMedia: { width: 112, minHeight: 112, minWidth: 112 },
+  copy: { padding: 16, gap: 4, flex: 1, minWidth: 0 },
   title: { fontSize: 18, fontWeight: "700" },
   details: { fontSize: 14 },
   tags: { fontSize: 12 },

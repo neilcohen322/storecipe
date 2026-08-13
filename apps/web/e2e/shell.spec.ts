@@ -18,7 +18,7 @@ test("renders the responsive shell, restores history, and has no serious accessi
   await expect(page.getByLabel("Preferred tags")).toHaveValue("vegetarian");
   await expect(page.getByLabel("Maximum total minutes")).toHaveValue("30");
   await expect(page.getByLabel("Minimum rating")).toHaveValue("4");
-  await expect(page.getByLabel("Sort order")).toHaveValue("rating:desc");
+  await expect(page.getByRole("button", { name: "Highest rated" })).toBeVisible();
 
   const compact = testInfo.project.name.startsWith("compact");
   await expect(page.getByTestId(compact ? "app-shell-compact" : testInfo.project.name.startsWith("medium") ? "app-shell-medium" : "app-shell-expanded")).toBeVisible();

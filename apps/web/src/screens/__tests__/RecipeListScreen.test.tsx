@@ -138,7 +138,10 @@ test("restores route-derived values in every visible filter after back-forward n
   expect(screen.getByLabelText("Preferred tags").props.value).toBe("family");
   expect(screen.getByLabelText("Maximum total minutes").props.value).toBe("30");
   expect(screen.getByLabelText("Minimum rating").props.value).toBe("4");
-  expect(screen.getByLabelText("Sort order").props.value).toBe("rating:desc, totalMinutes:asc");
+  expect(screen.getByRole("button", { name: "Highest rated" }).props.accessibilityState).toMatchObject({ selected: true });
+  expect(screen.queryByDisplayValue("rating:desc, totalMinutes:asc")).toBeNull();
+  expect(screen.queryByDisplayValue("requiredIngredient")).toBeNull();
+  expect(screen.getByText("Required ingredients")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Rated only" })).toBeTruthy();
 
   mockRouteParams = { text: "risotto", ratingState: "unrated" };
@@ -147,6 +150,15 @@ test("restores route-derived values in every visible filter after back-forward n
   expect(screen.getByLabelText("Required ingredients").props.value).toBe("");
   expect(screen.getByRole("button", { name: "Unrated only" })).toBeTruthy();
   await waitFor(() => expect(listRecipes).toHaveBeenCalledTimes(2));
+});
+
+test("sorts with named choices instead of raw query-parameter strings", async () => {
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Recently updated" })).toBeTruthy());
+  expect(screen.queryByPlaceholderText("Sort order")).toBeNull();
+  expect(screen.queryByDisplayValue("updatedAt:desc")).toBeNull();
+  await fireEvent.press(screen.getByRole("button", { name: "Highest rated" }));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { sort: ["rating:desc"] } });
 });
 
 test("commits filters as history entries", async () => {

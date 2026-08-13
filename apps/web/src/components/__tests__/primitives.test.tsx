@@ -96,9 +96,46 @@ describe("accessible token-driven primitives", () => {
       <Screen testID="screen"><Button label="Save" /><RatingControl value={2} onChange={() => undefined} /><StatusBadge status="success" /><InlineNotice message="Notice" /><Toast message="Toast" /></Screen>
     </>);
     const screen = getByTestId("screen", { includeHiddenElements: true });
+    expect(StyleSheet.flatten(screen.props.style)).toEqual(expect.objectContaining({ flex: 1 }));
     expect(screen.props.contentContainerStyle).toEqual(expect.arrayContaining([expect.objectContaining({ paddingTop: 26, paddingRight: 20, paddingBottom: 28, paddingLeft: 22 })]));
-    expect(getByTestId("screen-content", { includeHiddenElements: true }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ maxWidth: 1120 })]));
+    expect(getByTestId("screen-content", { includeHiddenElements: true }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ maxWidth: 1120, width: "100%" })]));
     expect(getByRole("button", { name: "Save", includeHiddenElements: true }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ minHeight: 44 })]));
+  });
+
+  it("keeps grid items shrinking inside the viewport instead of stretching off-screen", async () => {
+    const { getAllByTestId } = await renderWithTheme(
+      <ResponsiveGrid testID="grid"><Text>One</Text><Text>Two</Text><Text>Three</Text></ResponsiveGrid>,
+    );
+    for (const item of getAllByTestId("responsive-grid-item")) {
+      expect(StyleSheet.flatten(item.props.style)).toEqual(expect.objectContaining({
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 260,
+        maxWidth: "100%",
+      }));
+    }
+  });
+
+  it("renders error states as contained alerts with description and retry, not color alone", async () => {
+    const { getByRole, getByText, getByTestId } = await renderWithTheme(
+      <ErrorState title="We couldn't load your recipes." description="Please try again." action={<Button label="Try again" onPress={() => undefined} />} />,
+    );
+    const alert = getByTestId("error-state");
+    const style = StyleSheet.flatten(alert.props.style);
+    expect(alert.props.accessibilityRole).toBe("alert");
+    expect(getByText("Error")).toBeTruthy();
+    expect(getByText("Please try again.")).toBeTruthy();
+    expect(getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(style.borderWidth).toBeGreaterThanOrEqual(1);
+    expect(style.backgroundColor).toBe("#fff");
+    expect(style.width).toBe("100%");
+  });
+
+  it("does not paint secondary buttons with the accent hover color", async () => {
+    const { getByRole } = await renderWithTheme(<Button label="List view" variant="secondary" />);
+    const button = getByRole("button", { name: "List view" });
+    await fireEvent(button, "hoverIn");
+    expect(StyleSheet.flatten(button.props.style).backgroundColor).toBe("#fff");
   });
 
   it("shows focus rings for keyboard focus but not pointer focus", async () => {

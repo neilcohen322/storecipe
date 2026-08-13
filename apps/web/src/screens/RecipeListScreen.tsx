@@ -1,17 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { TextInput, View } from "react-native";
+import { StyleSheet, TextInput, View } from "react-native";
 
 import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi, ListRecipesParams, RecipeQueryItem, RecipeSort } from "../api/catalog";
 import { RecipeCard } from "../components/RecipeCard";
-import { Button, EmptyState, ErrorState, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Skeleton } from "../components";
+import { Button, EmptyState, ErrorState, Field, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Section, Skeleton } from "../components";
+import { useTheme } from "../theme/ThemeProvider";
 
 type RouteValue = string | string[] | undefined;
 type RouteQuery = Record<string, RouteValue>;
-type ErrorState = "none" | "offline" | "generic";
+type LibraryError = "none" | "offline" | "generic";
 const SORTS: RecipeSort[] = ["ingredientCoverage:asc", "ingredientCoverage:desc", "tagCoverage:asc", "tagCoverage:desc", "rating:asc", "rating:desc", "totalMinutes:asc", "totalMinutes:desc", "createdAt:asc", "createdAt:desc", "updatedAt:asc", "updatedAt:desc", "title:asc", "title:desc"];
 const DEFAULT_SORT: RecipeSort[] = ["updatedAt:desc"];
+const SORT_CHOICES: { value: RecipeSort; label: string }[] = [
+  { value: "updatedAt:desc", label: "Recently updated" },
+  { value: "createdAt:desc", label: "Newest" },
+  { value: "title:asc", label: "Title A to Z" },
+  { value: "title:desc", label: "Title Z to A" },
+  { value: "rating:desc", label: "Highest rated" },
+  { value: "rating:asc", label: "Lowest rated" },
+  { value: "totalMinutes:asc", label: "Shortest time" },
+  { value: "totalMinutes:desc", label: "Longest time" },
+];
+
+function sortChoices(params: ListRecipesParams): { value: RecipeSort; label: string }[] {
+  return [
+    ...SORT_CHOICES,
+    ...(params.availableIngredient?.length ? [{ value: "ingredientCoverage:desc" as const, label: "Best ingredient match" }] : []),
+    ...(params.preferredTag?.length ? [{ value: "tagCoverage:desc" as const, label: "Best tag match" }] : []),
+  ];
+}
 
 function strings(value: RouteValue): string[] { return (Array.isArray(value) ? value : value ? [value] : []).flatMap((entry) => entry.split(",")).map((entry) => entry.trim().replace(/\s+/g, " ")).filter(Boolean); }
 function normalizedSet(value: RouteValue): string[] { return [...new Set(strings(value).map((entry) => entry.toLocaleLowerCase()))].sort((a, b) => a.localeCompare(b)); }
@@ -64,9 +83,12 @@ export type RecipeListScreenProps = { catalog: ReturnType<typeof createCatalogAp
 export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, onLogout, onUnauthorized }: RecipeListScreenProps) {
   const router = useRouter(); const route = useLocalSearchParams() as RouteQuery; const routeKey = JSON.stringify(route);
   const params = useMemo(() => normalizeRecipeListParams(route), [routeKey]); const queryKey = JSON.stringify(serializeRecipeListParams(params));
-  const routeSearchText = params.text ?? ""; const [items, setItems] = useState<RecipeQueryItem[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<ErrorState>("none"); const [view, setView] = useState<"card" | "list">("card"); const [searchDraft, setSearchDraft] = useState(routeSearchText);
+  const routeSearchText = params.text ?? ""; const [items, setItems] = useState<RecipeQueryItem[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<LibraryError>("none"); const [view, setView] = useState<"card" | "list">("card"); const [searchDraft, setSearchDraft] = useState(routeSearchText);
   const mounted = useRef(true); const requestId = useRef(0); const debounce = useRef<ReturnType<typeof setTimeout> | null>(null); const draftGeneration = useRef(0); const controller = useRef<AbortController | null>(null); const paginationGuard = useRef(createPaginationRequestGuard());
   const previousRouteSearchText = useRef(routeSearchText);
+  const { theme } = useTheme();
+  const currentSort = params.sort?.[0] ?? DEFAULT_SORT[0];
+  const choices = sortChoices(params);
   if (previousRouteSearchText.current !== routeSearchText) { previousRouteSearchText.current = routeSearchText; draftGeneration.current += 1; setSearchDraft(routeSearchText); }
   void onCreate; void onImport; void onLogout;
   const navigate = useCallback((next: ListRecipesParams) => router.push({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
@@ -94,19 +116,71 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
   const scheduleSearch = (text: string) => { setSearchDraft(text); if (debounce.current) clearTimeout(debounce.current); const generation = ++draftGeneration.current; debounce.current = setTimeout(() => { if (draftGeneration.current === generation) navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), text })); }, 300); };
   const update = (key: keyof ListRecipesParams, value: string) => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), [key]: value }));
-  const errorContent = error === "offline" ? <><OfflineBanner message="You’re offline. Check your connection and try again." /><Button label="Try again" onPress={() => void request()} /></> : <ErrorState title="We couldn't load your recipes. Please try again." action={<Button label="Try again" onPress={() => void request()} />} />;
-  return <Screen><PageHeader title="Recipes" subtitle={items.length ? `${items.length} recipes loaded` : undefined} />
-    <TextInput accessibilityLabel="Search recipes" value={searchDraft} onChangeText={scheduleSearch} placeholder="Search recipes" />
-    <TextInput accessibilityLabel="Required ingredients" value={params.requiredIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("requiredIngredient", event.nativeEvent.text)} placeholder="Required ingredients" />
-    <TextInput accessibilityLabel="Available ingredients" value={params.availableIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("availableIngredient", event.nativeEvent.text)} placeholder="Available ingredients" />
-    <TextInput accessibilityLabel="Required tags" value={params.requiredTag?.join(", ") ?? ""} onEndEditing={(event) => update("requiredTag", event.nativeEvent.text)} placeholder="Required tags" />
-    <TextInput accessibilityLabel="Preferred tags" value={params.preferredTag?.join(", ") ?? ""} onEndEditing={(event) => update("preferredTag", event.nativeEvent.text)} placeholder="Preferred tags" />
-    <TextInput accessibilityLabel="Maximum total minutes" value={params.maxTotalMinutes?.toString() ?? ""} keyboardType="numeric" onEndEditing={(event) => update("maxTotalMinutes", event.nativeEvent.text)} placeholder="Maximum total minutes" />
-    <TextInput accessibilityLabel="Minimum rating" value={params.minRating?.toString() ?? ""} keyboardType="numeric" onEndEditing={(event) => update("minRating", event.nativeEvent.text)} placeholder="Minimum rating" />
-    <TextInput accessibilityLabel="Sort order" value={params.sort?.join(", ") ?? ""} onEndEditing={(event) => update("sort", event.nativeEvent.text)} placeholder="Sort order" />
-    <View style={{ flexDirection: "row", gap: 8, marginVertical: 12 }}>{(["any", "rated", "unrated"] as const).map((state) => <Button key={state} label={state === "any" ? "Any rating" : state === "rated" ? "Rated only" : "Unrated only"} variant={(params.ratingState ?? "any") === state ? "primary" : "secondary"} accessibilityState={{ selected: (params.ratingState ?? "any") === state }} onPress={() => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), ratingState: state }))} />)}</View>
-    <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}><Button label="Card view" variant={view === "card" ? "primary" : "secondary"} onPress={() => setView("card")} /><Button label="List view" variant={view === "list" ? "primary" : "secondary"} onPress={() => setView("list")} /></View>
-    {loading && items.length === 0 ? <ResponsiveGrid>{[0, 1, 2].map((slot) => <View key={slot} testID="recipe-card-skeleton"><Skeleton height={220} /></View>)}</ResponsiveGrid> : error !== "none" && items.length === 0 ? errorContent : items.length === 0 ? <EmptyState title="Your recipe library is empty." description="Create or import a recipe to start building your library." /> : view === "card" ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="card" />)}</ResponsiveGrid> : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
-    {nextCursor ? <Button label="Load more recipes" loading={loadingMore} onPress={() => void request(nextCursor)} /> : null}
-  </Screen>;
+  const errorContent = error === "offline"
+    ? <><OfflineBanner message="You’re offline. Check your connection and try again." /><Button label="Try again" onPress={() => void request()} /></>
+    : <ErrorState title="We couldn't load your recipes. Please try again." description="Your library is still here. Retry when you're ready." action={<Button label="Try again" onPress={() => void request()} />} />;
+  const placeholder = theme.colors.mutedText;
+  return (
+    <Screen>
+      <PageHeader title="Recipes" subtitle={items.length ? `${items.length} recipes loaded` : undefined} />
+      <Field
+        label="Search recipes"
+        hint="Search titles and recipe text"
+        control={<TextInput value={searchDraft} onChangeText={scheduleSearch} placeholder="Tomato soup" placeholderTextColor={placeholder} />}
+      />
+      <Section title="Filters">
+        <ResponsiveGrid minItemWidth={240}>
+          <Field label="Required ingredients" hint="Must include every item, comma-separated" control={<TextInput value={params.requiredIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("requiredIngredient", event.nativeEvent.text)} placeholder="tomato, basil" placeholderTextColor={placeholder} />} />
+          <Field label="Available ingredients" hint="What you have on hand, comma-separated" control={<TextInput value={params.availableIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("availableIngredient", event.nativeEvent.text)} placeholder="onion, garlic" placeholderTextColor={placeholder} />} />
+          <Field label="Required tags" hint="Must include every tag, comma-separated" control={<TextInput value={params.requiredTag?.join(", ") ?? ""} onEndEditing={(event) => update("requiredTag", event.nativeEvent.text)} placeholder="vegan, weeknight" placeholderTextColor={placeholder} />} />
+          <Field label="Preferred tags" hint="Nice to have, comma-separated" control={<TextInput value={params.preferredTag?.join(", ") ?? ""} onEndEditing={(event) => update("preferredTag", event.nativeEvent.text)} placeholder="family" placeholderTextColor={placeholder} />} />
+          <Field label="Maximum total minutes" hint="Whole minutes only" control={<TextInput value={params.maxTotalMinutes?.toString() ?? ""} keyboardType="numeric" onEndEditing={(event) => update("maxTotalMinutes", event.nativeEvent.text)} placeholder="30" placeholderTextColor={placeholder} />} />
+          <Field label="Minimum rating" hint="1 to 5" control={<TextInput value={params.minRating?.toString() ?? ""} keyboardType="numeric" onEndEditing={(event) => update("minRating", event.nativeEvent.text)} placeholder="4" placeholderTextColor={placeholder} />} />
+        </ResponsiveGrid>
+      </Section>
+      <Section title="Sort">
+        <View style={styles.chipRow}>
+          {choices.map((choice) => (
+            <Button
+              key={choice.value}
+              label={choice.label}
+              variant={currentSort === choice.value ? "primary" : "secondary"}
+              accessibilityState={{ selected: currentSort === choice.value }}
+              onPress={() => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), sort: choice.value }))}
+            />
+          ))}
+        </View>
+      </Section>
+      <View style={styles.chipRow}>
+        {(["any", "rated", "unrated"] as const).map((state) => (
+          <Button
+            key={state}
+            label={state === "any" ? "Any rating" : state === "rated" ? "Rated only" : "Unrated only"}
+            variant={(params.ratingState ?? "any") === state ? "primary" : "secondary"}
+            accessibilityState={{ selected: (params.ratingState ?? "any") === state }}
+            onPress={() => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), ratingState: state }))}
+          />
+        ))}
+      </View>
+      <View style={[styles.chipRow, styles.viewToggle]}>
+        <Button label="Card view" variant={view === "card" ? "primary" : "secondary"} onPress={() => setView("card")} />
+        <Button label="List view" variant={view === "list" ? "primary" : "secondary"} onPress={() => setView("list")} />
+      </View>
+      {loading && items.length === 0
+        ? <ResponsiveGrid>{[0, 1, 2].map((slot) => <View key={slot} testID="recipe-card-skeleton"><Skeleton height={220} /></View>)}</ResponsiveGrid>
+        : error !== "none" && items.length === 0
+          ? errorContent
+          : items.length === 0
+            ? <EmptyState title="Your recipe library is empty." description="Create or import a recipe to start building your library." />
+            : view === "card"
+              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="card" />)}</ResponsiveGrid>
+              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
+      {nextCursor ? <Button label="Load more recipes" loading={loadingMore} onPress={() => void request(nextCursor)} /> : null}
+    </Screen>
+  );
 }
+
+const styles = StyleSheet.create({
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
+  viewToggle: { marginBottom: 16 },
+});
