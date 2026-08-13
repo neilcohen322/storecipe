@@ -441,6 +441,23 @@ test("does not join an in-flight required-ingredient search with the previous pa
   expect(screen.getAllByRole("button", { name: "basil" })).toHaveLength(1);
 });
 
+test("does not join a pending required-ingredient search with the previous page cursor", async () => {
+  jest.useFakeTimers();
+  const listRecipeFacets = jest.fn()
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))
+    .mockResolvedValue(defaultFacetPage({ ingredients: ["zucchini"], ingredientNextCursor: null }));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
+  await act(async () => { await Promise.resolve(); });
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Load more options" }).length).toBe(2));
+  await fireEvent.changeText(screen.getByLabelText("Required ingredients"), "zuc");
+  await fireEvent.press(screen.getAllByRole("button", { name: "Load more options" })[0]);
+  expect(listRecipeFacets.mock.calls.some((call) => call[0]?.ingredientQ && call[0]?.ingredientCursor)).toBe(false);
+  await act(async () => { jest.advanceTimersByTime(300); });
+  await waitFor(() => expect(listRecipeFacets.mock.calls.some((call) => call[0]?.ingredientQ === "zuc")).toBe(true));
+  const searchCall = listRecipeFacets.mock.calls.find((call) => call[0]?.ingredientQ === "zuc");
+  expect(searchCall?.[0]).not.toHaveProperty("ingredientCursor");
+});
+
 test("stale facet cursor 409 clears only that lane and restarts page one", async () => {
   const listRecipeFacets = jest.fn()
     .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))

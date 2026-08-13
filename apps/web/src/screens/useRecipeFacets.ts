@@ -311,16 +311,17 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
 
   const searchLane = (id: LaneId, value: string) => {
     const runtime = runtimes.current[id];
-    patchLane(id, { search: value });
+    patchLane(id, { search: value, nextCursor: null });
     if (runtime.debounce) clearTimeout(runtime.debounce);
     runtime.debounce = setTimeout(() => {
+      runtime.debounce = null;
       void fetchLane(id, value, null, "replace");
     }, 300);
   };
 
   const loadMore = (id: LaneId) => {
     const lane = lanes[id];
-    if (!lane.nextCursor || lane.loadingMore || lane.loading) return;
+    if (!lane.nextCursor || lane.loadingMore || lane.loading || runtimes.current[id].debounce) return;
     void fetchLane(id, lane.search, lane.nextCursor, "append");
   };
 
