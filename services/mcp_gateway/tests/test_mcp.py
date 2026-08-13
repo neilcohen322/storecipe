@@ -205,9 +205,7 @@ async def test_gateway_exposes_exact_typed_tools_with_approved_contracts(
     }
     assert tools["rate_recipe"].inputSchema["properties"].keys() == {"recipe_id", "value"}
     assert tools["list_recipe_query_options"].inputSchema["properties"].keys() == {"request"}
-    assert tools["resolve_recipe_query_selections"].inputSchema["properties"].keys() == {
-        "request"
-    }
+    assert tools["resolve_recipe_query_selections"].inputSchema["properties"].keys() == {"request"}
 
     expected_scopes = {
         "query_recipes": "recipes:read",
