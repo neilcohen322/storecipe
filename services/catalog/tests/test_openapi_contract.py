@@ -106,3 +106,26 @@ def test_openapi_31_uses_type_unions_instead_of_legacy_nullable() -> None:
     assert parameter_schemas["maxTotalMinutes"]["type"] == ["integer", "null"]
     assert parameter_schemas["minRating"]["type"] == ["integer", "null"]
     assert parameter_schemas["cursor"]["type"] == ["string", "null"]
+
+
+def test_recipe_facets_get_documents_browse_contract() -> None:
+    contract = _contract()
+    operation = contract["paths"]["/v1/recipe-facets"]["get"]
+    parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
+    assert set(parameters) == {
+        "ingredientLimit",
+        "tagLimit",
+        "ingredientCursor",
+        "tagCursor",
+        "ingredientQ",
+        "tagQ",
+    }
+    assert parameters["ingredientCursor"]["schema"]["maxLength"] == 2048
+    assert parameters["tagCursor"]["schema"]["maxLength"] == 2048
+    assert operation["responses"]["409"] == {
+        "$ref": "#/components/responses/StaleRecipeFacetCursor"
+    }
+    response = contract["components"]["responses"]["StaleRecipeFacetCursor"]
+    example = response["content"]["application/problem+json"]["example"]
+    assert example["type"].endswith("/stale_recipe_facet_cursor")
+    assert example["errorCategory"] == "stale_recipe_facet_cursor"

@@ -14,6 +14,7 @@ from catalog.recipe_query_cache import RecipeQueryCache, create_redis_client
 from catalog.routes.health import router as health_router
 from catalog.routes.internal_recipes import router as internal_recipes_router
 from catalog.routes.ratings import router as ratings_router
+from catalog.routes.recipe_facets import router as recipe_facets_router
 from catalog.routes.recipes import router as recipes_router
 from catalog.services.errors import (
     CatalogError,
@@ -121,6 +122,7 @@ async def reject_oversized_query(request: Request, call_next: RequestResponseEnd
 install_problem_details(app)
 app.add_exception_handler(CatalogError, catalog_error)
 app.include_router(recipes_router)
+app.include_router(recipe_facets_router)
 app.include_router(ratings_router)
 app.include_router(internal_recipes_router)
 app.include_router(health_router)

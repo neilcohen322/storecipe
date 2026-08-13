@@ -180,6 +180,28 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+  /v1/recipe-facets:
+    get:
+      operationId: listRecipeFacets
+      description: Requires the `recipes:read` scope. Returns observed facet pages for the caller's recipes.
+      parameters:
+        - {name: ingredientLimit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: tagLimit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: ingredientCursor, in: query, schema: {type: [string, "null"], maxLength: 2048}}
+        - {name: tagCursor, in: query, schema: {type: [string, "null"], maxLength: 2048}}
+        - {name: ingredientQ, in: query, schema: {type: [string, "null"], maxLength: 200}}
+        - {name: tagQ, in: query, schema: {type: [string, "null"], maxLength: 64}}
+      responses:
+        "200":
+          description: Observed recipe-query facet pages for the authenticated user
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecipeFacetPage"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/StaleRecipeFacetCursor"}
+        "414": {$ref: "#/components/responses/UriTooLong"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
@@ -365,6 +387,18 @@ components:
             detail: Recipe query cursor is stale.
             request_id: 01JEXAMPLESTALECURSOR
             errorCategory: stale_recipe_query_cursor
+    StaleRecipeFacetCursor:
+      description: The catalog changed after the referenced recipe-facet page was read.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/stale_recipe_facet_cursor
+            title: Conflict
+            status: 409
+            detail: Recipe facet cursor is stale.
+            request_id: 01JEXAMPLESTALEFACET
+            errorCategory: stale_recipe_facet_cursor
     ImportBurstExceeded:
       description: Import submission burst limit exceeded; retry after the indicated interval.
       headers:
@@ -481,6 +515,40 @@ components:
       properties:
         items: {type: array, items: {$ref: "#/components/schemas/RecipeQueryItem"}}
         nextCursor: {type: [string, "null"]}
+    RecipeFacetBounds:
+      type: object
+      required: [min, max]
+      properties:
+        min: {type: integer}
+        max: {type: integer}
+    RecipeFacetSort:
+      type: object
+      required: [unconditional, requiresAvailableIngredient, requiresPreferredTag]
+      properties:
+        unconditional: {type: array, items: {type: string}}
+        requiresAvailableIngredient: {type: array, items: {type: string}}
+        requiresPreferredTag: {type: array, items: {type: string}}
+    RecipeFacetPage:
+      type: object
+      required: [ingredients, ingredientNextCursor, tags, tagNextCursor, totalMinutes, rating, ratingState, sort]
+      properties:
+        ingredients:
+          type: array
+          items: {type: string, minLength: 1, maxLength: 200}
+        ingredientNextCursor: {type: [string, "null"], maxLength: 2048}
+        tags:
+          type: array
+          items: {type: string, minLength: 1, maxLength: 64}
+        tagNextCursor: {type: [string, "null"], maxLength: 2048}
+        totalMinutes:
+          anyOf:
+            - {$ref: "#/components/schemas/RecipeFacetBounds"}
+            - {type: "null"}
+        rating: {$ref: "#/components/schemas/RecipeFacetBounds"}
+        ratingState:
+          type: array
+          items: {type: string, enum: [any, rated, unrated]}
+        sort: {$ref: "#/components/schemas/RecipeFacetSort"}
     ImportAccepted:
       type: object
       required: [jobId, status]

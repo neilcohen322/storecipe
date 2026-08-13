@@ -3,12 +3,13 @@ import binascii
 import hashlib
 import json
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, ValidationError
+from pydantic import ConfigDict, Field, ValidationError, field_validator
 
 from catalog.errors import InvalidCursor, StaleRecipeFacetCursor
+from catalog.recipe_queries import normalize_query_text
 from catalog.schemas import ApiModel
 
 
@@ -88,3 +89,61 @@ def validate_facet_cursor(
     if cursor.catalog_version != catalog_version:
         raise StaleRecipeFacetCursor()
     return cursor
+
+
+class RecipeFacetBrowseRequest(ApiModel):
+    ingredient_limit: Annotated[int, Field(ge=1, le=500)] = 200
+    tag_limit: Annotated[int, Field(ge=1, le=500)] = 200
+    ingredient_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    tag_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    ingredient_q: Annotated[str | None, Field(max_length=200)] = None
+    tag_q: Annotated[str | None, Field(max_length=64)] = None
+
+    @field_validator("ingredient_q", "tag_q", mode="before")
+    @classmethod
+    def normalize_q(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return normalize_query_text(value) or None
+
+
+class RecipeFacetBounds(ApiModel):
+    min: int
+    max: int
+
+
+class RecipeFacetSort(ApiModel):
+    unconditional: list[str]
+    requires_available_ingredient: list[str]
+    requires_preferred_tag: list[str]
+
+
+class RecipeFacetPage(ApiModel):
+    ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]]
+    ingredient_next_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]]
+    tag_next_cursor: Annotated[str | None, Field(max_length=2048)] = None
+    total_minutes: RecipeFacetBounds | None = None
+    rating: RecipeFacetBounds
+    rating_state: list[Literal["any", "rated", "unrated"]]
+    sort: RecipeFacetSort
+
+
+RECIPE_FACET_RATING = RecipeFacetBounds(min=1, max=5)
+RECIPE_FACET_RATING_STATES: list[Literal["any", "rated", "unrated"]] = ["any", "rated", "unrated"]
+RECIPE_FACET_SORT = RecipeFacetSort(
+    unconditional=[
+        "rating:asc",
+        "rating:desc",
+        "totalMinutes:asc",
+        "totalMinutes:desc",
+        "createdAt:asc",
+        "createdAt:desc",
+        "updatedAt:asc",
+        "updatedAt:desc",
+        "title:asc",
+        "title:desc",
+    ],
+    requires_available_ingredient=["ingredientCoverage:asc", "ingredientCoverage:desc"],
+    requires_preferred_tag=["tagCoverage:asc", "tagCoverage:desc"],
+)
