@@ -417,6 +417,30 @@ test("load more merges unique first-seen names and then disappears", async () =>
   await waitFor(() => expect(screen.getAllByRole("button", { name: "Load more options" }).length).toBe(1));
 });
 
+test("does not join an in-flight required-ingredient search with the previous page cursor", async () => {
+  jest.useFakeTimers();
+  const searchPage = deferred<RecipeFacetPage>();
+  const listRecipeFacets = jest.fn()
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))
+    .mockReturnValueOnce(searchPage.promise)
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["oregano"], ingredientNextCursor: null }));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
+  await act(async () => { await Promise.resolve(); });
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Load more options" }).length).toBe(2));
+  await fireEvent.changeText(screen.getByLabelText("Required ingredients"), "zuc");
+  await act(async () => { jest.advanceTimersByTime(300); });
+  await waitFor(() => expect(listRecipeFacets).toHaveBeenCalledTimes(2));
+  const loadMoreDuringSearch = screen.queryAllByRole("button", { name: "Load more options" });
+  if (loadMoreDuringSearch.length > 1) {
+    await fireEvent.press(loadMoreDuringSearch[0]);
+  }
+  expect(listRecipeFacets.mock.calls.some((call) => call[0]?.ingredientQ === "zuc" && call[0]?.ingredientCursor)).toBe(false);
+  await act(async () => { searchPage.resolve(defaultFacetPage({ ingredients: ["zucchini"], ingredientNextCursor: null })); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "zucchini" })).toBeTruthy());
+  expect(screen.queryByRole("button", { name: "oregano" })).toBeNull();
+  expect(screen.getAllByRole("button", { name: "basil" })).toHaveLength(1);
+});
+
 test("stale facet cursor 409 clears only that lane and restarts page one", async () => {
   const listRecipeFacets = jest.fn()
     .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))

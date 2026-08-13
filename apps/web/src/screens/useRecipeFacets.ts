@@ -199,7 +199,7 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
     } else if (mode === "restart") {
       patchLane(id, { options: [], nextCursor: null, loading: true, loadingMore: false });
     } else {
-      patchLane(id, { loading: true, loadingMore: false });
+      patchLane(id, { loading: true, loadingMore: false, nextCursor: null });
     }
     try {
       const page = await catalogRef.current.listRecipeFacets(browseParamsForLane(id, search, cursor), { signal: controller.signal });
@@ -320,7 +320,7 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
 
   const loadMore = (id: LaneId) => {
     const lane = lanes[id];
-    if (!lane.nextCursor || lane.loadingMore) return;
+    if (!lane.nextCursor || lane.loadingMore || lane.loading) return;
     void fetchLane(id, lane.search, lane.nextCursor, "append");
   };
 
