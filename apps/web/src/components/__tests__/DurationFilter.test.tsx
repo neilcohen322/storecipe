@@ -35,6 +35,15 @@ jest.mock("../../theme/ThemeProvider", () => ({
 
 import { DurationFilter } from "../DurationFilter";
 
+test("empty library still shows any duration", async () => {
+  const onChange = jest.fn();
+  const screen = await render(
+    <DurationFilter observed={null} value={null} onChange={onChange} />,
+  );
+  expect(screen.getByRole("button", { name: "Any duration" }).props.accessibilityState?.selected).toBe(true);
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 test("any duration is default and max can be selected", async () => {
   const onChange = jest.fn();
   const screen = await render(

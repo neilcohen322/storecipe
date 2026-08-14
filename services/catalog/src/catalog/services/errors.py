@@ -25,6 +25,7 @@ __all__ = [
     "RecipeNotFound",
     "StaleRecipeFacetCursor",
     "StaleRecipeQueryCursor",
+    "UnstableCatalogSnapshot",
 ]
 
 
@@ -49,3 +50,10 @@ class InvalidFilter(CatalogError):
     def __init__(self, name: str) -> None:
         self.name = name
         super().__init__(f"{name} must contain non-whitespace characters.")
+
+
+class UnstableCatalogSnapshot(CatalogError):
+    """Facet reads could not agree on one catalog version."""
+
+    def __init__(self) -> None:
+        super().__init__("Catalog changed while reading recipe facets.")

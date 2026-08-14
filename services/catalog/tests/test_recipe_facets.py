@@ -425,3 +425,126 @@ async def test_facet_selections_membership_is_owner_scoped(
     assert response.json()["ingredients"] == [
         {"requestedName": "saffron", "normalizedName": "saffron", "observed": False}
     ]
+
+
+@pytest.mark.asyncio
+async def test_browse_retries_when_catalog_version_changes_during_read(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await api_client.post(
+        "/v1/recipes", headers={"Idempotency-Key": "facets-snap"}, json=_payload()
+    )
+    from catalog.services import recipe_facets as facet_service
+    from catalog.services.users import advance_catalog_version
+
+    original = facet_service.fetch_distinct_facet_names
+    calls = {"count": 0}
+
+    async def bump_once(session, user_id, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            await advance_catalog_version(session, user_id)
+            await session.commit()
+        return await original(session, user_id, **kwargs)
+
+    monkeypatch.setattr(facet_service, "fetch_distinct_facet_names", bump_once)
+    response = await api_client.get("/v1/recipe-facets", params={"ingredientLimit": 1})
+    assert response.status_code == 200
+    cursor = response.json()["ingredientNextCursor"]
+    assert isinstance(cursor, str) and cursor != ""
+    next_page = await api_client.get(
+        "/v1/recipe-facets",
+        params={"ingredientLimit": 1, "ingredientCursor": cursor},
+    )
+    assert next_page.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_browse_fails_closed_when_catalog_version_keeps_changing(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await api_client.post(
+        "/v1/recipes", headers={"Idempotency-Key": "facets-snap-exhaust"}, json=_payload()
+    )
+    from catalog.services import recipe_facets as facet_service
+    from catalog.services.users import advance_catalog_version
+
+    original = facet_service.fetch_distinct_facet_names
+
+    async def bump_every_read(session, user_id, **kwargs):
+        await advance_catalog_version(session, user_id)
+        await session.commit()
+        return await original(session, user_id, **kwargs)
+
+    monkeypatch.setattr(facet_service, "fetch_distinct_facet_names", bump_every_read)
+    response = await api_client.get("/v1/recipe-facets", params={"ingredientLimit": 1})
+    assert response.status_code == 503
+    assert "ingredientNextCursor" not in response.json()
+
+
+@pytest.mark.asyncio
+async def test_resolve_fails_closed_when_catalog_version_keeps_changing(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await api_client.post(
+        "/v1/recipes", headers={"Idempotency-Key": "facets-resolve-exhaust"}, json=_payload()
+    )
+    from catalog.services import recipe_facets as facet_service
+    from catalog.services.users import advance_catalog_version
+
+    original = facet_service.fetch_observed_names
+
+    async def bump_every_read(session, user_id, **kwargs):
+        result = await original(session, user_id, **kwargs)
+        await advance_catalog_version(session, user_id)
+        await session.commit()
+        return result
+
+    monkeypatch.setattr(facet_service, "fetch_observed_names", bump_every_read)
+    response = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["tomato"], "tags": ["family"]},
+    )
+    assert response.status_code == 503
+    assert "ingredients" not in response.json()
+
+
+@pytest.mark.asyncio
+async def test_resolve_retries_when_catalog_version_changes_during_read(
+    api_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await api_client.post(
+        "/v1/recipes", headers={"Idempotency-Key": "facets-resolve-snap"}, json=_payload()
+    )
+    from sqlalchemy import select
+
+    from catalog.models import Recipe
+    from catalog.services import recipe_facets as facet_service
+    from catalog.services.users import advance_catalog_version
+
+    original = facet_service.fetch_observed_names
+    calls = {"count": 0}
+
+    async def bump_and_clear(session, user_id, **kwargs):
+        calls["count"] += 1
+        result = await original(session, user_id, **kwargs)
+        if calls["count"] == 1:
+            recipes = list(await session.scalars(select(Recipe).where(Recipe.user_id == user_id)))
+            for recipe in recipes:
+                await session.delete(recipe)
+            await advance_catalog_version(session, user_id)
+            await session.commit()
+        return result
+
+    monkeypatch.setattr(facet_service, "fetch_observed_names", bump_and_clear)
+    response = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["tomato"], "tags": ["family"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["ingredients"] == [
+        {"requestedName": "tomato", "normalizedName": "tomato", "observed": False}
+    ]
+    assert response.json()["tags"] == [
+        {"requestedName": "family", "normalizedName": "family", "observed": False}
+    ]

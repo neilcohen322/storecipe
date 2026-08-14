@@ -3,11 +3,24 @@
   "compilerOptions": {
     "strict": true,
     "ignoreDeprecations": "6.0",
-    "types": ["jest"],
+    "types": [
+      "jest"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@storecipe/auth-provider": ["src/app/ProductionAuthProvider.tsx"]
+      "@storecipe/auth-provider": [
+        "src/app/ProductionAuthProvider.tsx"
+      ]
     }
   },
-  "exclude": ["dist", "node_modules"]
+  "exclude": [
+    "dist",
+    "node_modules"
+  ],
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
 }

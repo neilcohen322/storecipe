@@ -109,6 +109,30 @@ function pageNames(id: LaneId, page: RecipeFacetPage): { names: string[]; nextCu
   return { names: page.tags, nextCursor: page.tagNextCursor };
 }
 
+function retainMovedLanes(
+  current: Record<LaneId, LaneState>,
+  started: Record<LaneId, number>,
+  currentGenerations: Record<LaneId, number>,
+  fallback: (id: LaneId) => LaneState,
+): Record<LaneId, LaneState> {
+  const keep = (id: LaneId) => (currentGenerations[id] !== started[id] ? current[id] : fallback(id));
+  return {
+    requiredIngredient: keep("requiredIngredient"),
+    availableIngredient: keep("availableIngredient"),
+    requiredTag: keep("requiredTag"),
+    preferredTag: keep("preferredTag"),
+  };
+}
+
+function snapshotLaneGenerations(runtimes: Record<LaneId, LaneRuntime>): Record<LaneId, number> {
+  return {
+    requiredIngredient: runtimes.requiredIngredient.generation,
+    availableIngredient: runtimes.availableIngredient.generation,
+    requiredTag: runtimes.requiredTag.generation,
+    preferredTag: runtimes.preferredTag.generation,
+  };
+}
+
 function selectedFor(
   values: string[] | undefined,
   items: RecipeFacetSelectionsResponse["ingredients"] | null,
@@ -241,6 +265,7 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
         runtime.debounce = null;
       }
     }
+    const startedLanes = snapshotLaneGenerations(runtimes.current);
     setLanes({
       requiredIngredient: { ...emptyLane(), loading: true },
       availableIngredient: { ...emptyLane(), loading: true },
@@ -252,12 +277,15 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
       const page = await catalogRef.current.listRecipeFacets({}, { signal: controller.signal });
       if (!mounted.current || generation !== focusRuntime.current.generation) return;
       setObservedMinutes(page.totalMinutes);
-      setLanes({
-        requiredIngredient: { search: "", options: page.ingredients, nextCursor: page.ingredientNextCursor, loading: false, loadingMore: false },
-        availableIngredient: { search: "", options: page.ingredients, nextCursor: page.ingredientNextCursor, loading: false, loadingMore: false },
-        requiredTag: { search: "", options: page.tags, nextCursor: page.tagNextCursor, loading: false, loadingMore: false },
-        preferredTag: { search: "", options: page.tags, nextCursor: page.tagNextCursor, loading: false, loadingMore: false },
-      });
+      setLanes((current) => retainMovedLanes(
+        current,
+        startedLanes,
+        snapshotLaneGenerations(runtimes.current),
+        (id) => {
+          const { names, nextCursor } = pageNames(id, page);
+          return { search: "", options: names, nextCursor, loading: false, loadingMore: false };
+        },
+      ));
     } catch (error) {
       if (!mounted.current || generation !== focusRuntime.current.generation || isAbortError(error)) return;
       if (handleUnauthorized(error)) {
@@ -265,7 +293,12 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
         return;
       }
       setFacetError("generic");
-      setLanes(emptyLanes());
+      setLanes((current) => retainMovedLanes(
+        current,
+        startedLanes,
+        snapshotLaneGenerations(runtimes.current),
+        () => emptyLane(),
+      ));
     }
   }, []);
 
@@ -276,6 +309,7 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
     const generation = ++runtime.generation;
     const controller = new AbortController();
     runtime.controller = controller;
+    setResolution(null);
     const current = paramsRef.current;
     try {
       const result = await catalogRef.current.resolveRecipeFacetSelections({
@@ -292,6 +326,7 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
     } catch (error) {
       if (!mounted.current || generation !== runtime.generation || isAbortError(error)) return;
       if (handleUnauthorized(error)) return;
+      setResolution(null);
       setFacetError("generic");
     }
   }, []);

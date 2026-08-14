@@ -24,6 +24,7 @@ from catalog.services.errors import (
     RecipeNotFound,
     StaleRecipeFacetCursor,
     StaleRecipeQueryCursor,
+    UnstableCatalogSnapshot,
 )
 
 settings = get_settings()
@@ -33,6 +34,8 @@ token_verifier = build_token_verifier(settings)
 def _status_for(exc: CatalogError) -> int:
     if isinstance(exc, RecipeNotFound):
         return status.HTTP_404_NOT_FOUND
+    if isinstance(exc, UnstableCatalogSnapshot):
+        return status.HTTP_503_SERVICE_UNAVAILABLE
     if isinstance(exc, StaleRecipeQueryCursor | StaleRecipeFacetCursor):
         return status.HTTP_409_CONFLICT
     if isinstance(exc, IdempotencyConflict):

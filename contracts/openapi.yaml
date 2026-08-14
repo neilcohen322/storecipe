@@ -202,6 +202,7 @@ paths:
         "409": {$ref: "#/components/responses/StaleRecipeFacetCursor"}
         "414": {$ref: "#/components/responses/UriTooLong"}
         "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /v1/recipe-facet-selections:
     post:
       operationId: resolveRecipeFacetSelections
@@ -220,6 +221,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
@@ -417,6 +419,11 @@ components:
             detail: Recipe facet cursor is stale.
             request_id: 01JEXAMPLESTALEFACET
             errorCategory: stale_recipe_facet_cursor
+    ServiceUnavailable:
+      description: The catalog could not finish a consistent facet snapshot.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
     ImportBurstExceeded:
       description: Import submission burst limit exceeded; retry after the indicated interval.
       headers:
@@ -569,6 +576,7 @@ components:
         sort: {$ref: "#/components/schemas/RecipeFacetSort"}
     RecipeFacetSelectionsRequest:
       type: object
+      additionalProperties: false
       properties:
         ingredients:
           type: array

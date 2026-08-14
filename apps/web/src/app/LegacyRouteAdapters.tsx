@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useWindowDimensions } from "react-native";
 import { authPresentation } from "@storecipe/auth-provider";
@@ -26,9 +26,9 @@ function useLegacyApis() {
 
 function useUnauthorizedHandler() {
   const router = useRouter();
-  return () => {
+  return useCallback(() => {
     router.replace("/");
-  };
+  }, [router]);
 }
 
 export function LandingRouteAdapter() {

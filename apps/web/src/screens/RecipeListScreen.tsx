@@ -83,6 +83,8 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
   const choices = sortChoices(params);
   if (previousRouteSearchText.current !== routeSearchText) { previousRouteSearchText.current = routeSearchText; draftGeneration.current += 1; setSearchDraft(routeSearchText); }
   void onCreate; void onImport; void onLogout;
+  const onUnauthorizedRef = useRef(onUnauthorized);
+  onUnauthorizedRef.current = onUnauthorized;
   const pushFilters = useCallback((next: ListRecipesParams) => router.push({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
   const replaceFilters = useCallback((next: ListRecipesParams) => router.replace({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
   const facets = useRecipeFacets({ catalog, params, replaceFilters, onUnauthorized });
@@ -113,12 +115,12 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
       setNextCursor(page.nextCursor);
     } catch (caught) {
       if (!mounted.current || id !== requestId.current || isAbortError(caught)) return;
-      if (caught instanceof ApiUnauthorizedError) onUnauthorized(); else setError(isOfflineError(caught) ? "offline" : "generic");
+      if (caught instanceof ApiUnauthorizedError) onUnauthorizedRef.current(); else setError(isOfflineError(caught) ? "offline" : "generic");
     } finally {
       if (pagination) paginationGuard.current.finish(id);
       if (mounted.current && id === requestId.current) { setLoading(false); setLoadingMore(false); }
     }
-  }, [catalog, onUnauthorized, params]);
+  }, [catalog, params]);
   useEffect(() => { mounted.current = true; void request(); return () => { mounted.current = false; controller.current?.abort(); requestId.current += 1; paginationGuard.current.reset(); }; }, [queryKey, request]);
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
   const scheduleSearch = (text: string) => { setSearchDraft(text); if (debounce.current) clearTimeout(debounce.current); const generation = ++draftGeneration.current; debounce.current = setTimeout(() => { if (draftGeneration.current === generation) pushFilters(normalizeRecipeListParams({ ...serializeRecipeListParams(params), text })); }, 300); };

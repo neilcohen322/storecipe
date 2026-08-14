@@ -38,14 +38,12 @@ export function DurationFilter({ observed, value, onChange }: DurationFilterProp
     <View style={styles.container}>
       <Text style={[styles.label, { color: theme.colors.text, fontSize: theme.type.body }]}>Maximum duration</Text>
       <View style={styles.chipRow}>
-        {observed !== null || unavailable || outOfRange ? (
-          <Button
-            label="Any duration"
-            variant={anyDurationSelected ? "primary" : "secondary"}
-            accessibilityState={{ selected: anyDurationSelected }}
-            onPress={() => onChange(null)}
-          />
-        ) : null}
+        <Button
+          label="Any duration"
+          variant={anyDurationSelected ? "primary" : "secondary"}
+          accessibilityState={{ selected: anyDurationSelected }}
+          onPress={() => onChange(null)}
+        />
         {showMaxShortcut ? (
           <Button
             label={`${observed.max} minutes`}

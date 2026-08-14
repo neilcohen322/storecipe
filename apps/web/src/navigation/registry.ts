@@ -1,3 +1,5 @@
+import type { Href } from "expo-router";
+
 import type { NavigationAction, NavigationEntry, NavigationLink } from "./types";
 import type { Availability } from "./types";
 
@@ -30,7 +32,7 @@ export function desktopNavigationItems(): NavigationLink[] {
 }
 
 /** Returns only normalized, concrete paths handled by the app's route wrappers. */
-export function isApprovedAppPath(path: string): boolean {
+export function isApprovedAppPath(path: string): path is Extract<Href, string> {
   return path === "/" || path === "/recipes" || path === "/recipes/new" ||
     /^\/recipes\/[^/]+$/.test(path) || path === "/imports" ||
     path === "/imports/new" || path === "/account" || path === "/more";

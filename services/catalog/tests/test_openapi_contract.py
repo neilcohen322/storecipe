@@ -116,12 +116,15 @@ def test_recipe_facet_selections_post_documents_resolution_contract() -> None:
         schema = contract["components"]["schemas"][schema["$ref"].rsplit("/", 1)[-1]]
     ingredients = schema["properties"]["ingredients"]
     tags = schema["properties"]["tags"]
+    assert schema.get("additionalProperties") is False
     assert ingredients["maxItems"] == 96
     assert ingredients["items"] == {"type": "string", "minLength": 1, "maxLength": 200}
     assert tags["maxItems"] == 32
     assert tags["items"] == {"type": "string", "minLength": 1, "maxLength": 64}
     response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
     assert response_schema == {"$ref": "#/components/schemas/RecipeFacetSelectionsResponse"}
+    assert operation["responses"]["422"] == {"$ref": "#/components/responses/ValidationError"}
+    assert operation["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
 
 
 def test_recipe_facets_get_documents_browse_contract() -> None:
@@ -141,6 +144,9 @@ def test_recipe_facets_get_documents_browse_contract() -> None:
     assert operation["responses"]["409"] == {
         "$ref": "#/components/responses/StaleRecipeFacetCursor"
     }
+    assert operation["responses"]["414"] == {"$ref": "#/components/responses/UriTooLong"}
+    assert operation["responses"]["422"] == {"$ref": "#/components/responses/ValidationError"}
+    assert operation["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
     response = contract["components"]["responses"]["StaleRecipeFacetCursor"]
     example = response["content"]["application/problem+json"]["example"]
     assert example["type"].endswith("/stale_recipe_facet_cursor")
