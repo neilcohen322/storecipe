@@ -16,6 +16,7 @@
 | `INGESTION_IMPORT_BURST_WINDOW_SECONDS` | Ingestion API | no | Import submission burst-window duration; defaults to 60 seconds |
 | `INGESTION_AI_DAILY_TOKEN_LIMIT` | Ingestion worker | no | Per-user daily AI extraction token budget; defaults to 1,100,000 |
 | `INGESTION_AI_INVOCATION_RESERVATION_TOKENS` | Ingestion worker | no | Tokens reserved before one AI invocation; defaults to 275,000 and cannot exceed the daily budget |
+| `INGESTION_INGREDIENT_NORMALIZATION_RESERVATION_TOKENS` | Ingestion API/worker | no | Tokens reserved before one ingredient-normalization invocation; defaults to 64,000 and cannot exceed the daily budget |
 | `INGESTION_PAYLOAD_ACTIVE_KEY_ID` | Ingestion/worker | yes | Key ID used for new encrypted payload writes |
 | `INGESTION_PAYLOAD_KEYRING` | Ingestion/worker | yes | Secret `key-id=base64-key` mapping for retained payloads |
 | `AUTH0_ISSUER` | APIs/MCP | protected routes / complete gateway auth | Expected JWT issuer; required in the gateway auth all-or-none bundle (cannot be replaced by `MCP_OBO_TOKEN_URL`) |

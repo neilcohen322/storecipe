@@ -11,12 +11,16 @@ from typing import Annotated, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ingestion.ai_extractor import OpenRouterCompletion, OpenRouterUsage
 from ingestion.import_models import IngredientNormalizationItem
+from ingestion.openrouter_transport import (
+    REQUEST_TIMEOUT_SECONDS,
+    AiohttpOpenRouterTransport,
+    OpenRouterCompletion,
+    OpenRouterUsage,
+)
 
 PROMPT_VERSION = "ingredient-normalization-v1"
 DEFAULT_MAX_OUTPUT_TOKENS = 16_000
-REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 class LlmBoundaryModel(BaseModel):
@@ -92,6 +96,66 @@ class NormalizerTransport(Protocol):
     ) -> OpenRouterCompletion: ...
 
 
+class _NormalizationErrorMapper:
+    def not_configured(self) -> Exception:
+        return IngredientNormalizationError(IngredientNormalizationFailureCode.NOT_CONFIGURED)
+
+    def rate_limited(self, status: int) -> Exception:
+        return IngredientNormalizationError(
+            IngredientNormalizationFailureCode.RATE_LIMITED,
+            status=status,
+            provider_request_started=True,
+        )
+
+    def provider_failed(self, status: int | None, *, started: bool) -> Exception:
+        return IngredientNormalizationError(
+            IngredientNormalizationFailureCode.PROVIDER_REQUEST_FAILED,
+            status=status,
+            provider_request_started=started,
+        )
+
+    def invalid_response(self) -> Exception:
+        return IngredientNormalizationError(
+            IngredientNormalizationFailureCode.INVALID_PROVIDER_RESPONSE,
+            provider_request_started=True,
+        )
+
+    def timeout(self) -> Exception:
+        return IngredientNormalizationError(
+            IngredientNormalizationFailureCode.PROVIDER_REQUEST_FAILED,
+            provider_request_started=True,
+        )
+
+
+def build_normalization_transport(
+    *,
+    api_key: str,
+    model: str,
+    timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+) -> AiohttpOpenRouterTransport:
+    def _serialize(
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        response_format: dict[str, object],
+    ) -> bytes:
+        return serialize_normalization_request(
+            model=model,
+            messages=messages,
+            response_format=response_format,
+            max_tokens=max_output_tokens,
+        )
+
+    return AiohttpOpenRouterTransport(
+        api_key=api_key,
+        model=model,
+        timeout_seconds=timeout_seconds,
+        serialize_request=_serialize,
+        error_mapper=_NormalizationErrorMapper(),
+    )
+
+
 def build_normalization_response_format() -> dict[str, object]:
     return {
         "type": "json_schema",
@@ -160,14 +224,10 @@ def items_from_model_content(
         ) from exc
 
     if len(model_fields.ingredients) != len(expected_raw_lines):
-        raise IngredientNormalizationError(
-            IngredientNormalizationFailureCode.INVARIANT_VIOLATION
-        )
+        raise IngredientNormalizationError(IngredientNormalizationFailureCode.INVARIANT_VIOLATION)
 
     items: list[IngredientNormalizationItem] = []
-    for model_item, expected_raw in zip(
-        model_fields.ingredients, expected_raw_lines, strict=True
-    ):
+    for model_item, expected_raw in zip(model_fields.ingredients, expected_raw_lines, strict=True):
         if model_item.raw_text != expected_raw:
             raise IngredientNormalizationError(
                 IngredientNormalizationFailureCode.INVARIANT_VIOLATION
@@ -179,9 +239,7 @@ def items_from_model_content(
                     name=model_item.name,
                     canonical_name=model_item.canonical_name,
                     quantity=(
-                        None
-                        if model_item.quantity is None
-                        else Decimal(str(model_item.quantity))
+                        None if model_item.quantity is None else Decimal(str(model_item.quantity))
                     ),
                     unit=model_item.unit,
                 )
@@ -205,7 +263,7 @@ class OpenRouterIngredientNormalizer:
         self._transport = transport
         self._max_output_tokens = max_output_tokens
 
-    async def normalize(self, raw_lines: list[str]) -> list[IngredientNormalizationItem]:
+    async def normalize(self, raw_lines: list[str]) -> IngredientNormalizationResult:
         messages = build_normalization_messages(raw_lines)
         response_format = build_normalization_response_format()
         started = time.perf_counter()
@@ -228,4 +286,10 @@ class OpenRouterIngredientNormalizer:
                 prompt_version=PROMPT_VERSION,
                 latency_ms=latency_ms,
             ) from exc
-        return items
+        return IngredientNormalizationResult(
+            items=items,
+            model=completion.model,
+            prompt_version=PROMPT_VERSION,
+            usage=completion.usage,
+            latency_ms=latency_ms,
+        )

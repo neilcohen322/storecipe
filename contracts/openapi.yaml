@@ -292,6 +292,41 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
+  /v1/ingredient-normalizations:
+    post:
+      operationId: normalizeIngredients
+      description: >-
+        Requires `recipes:write` and a required `Idempotency-Key`. Accepts 1–256 raw
+        ingredient lines with per-line and total UTF-8 byte caps. Replays the exact
+        encrypted successful result for the same owner/key/request hash.
+      parameters:
+        - {$ref: "#/components/parameters/IngredientNormalizationIdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/IngredientNormalizationRequest"}
+      responses:
+        "200":
+          description: New or exactly replayed successful normalization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/IngredientNormalizationResponse"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "429": {$ref: "#/components/responses/IngredientNormalizationRateLimited"}
+        "502":
+          description: Provider output violated the strict normalization contract.
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "503":
+          description: Provider/configuration unavailable or unresolved provider ambiguity.
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
 components:
   securitySchemes:
     bearerAuth:
@@ -314,6 +349,11 @@ components:
       in: header
       required: true
       schema: {type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$'}
+    IngredientNormalizationIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 255}
   responses:
     Unauthorized:
       description: Missing or invalid access token
@@ -394,6 +434,22 @@ components:
           schema: {$ref: "#/components/schemas/Problem"}
     ImportBurstExceeded:
       description: Import submission burst limit exceeded; retry after the indicated interval.
+      headers:
+        Retry-After:
+          schema: {type: integer, minimum: 1}
+        RateLimit-Limit:
+          schema: {type: integer, minimum: 1}
+        RateLimit-Remaining:
+          schema: {type: integer, minimum: 0}
+        RateLimit-Reset:
+          schema: {type: integer, minimum: 0}
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    IngredientNormalizationRateLimited:
+      description: >-
+        Ingredient normalization burst limit, provider rate limit, or daily AI budget
+        exhaustion; retry after the indicated interval when headers are present.
       headers:
         Retry-After:
           schema: {type: integer, minimum: 1}
@@ -592,6 +648,36 @@ components:
         createdRecipeId: {type: [string, "null"], format: uuid}
         errorCategory: {type: [string, "null"]}
         cancellationRequested: {type: boolean}
+    IngredientNormalizationRequest:
+      type: object
+      required: [ingredients]
+      properties:
+        ingredients:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items:
+            type: object
+            required: [rawText]
+            properties:
+              rawText: {type: string, minLength: 1, maxLength: 4096}
+    IngredientNormalizationResponse:
+      type: object
+      required: [ingredients]
+      properties:
+        ingredients:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/NormalizedIngredient"}
+    NormalizedIngredient:
+      type: object
+      required: [rawText, name, canonicalName]
+      properties:
+        rawText: {type: string, minLength: 1}
+        name: {type: string, minLength: 1, maxLength: 200}
+        canonicalName: {type: string, minLength: 1, maxLength: 200}
+        quantity: {type: [number, "null"], minimum: 0}
+        unit: {type: [string, "null"], minLength: 1, maxLength: 64}
     Problem:
       type: object
       required: [type, title, status, request_id]

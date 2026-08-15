@@ -117,6 +117,7 @@ def test_usage_governance_environment_and_rate_limit_contracts_are_explicit() ->
         "INGESTION_IMPORT_BURST_WINDOW_SECONDS",
         "INGESTION_AI_DAILY_TOKEN_LIMIT",
         "INGESTION_AI_INVOCATION_RESERVATION_TOKENS",
+        "INGESTION_INGREDIENT_NORMALIZATION_RESERVATION_TOKENS",
         "STORECIPE_TEST_REDIS_URL",
     ):
         assert variable in environment

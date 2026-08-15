@@ -61,3 +61,44 @@ class ImportJobView(ApiModel):
     created_recipe_id: UUID | None
     error_category: str | None
     cancellation_requested: bool = False
+
+
+MAX_INGREDIENT_LINES = 256
+MAX_INGREDIENT_LINE_CHARS = 4_096
+MAX_INGREDIENT_TOTAL_BYTES = 65_536
+
+
+class RawIngredientInput(ApiModel):
+    raw_text: str
+
+
+class IngredientNormalizationRequest(ApiModel):
+    ingredients: list[RawIngredientInput]
+
+    @field_validator("ingredients")
+    @classmethod
+    def _validate_bounds(cls, ingredients: list[RawIngredientInput]) -> list[RawIngredientInput]:
+        if not ingredients:
+            raise ValueError("at least one ingredient line is required")
+        if len(ingredients) > MAX_INGREDIENT_LINES:
+            raise ValueError("too many ingredient lines")
+        total_bytes = 0
+        for item in ingredients:
+            if len(item.raw_text) > MAX_INGREDIENT_LINE_CHARS:
+                raise ValueError("ingredient line exceeds maximum length")
+            total_bytes += len(item.raw_text.encode("utf-8"))
+        if total_bytes > MAX_INGREDIENT_TOTAL_BYTES:
+            raise ValueError("total ingredient bytes exceed maximum")
+        return ingredients
+
+
+class IngredientView(ApiModel):
+    raw_text: str
+    name: str
+    canonical_name: str
+    quantity: float | None
+    unit: str | None
+
+
+class IngredientNormalizationResponse(ApiModel):
+    ingredients: list[IngredientView]
