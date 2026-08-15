@@ -3,7 +3,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, TextInput, View } from "react-native";
 
 import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
-import type { createCatalogApi, ListRecipesParams, RecipeQueryItem, RecipeSort } from "../api/catalog";
+import type { createCatalogApi, ListRecipesParams, Recipe, RecipeSort } from "../api/catalog";
 import { DurationFilter } from "../components/DurationFilter";
 import { FacetPicker } from "../components/FacetPicker";
 import { RatingFilter } from "../components/RatingFilter";
@@ -12,16 +12,18 @@ import { Button, EmptyState, ErrorState, Field, InlineNotice, OfflineBanner, Pag
 import { useTheme } from "../theme/ThemeProvider";
 import {
   DEFAULT_SORT,
+  MAX_INGREDIENT_FILTERS,
+  MAX_TAG_FILTERS,
   normalizeRecipeListParams,
   serializeRecipeListParams,
   type RouteQuery,
 } from "./recipeListParams";
-import { useRecipeFacets, type LaneId } from "./useRecipeFacets";
+import { useRecipeFacetOptions, type LaneId } from "./useRecipeFacetOptions";
+import { useResolvedRecipeSelections } from "./useResolvedRecipeSelections";
 
 export {
   applyCanonicalSelections,
   DEFAULT_SORT,
-  dropDependentSorts,
   normalizeRecipeListParams,
   routeStrings,
   sameStringList,
@@ -38,14 +40,6 @@ const SORT_CHOICES: { value: RecipeSort; label: string }[] = [
   { value: "totalMinutes:asc", label: "Shortest time" },
   { value: "totalMinutes:desc", label: "Longest time" },
 ];
-
-function sortChoices(params: ListRecipesParams): { value: RecipeSort; label: string }[] {
-  return [
-    ...SORT_CHOICES,
-    ...(params.availableIngredient?.length ? [{ value: "ingredientCoverage:desc" as const, label: "Best ingredient match" }] : []),
-    ...(params.preferredTag?.length ? [{ value: "tagCoverage:desc" as const, label: "Best tag match" }] : []),
-  ];
-}
 
 function isAbortError(error: unknown): boolean { return error instanceof Error && error.name === "AbortError"; }
 export function isOfflineError(error: unknown): boolean {
@@ -75,28 +69,36 @@ export type RecipeListScreenProps = { catalog: ReturnType<typeof createCatalogAp
 export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, onLogout, onUnauthorized }: RecipeListScreenProps) {
   const router = useRouter(); const route = useLocalSearchParams() as RouteQuery; const routeKey = JSON.stringify(route);
   const params = useMemo(() => normalizeRecipeListParams(route), [routeKey]); const queryKey = JSON.stringify(serializeRecipeListParams(params));
-  const routeSearchText = params.text ?? ""; const [items, setItems] = useState<RecipeQueryItem[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<LibraryError>("none"); const [view, setView] = useState<"card" | "list">("card"); const [searchDraft, setSearchDraft] = useState(routeSearchText);
+  const routeSearchText = params.text ?? ""; const [items, setItems] = useState<Recipe[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<LibraryError>("none"); const [view, setView] = useState<"card" | "list">("card"); const [searchDraft, setSearchDraft] = useState(routeSearchText);
   const mounted = useRef(true); const requestId = useRef(0); const debounce = useRef<ReturnType<typeof setTimeout> | null>(null); const draftGeneration = useRef(0); const controller = useRef<AbortController | null>(null); const paginationGuard = useRef(createPaginationRequestGuard());
   const previousRouteSearchText = useRef(routeSearchText);
   const { theme } = useTheme();
   const currentSort = params.sort?.[0] ?? DEFAULT_SORT[0];
-  const choices = sortChoices(params);
   if (previousRouteSearchText.current !== routeSearchText) { previousRouteSearchText.current = routeSearchText; draftGeneration.current += 1; setSearchDraft(routeSearchText); }
   void onCreate; void onImport; void onLogout;
   const onUnauthorizedRef = useRef(onUnauthorized);
   onUnauthorizedRef.current = onUnauthorized;
   const pushFilters = useCallback((next: ListRecipesParams) => router.push({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
   const replaceFilters = useCallback((next: ListRecipesParams) => router.replace({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
-  const facets = useRecipeFacets({ catalog, params, replaceFilters, onUnauthorized });
+  const options = useRecipeFacetOptions({ catalog, onUnauthorized });
+  const selections = useResolvedRecipeSelections({ catalog, params, replaceFilters, onUnauthorized });
+  const facetError = options.facetError !== "none" || selections.facetError !== "none";
+  const retryFacets = () => {
+    options.retryFacets();
+    selections.retrySelections();
+  };
   const commitFilters = (patch: Record<string, string | string[] | undefined>) => {
     pushFilters(normalizeRecipeListParams({ ...serializeRecipeListParams(params), ...patch }));
   };
   const addFilterValue = (key: LaneId, name: string) => {
-    commitFilters({ [key]: [...(params[key] ?? []), name] });
+    const current = params[key] ?? [];
+    const limit = key === "ingredient" ? MAX_INGREDIENT_FILTERS : MAX_TAG_FILTERS;
+    if (current.length >= limit) return;
+    commitFilters({ [key]: [...current, name] });
   };
   const removeFilterValue = (key: LaneId, name: string) => {
     const bucket = params[key] ?? [];
-    const chips = facets.selected[key];
+    const chips = selections.selected[key];
     commitFilters({
       [key]: bucket.filter((entry, index) => entry !== name && chips[index]?.name !== name),
     });
@@ -111,7 +113,7 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
     try {
       const page = await catalog.listRecipes({ ...params, ...(cursor ? { cursor } : {}) }, { signal: nextController.signal });
       if (!mounted.current || id !== requestId.current) return;
-      setItems((current) => pagination ? [...new Map([...current, ...page.items].map((item) => [item.recipe.id, item])).values()] : page.items);
+      setItems((current) => pagination ? [...new Map([...current, ...page.items].map((item) => [item.id, item])).values()] : page.items);
       setNextCursor(page.nextCursor);
     } catch (caught) {
       if (!mounted.current || id !== requestId.current || isAbortError(caught)) return;
@@ -137,71 +139,43 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
         control={<TextInput value={searchDraft} onChangeText={scheduleSearch} placeholder="Tomato soup" placeholderTextColor={placeholder} />}
       />
       <Section title="Filters">
-        {facets.facetError !== "none" ? (
+        {facetError ? (
           <>
             <InlineNotice tone="error" message="We couldn't load filter options. Please try again." />
-            <Button label="Try filters again" onPress={facets.retryFacets} />
+            <Button label="Try filters again" onPress={retryFacets} />
           </>
         ) : null}
         <ResponsiveGrid minItemWidth={240}>
           <FacetPicker
-            label="Required ingredients"
+            label="Ingredients"
             hint="Must include every selected ingredient"
-            selected={facets.selected.requiredIngredient}
-            options={facets.lanes.requiredIngredient.options}
-            search={facets.lanes.requiredIngredient.search}
-            onSearch={(value) => facets.searchLane("requiredIngredient", value)}
-            hasMore={Boolean(facets.lanes.requiredIngredient.nextCursor)}
-            loadingMore={facets.lanes.requiredIngredient.loadingMore}
-            onLoadMore={() => facets.loadMore("requiredIngredient")}
-            loading={facets.lanes.requiredIngredient.loading}
-            onAdd={(name) => addFilterValue("requiredIngredient", name)}
-            onRemove={(name) => removeFilterValue("requiredIngredient", name)}
+            selected={selections.selected.ingredient}
+            options={options.lanes.ingredient.options}
+            search={options.lanes.ingredient.search}
+            onSearch={(value) => options.searchLane("ingredient", value)}
+            hasMore={Boolean(options.lanes.ingredient.nextCursor)}
+            loadingMore={options.lanes.ingredient.loadingMore}
+            onLoadMore={() => options.loadMore("ingredient")}
+            loading={options.lanes.ingredient.loading}
+            onAdd={(name) => addFilterValue("ingredient", name)}
+            onRemove={(name) => removeFilterValue("ingredient", name)}
           />
           <FacetPicker
-            label="Available ingredients"
-            hint="Ingredients you have on hand"
-            selected={facets.selected.availableIngredient}
-            options={facets.lanes.availableIngredient.options}
-            search={facets.lanes.availableIngredient.search}
-            onSearch={(value) => facets.searchLane("availableIngredient", value)}
-            hasMore={Boolean(facets.lanes.availableIngredient.nextCursor)}
-            loadingMore={facets.lanes.availableIngredient.loadingMore}
-            onLoadMore={() => facets.loadMore("availableIngredient")}
-            loading={facets.lanes.availableIngredient.loading}
-            onAdd={(name) => addFilterValue("availableIngredient", name)}
-            onRemove={(name) => removeFilterValue("availableIngredient", name)}
-          />
-          <FacetPicker
-            label="Required tags"
+            label="Tags"
             hint="Must include every selected tag"
-            selected={facets.selected.requiredTag}
-            options={facets.lanes.requiredTag.options}
-            search={facets.lanes.requiredTag.search}
-            onSearch={(value) => facets.searchLane("requiredTag", value)}
-            hasMore={Boolean(facets.lanes.requiredTag.nextCursor)}
-            loadingMore={facets.lanes.requiredTag.loadingMore}
-            onLoadMore={() => facets.loadMore("requiredTag")}
-            loading={facets.lanes.requiredTag.loading}
-            onAdd={(name) => addFilterValue("requiredTag", name)}
-            onRemove={(name) => removeFilterValue("requiredTag", name)}
-          />
-          <FacetPicker
-            label="Preferred tags"
-            hint="Nice to have"
-            selected={facets.selected.preferredTag}
-            options={facets.lanes.preferredTag.options}
-            search={facets.lanes.preferredTag.search}
-            onSearch={(value) => facets.searchLane("preferredTag", value)}
-            hasMore={Boolean(facets.lanes.preferredTag.nextCursor)}
-            loadingMore={facets.lanes.preferredTag.loadingMore}
-            onLoadMore={() => facets.loadMore("preferredTag")}
-            loading={facets.lanes.preferredTag.loading}
-            onAdd={(name) => addFilterValue("preferredTag", name)}
-            onRemove={(name) => removeFilterValue("preferredTag", name)}
+            selected={selections.selected.tag}
+            options={options.lanes.tag.options}
+            search={options.lanes.tag.search}
+            onSearch={(value) => options.searchLane("tag", value)}
+            hasMore={Boolean(options.lanes.tag.nextCursor)}
+            loadingMore={options.lanes.tag.loadingMore}
+            onLoadMore={() => options.loadMore("tag")}
+            loading={options.lanes.tag.loading}
+            onAdd={(name) => addFilterValue("tag", name)}
+            onRemove={(name) => removeFilterValue("tag", name)}
           />
           <DurationFilter
-            observed={facets.observedMinutes}
+            observed={options.observedMinutes}
             value={params.maxTotalMinutes ?? null}
             onChange={(value) => commitFilters({ maxTotalMinutes: value === null ? undefined : String(value) })}
           />
@@ -215,7 +189,7 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
       </Section>
       <Section title="Sort">
         <View style={styles.chipRow}>
-          {choices.map((choice) => (
+          {SORT_CHOICES.map((choice) => (
             <Button
               key={choice.value}
               label={choice.label}
@@ -237,8 +211,8 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
           : items.length === 0
             ? <EmptyState title="Your recipe library is empty." description="Create or import a recipe to start building your library." />
             : view === "card"
-              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="card" />)}</ResponsiveGrid>
-              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
+              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="card" />)}</ResponsiveGrid>
+              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
       {nextCursor ? <Button label="Load more recipes" loading={loadingMore} onPress={() => void request(nextCursor)} /> : null}
     </Screen>
   );

@@ -75,7 +75,7 @@ test("renders recipe loading, safe retry, and semantic empty states from real re
       totalMinutes: null,
       rating: { min: 1, max: 5 },
       ratingState: ["any", "rated", "unrated"],
-      sort: { unconditional: [], requiresAvailableIngredient: [], requiresPreferredTag: [] },
+      sort: [],
     }),
     resolveRecipeFacetSelections: jest.fn().mockResolvedValue({ ingredients: [], tags: [] }),
   } as unknown as React.ComponentProps<typeof RecipeListScreen>["catalog"];

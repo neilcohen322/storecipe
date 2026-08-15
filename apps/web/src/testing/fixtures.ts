@@ -19,7 +19,7 @@ export const fixtureRecipe: Recipe = {
 };
 
 export const fixtureRecipePage: RecipeQueryPage = {
-  items: [{ recipe: fixtureRecipe, match: null }],
+  items: [fixtureRecipe],
   nextCursor: null,
 };
 
@@ -31,11 +31,7 @@ export const fixtureRecipeFacets: RecipeFacetPage = {
   totalMinutes: { min: 10, max: 60 },
   rating: { min: 1, max: 5 },
   ratingState: ["any", "rated", "unrated"],
-  sort: {
-    unconditional: ["rating:asc", "rating:desc", "totalMinutes:asc", "totalMinutes:desc", "createdAt:asc", "createdAt:desc", "updatedAt:asc", "updatedAt:desc", "title:asc", "title:desc"],
-    requiresAvailableIngredient: ["ingredientCoverage:asc", "ingredientCoverage:desc"],
-    requiresPreferredTag: ["tagCoverage:asc", "tagCoverage:desc"],
-  },
+  sort: ["rating:asc", "rating:desc", "totalMinutes:asc", "totalMinutes:desc", "createdAt:asc", "createdAt:desc", "updatedAt:asc", "updatedAt:desc", "title:asc", "title:desc"],
 };
 
 export function fixtureRecipeFacetSelections(body: RecipeFacetSelectionsRequest = {}): RecipeFacetSelectionsResponse {

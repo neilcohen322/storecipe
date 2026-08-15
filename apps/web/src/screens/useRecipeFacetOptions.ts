@@ -4,15 +4,11 @@ import { useFocusEffect } from "expo-router";
 import { ApiError, ApiUnauthorizedError } from "../api/client";
 import type {
   createCatalogApi,
-  ListRecipesParams,
   RecipeFacetBrowseParams,
   RecipeFacetPage,
-  RecipeFacetSelectionsResponse,
 } from "../api/catalog";
-import type { FacetPickerSelection } from "../components/FacetPicker";
-import { applyCanonicalSelections, sameStringList } from "./recipeListParams";
 
-export type LaneId = "requiredIngredient" | "availableIngredient" | "requiredTag" | "preferredTag";
+export type LaneId = "ingredient" | "tag";
 
 export type LaneState = {
   search: string;
@@ -28,9 +24,7 @@ type LaneRuntime = {
   debounce: ReturnType<typeof setTimeout> | null;
 };
 
-const INGREDIENT_LANES: LaneId[] = ["requiredIngredient", "availableIngredient"];
-const TAG_LANES: LaneId[] = ["requiredTag", "preferredTag"];
-const ALL_LANES: LaneId[] = [...INGREDIENT_LANES, ...TAG_LANES];
+const ALL_LANES: LaneId[] = ["ingredient", "tag"];
 
 function emptyLane(): LaneState {
   return { search: "", options: [], nextCursor: null, loading: false, loadingMore: false };
@@ -38,15 +32,9 @@ function emptyLane(): LaneState {
 
 function emptyLanes(): Record<LaneId, LaneState> {
   return {
-    requiredIngredient: emptyLane(),
-    availableIngredient: emptyLane(),
-    requiredTag: emptyLane(),
-    preferredTag: emptyLane(),
+    ingredient: emptyLane(),
+    tag: emptyLane(),
   };
-}
-
-function isIngredientLane(id: LaneId): boolean {
-  return id === "requiredIngredient" || id === "availableIngredient";
 }
 
 function uniqueFirstSeen(existing: string[], incoming: string[]): string[] {
@@ -61,34 +49,12 @@ function uniqueFirstSeen(existing: string[], incoming: string[]): string[] {
   return next;
 }
 
-function uniqueNames(values: string[]): string[] {
-  return [...new Set(values)];
-}
-
-export function ingredientTagKey(params: ListRecipesParams): string {
-  return JSON.stringify({
-    requiredIngredient: params.requiredIngredient ?? [],
-    availableIngredient: params.availableIngredient ?? [],
-    requiredTag: params.requiredTag ?? [],
-    preferredTag: params.preferredTag ?? [],
-  });
-}
-
-function bucketsDiffer(current: ListRecipesParams, next: ListRecipesParams): boolean {
-  return (
-    !sameStringList(current.requiredIngredient ?? [], next.requiredIngredient ?? [])
-    || !sameStringList(current.availableIngredient ?? [], next.availableIngredient ?? [])
-    || !sameStringList(current.requiredTag ?? [], next.requiredTag ?? [])
-    || !sameStringList(current.preferredTag ?? [], next.preferredTag ?? [])
-  );
-}
-
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
 function browseParamsForLane(id: LaneId, search: string, cursor: string | null): RecipeFacetBrowseParams {
-  if (isIngredientLane(id)) {
+  if (id === "ingredient") {
     return {
       ingredientLimit: 200,
       ...(search ? { ingredientQ: search } : {}),
@@ -103,7 +69,7 @@ function browseParamsForLane(id: LaneId, search: string, cursor: string | null):
 }
 
 function pageNames(id: LaneId, page: RecipeFacetPage): { names: string[]; nextCursor: string | null } {
-  if (isIngredientLane(id)) {
+  if (id === "ingredient") {
     return { names: page.ingredients, nextCursor: page.ingredientNextCursor };
   }
   return { names: page.tags, nextCursor: page.tagNextCursor };
@@ -117,70 +83,38 @@ function retainMovedLanes(
 ): Record<LaneId, LaneState> {
   const keep = (id: LaneId) => (currentGenerations[id] !== started[id] ? current[id] : fallback(id));
   return {
-    requiredIngredient: keep("requiredIngredient"),
-    availableIngredient: keep("availableIngredient"),
-    requiredTag: keep("requiredTag"),
-    preferredTag: keep("preferredTag"),
+    ingredient: keep("ingredient"),
+    tag: keep("tag"),
   };
 }
 
 function snapshotLaneGenerations(runtimes: Record<LaneId, LaneRuntime>): Record<LaneId, number> {
   return {
-    requiredIngredient: runtimes.requiredIngredient.generation,
-    availableIngredient: runtimes.availableIngredient.generation,
-    requiredTag: runtimes.requiredTag.generation,
-    preferredTag: runtimes.preferredTag.generation,
+    ingredient: runtimes.ingredient.generation,
+    tag: runtimes.tag.generation,
   };
 }
 
-function selectedFor(
-  values: string[] | undefined,
-  items: RecipeFacetSelectionsResponse["ingredients"] | null,
-): FacetPickerSelection[] {
-  if (!values?.length) return [];
-  if (!items) {
-    return values.map((name) => ({ name }));
-  }
-  const byRequested = new Map(items.map((item) => [item.requestedName, item]));
-  return values.map((name) => {
-    const resolved = byRequested.get(name);
-    if (!resolved) return { name };
-    if (resolved.observed) return { name: resolved.normalizedName };
-    return { name: resolved.requestedName, unavailable: true };
-  });
-}
-
-export type UseRecipeFacetsArgs = {
+export type UseRecipeFacetOptionsArgs = {
   catalog: ReturnType<typeof createCatalogApi>;
-  params: ListRecipesParams;
-  replaceFilters: (next: ListRecipesParams) => void;
   onUnauthorized: () => void;
 };
 
-export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorized }: UseRecipeFacetsArgs) {
+export function useRecipeFacetOptions({ catalog, onUnauthorized }: UseRecipeFacetOptionsArgs) {
   const [lanes, setLanes] = useState<Record<LaneId, LaneState>>(emptyLanes);
   const [observedMinutes, setObservedMinutes] = useState<{ min: number; max: number } | null>(null);
   const [facetError, setFacetError] = useState<"none" | "generic">("none");
-  const [resolution, setResolution] = useState<RecipeFacetSelectionsResponse | null>(null);
 
-  const paramsRef = useRef(params);
-  paramsRef.current = params;
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
-  const replaceFiltersRef = useRef(replaceFilters);
-  replaceFiltersRef.current = replaceFilters;
   const onUnauthorizedRef = useRef(onUnauthorized);
   onUnauthorizedRef.current = onUnauthorized;
 
   const runtimes = useRef<Record<LaneId, LaneRuntime>>({
-    requiredIngredient: { generation: 0, controller: null, debounce: null },
-    availableIngredient: { generation: 0, controller: null, debounce: null },
-    requiredTag: { generation: 0, controller: null, debounce: null },
-    preferredTag: { generation: 0, controller: null, debounce: null },
+    ingredient: { generation: 0, controller: null, debounce: null },
+    tag: { generation: 0, controller: null, debounce: null },
   });
-  const resolveRuntime = useRef({ generation: 0, controller: null as AbortController | null });
   const focusRuntime = useRef({ generation: 0, controller: null as AbortController | null });
-  const previousKey = useRef(ingredientTagKey(params));
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -193,7 +127,6 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
         runtime.controller?.abort();
       }
       focusRuntime.current.controller?.abort();
-      resolveRuntime.current.controller?.abort();
     };
   }, []);
 
@@ -267,10 +200,8 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
     }
     const startedLanes = snapshotLaneGenerations(runtimes.current);
     setLanes({
-      requiredIngredient: { ...emptyLane(), loading: true },
-      availableIngredient: { ...emptyLane(), loading: true },
-      requiredTag: { ...emptyLane(), loading: true },
-      preferredTag: { ...emptyLane(), loading: true },
+      ingredient: { ...emptyLane(), loading: true },
+      tag: { ...emptyLane(), loading: true },
     });
     setFacetError("none");
     try {
@@ -302,47 +233,9 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
     }
   }, []);
 
-  const resolveSelections = useCallback(async () => {
-    const requestKey = ingredientTagKey(paramsRef.current);
-    const runtime = resolveRuntime.current;
-    runtime.controller?.abort();
-    const generation = ++runtime.generation;
-    const controller = new AbortController();
-    runtime.controller = controller;
-    setResolution(null);
-    const current = paramsRef.current;
-    try {
-      const result = await catalogRef.current.resolveRecipeFacetSelections({
-        ingredients: uniqueNames([...(current.requiredIngredient ?? []), ...(current.availableIngredient ?? [])]),
-        tags: uniqueNames([...(current.requiredTag ?? []), ...(current.preferredTag ?? [])]),
-      }, { signal: controller.signal });
-      if (!mounted.current || generation !== runtime.generation) return;
-      if (ingredientTagKey(paramsRef.current) !== requestKey) return;
-      setResolution(result);
-      const next = applyCanonicalSelections(paramsRef.current, result);
-      if (bucketsDiffer(paramsRef.current, next)) {
-        replaceFiltersRef.current(next);
-      }
-    } catch (error) {
-      if (!mounted.current || generation !== runtime.generation || isAbortError(error)) return;
-      if (handleUnauthorized(error)) return;
-      setResolution(null);
-      setFacetError("generic");
-    }
-  }, []);
-
   useFocusEffect(useCallback(() => {
     void loadFocusFacets();
-    void resolveSelections();
-  }, [loadFocusFacets, resolveSelections]));
-
-  const currentKey = ingredientTagKey(params);
-  useEffect(() => {
-    if (previousKey.current === currentKey) return;
-    previousKey.current = currentKey;
-    setResolution(null);
-    void resolveSelections();
-  }, [currentKey, resolveSelections]);
+  }, [loadFocusFacets]));
 
   const searchLane = (id: LaneId, value: string) => {
     const runtime = runtimes.current[id];
@@ -353,7 +246,7 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
     runtime.debounce = setTimeout(() => {
       runtime.debounce = null;
       void fetchLane(id, value, null, "replace");
-    }, 300);
+    }, 500);
   };
 
   const loadMore = (id: LaneId) => {
@@ -365,19 +258,12 @@ export function useRecipeFacets({ catalog, params, replaceFilters, onUnauthorize
   const retryFacets = () => {
     setFacetError("none");
     void loadFocusFacets();
-    void resolveSelections();
   };
 
   return {
     lanes,
     observedMinutes,
     facetError,
-    selected: {
-      requiredIngredient: selectedFor(params.requiredIngredient, resolution?.ingredients ?? null),
-      availableIngredient: selectedFor(params.availableIngredient, resolution?.ingredients ?? null),
-      requiredTag: selectedFor(params.requiredTag, resolution?.tags ?? null),
-      preferredTag: selectedFor(params.preferredTag, resolution?.tags ?? null),
-    },
     searchLane,
     loadMore,
     retryFacets,

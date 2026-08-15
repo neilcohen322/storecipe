@@ -3,11 +3,10 @@ import type { ListRecipesParams, RecipeFacetSelectionsResponse, RecipeSort } fro
 export type RouteValue = string | string[] | undefined;
 export type RouteQuery = Record<string, RouteValue>;
 
+export const MAX_INGREDIENT_FILTERS = 32;
+export const MAX_TAG_FILTERS = 16;
+
 const SORTS: RecipeSort[] = [
-  "ingredientCoverage:asc",
-  "ingredientCoverage:desc",
-  "tagCoverage:asc",
-  "tagCoverage:desc",
   "rating:asc",
   "rating:desc",
   "totalMinutes:asc",
@@ -26,8 +25,8 @@ export function routeStrings(value: RouteValue): string[] {
   return entries.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
-function uniqueRouteStrings(value: RouteValue): string[] {
-  return [...new Set(routeStrings(value))];
+function uniqueRouteStrings(value: RouteValue, maxItems: number): string[] {
+  return [...new Set(routeStrings(value))].slice(0, maxItems);
 }
 
 function searchText(value: RouteValue): string | null {
@@ -46,23 +45,10 @@ function numberValue(value: RouteValue, minimum: number, maximum = Number.MAX_SA
   return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null;
 }
 
-export function dropDependentSorts(params: ListRecipesParams): RecipeSort[] {
-  const sort = params.sort ?? DEFAULT_SORT;
-  const filtered = sort.filter((entry) => {
-    const field = entry.split(":")[0];
-    if (field === "ingredientCoverage" && !(params.availableIngredient?.length ?? 0)) return false;
-    if (field === "tagCoverage" && !(params.preferredTag?.length ?? 0)) return false;
-    return true;
-  });
-  return filtered.length ? filtered : DEFAULT_SORT;
-}
-
 export function normalizeRecipeListParams(route: RouteQuery): ListRecipesParams {
   const text = searchText(route.text);
-  const requiredIngredient = uniqueRouteStrings(route.requiredIngredient);
-  const availableIngredient = uniqueRouteStrings(route.availableIngredient);
-  const requiredTag = uniqueRouteStrings(route.requiredTag);
-  const preferredTag = uniqueRouteStrings(route.preferredTag);
+  const ingredient = uniqueRouteStrings(route.ingredient, MAX_INGREDIENT_FILTERS);
+  const tag = uniqueRouteStrings(route.tag, MAX_TAG_FILTERS);
   const seenSortFields = new Set<string>();
   const sort = routeStrings(route.sort)
     .filter((entry): entry is RecipeSort => (SORTS as string[]).includes(entry))
@@ -75,19 +61,16 @@ export function normalizeRecipeListParams(route: RouteQuery): ListRecipesParams 
   const ratingState = route.ratingState === "rated" || route.ratingState === "unrated" ? route.ratingState : "any";
   const maxTotalMinutes = numberValue(route.maxTotalMinutes, 0);
   const minRating = ratingState === "unrated" ? null : numberValue(route.minRating, 1, 5);
-  const normalized: ListRecipesParams = {
+  return {
     ...(text ? { text } : {}),
-    ...(requiredIngredient.length ? { requiredIngredient } : {}),
-    ...(availableIngredient.length ? { availableIngredient } : {}),
-    ...(requiredTag.length ? { requiredTag } : {}),
-    ...(preferredTag.length ? { preferredTag } : {}),
+    ...(ingredient.length ? { ingredient } : {}),
+    ...(tag.length ? { tag } : {}),
     ...(maxTotalMinutes !== null ? { maxTotalMinutes } : {}),
     ...(minRating !== null ? { minRating } : {}),
     ...(ratingState !== "any" ? { ratingState } : {}),
     sort: sort.length ? sort : DEFAULT_SORT,
     limit: 20,
   };
-  return { ...normalized, sort: dropDependentSorts(normalized) };
 }
 
 export function serializeRecipeListParams(params: ListRecipesParams): Record<string, string | string[]> {
@@ -95,10 +78,8 @@ export function serializeRecipeListParams(params: ListRecipesParams): Record<str
   const serialized: Record<string, string | string[]> = {};
   for (const key of [
     "text",
-    "requiredIngredient",
-    "availableIngredient",
-    "requiredTag",
-    "preferredTag",
+    "ingredient",
+    "tag",
     "maxTotalMinutes",
     "minRating",
     "ratingState",
@@ -137,9 +118,7 @@ export function applyCanonicalSelections(
 ): ListRecipesParams {
   return {
     ...params,
-    requiredIngredient: canonicalizeBucket(params.requiredIngredient, resolution.ingredients),
-    availableIngredient: canonicalizeBucket(params.availableIngredient, resolution.ingredients),
-    requiredTag: canonicalizeBucket(params.requiredTag, resolution.tags),
-    preferredTag: canonicalizeBucket(params.preferredTag, resolution.tags),
+    ingredient: canonicalizeBucket(params.ingredient, resolution.ingredients),
+    tag: canonicalizeBucket(params.tag, resolution.tags),
   };
 }

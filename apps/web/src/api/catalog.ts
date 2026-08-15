@@ -33,21 +33,8 @@ export type RecipeCreate = {
   tags?: string[];
 };
 
-export type RecipeMatch = {
-  ingredientCoverage: number | null;
-  missingIngredients: string[];
-  tagCoverage: number | null;
-  matchedPreferredTags: string[];
-  missingPreferredTags: string[];
-};
-
-export type RecipeQueryItem = {
-  recipe: Recipe;
-  match: RecipeMatch | null;
-};
-
 export type RecipeQueryPage = {
-  items: RecipeQueryItem[];
+  items: Recipe[];
   nextCursor: string | null;
 };
 
@@ -56,10 +43,6 @@ export type Rating = {
 };
 
 export type RecipeSort =
-  | "ingredientCoverage:asc"
-  | "ingredientCoverage:desc"
-  | "tagCoverage:asc"
-  | "tagCoverage:desc"
   | "rating:asc"
   | "rating:desc"
   | "totalMinutes:asc"
@@ -73,10 +56,8 @@ export type RecipeSort =
 
 export type ListRecipesParams = {
   text?: string | null;
-  requiredIngredient?: string[];
-  availableIngredient?: string[];
-  requiredTag?: string[];
-  preferredTag?: string[];
+  ingredient?: string[];
+  tag?: string[];
   maxTotalMinutes?: number | null;
   minRating?: number | null;
   ratingState?: "any" | "rated" | "unrated";
@@ -94,12 +75,6 @@ export type RecipeFacetBounds = {
   max: number;
 };
 
-export type RecipeFacetSort = {
-  unconditional: RecipeSort[];
-  requiresAvailableIngredient: RecipeSort[];
-  requiresPreferredTag: RecipeSort[];
-};
-
 export type RecipeFacetPage = {
   ingredients: string[];
   ingredientNextCursor: string | null;
@@ -108,7 +83,7 @@ export type RecipeFacetPage = {
   totalMinutes: RecipeFacetBounds | null;
   rating: RecipeFacetBounds;
   ratingState: ("any" | "rated" | "unrated")[];
-  sort: RecipeFacetSort;
+  sort: RecipeSort[];
 };
 
 export type RecipeFacetBrowseParams = {
@@ -197,7 +172,7 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
       throw new Error("Invalid recipe library response");
     }
     return {
-      items: (page as { items: RecipeQueryItem[] }).items,
+      items: (page as { items: Recipe[] }).items,
       nextCursor: typeof (page as { nextCursor?: unknown }).nextCursor === "string" ? (page as { nextCursor: string }).nextCursor : null,
     };
   };
