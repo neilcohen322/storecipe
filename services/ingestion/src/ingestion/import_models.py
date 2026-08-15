@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -84,6 +84,41 @@ class IngredientCandidate(ImportModel):
     unit: Annotated[str | None, Field(min_length=1, max_length=64)] = None
 
 
+class RawIngredientLine(ImportModel):
+    raw_text: NonEmptyText
+
+
+class IngredientNormalizationItem(ImportModel):
+    raw_text: NonEmptyText
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    canonical_name: Annotated[str, Field(min_length=1, max_length=200)]
+    quantity: Annotated[Decimal | None, Field(ge=0)] = None
+    unit: Annotated[str | None, Field(min_length=1, max_length=64)] = None
+
+
+class IngredientNormalizer(Protocol):
+    async def normalize(self, raw_lines: list[str]) -> list[IngredientNormalizationItem]: ...
+
+
+class DeterministicRecipeCandidate(ImportModel):
+    title: Annotated[str, Field(min_length=1, max_length=200)]
+    source_url: HttpUrl | None = None
+    servings: Annotated[int | None, Field(ge=1, le=MAX_PG_INT)] = None
+    prep_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
+    cook_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
+    total_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
+    ingredients: Annotated[list[RawIngredientLine], Field(min_length=1)]
+    instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(default_factory=list)
+
+    @field_validator("source_url")
+    @classmethod
+    def _source_url_within_column(cls, value: HttpUrl | None) -> HttpUrl | None:
+        if value is not None and len(str(value)) > MAX_SOURCE_URL_LENGTH:
+            raise ValueError("source_url exceeds the maximum stored length")
+        return value
+
+
 class RecipeImportCandidate(ImportModel):
     title: Annotated[str, Field(min_length=1, max_length=200)]
     source_url: HttpUrl | None = None
@@ -91,7 +126,7 @@ class RecipeImportCandidate(ImportModel):
     prep_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     cook_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     total_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
-    ingredients: Annotated[list[IngredientCandidate], Field(min_length=1)]
+    ingredients: Annotated[list[IngredientNormalizationItem], Field(min_length=1)]
     instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
     tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(default_factory=list)
 

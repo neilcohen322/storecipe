@@ -37,6 +37,7 @@ NonEmptyText = Annotated[str, Field(min_length=1)]
 class LlmIngredientFields(LlmBoundaryModel):
     raw_text: NonEmptyText
     name: Annotated[str, Field(min_length=1, max_length=200)]
+    canonical_name: Annotated[str, Field(min_length=1, max_length=200)]
     quantity: Annotated[float | None, Field(ge=0)]
     unit: Annotated[str | None, Field(min_length=1, max_length=64)]
 
@@ -294,6 +295,7 @@ def _candidate_text_fields(model_fields: LlmRecipeFields) -> str:
     for ingredient in model_fields.ingredients:
         texts.append(ingredient.raw_text)
         texts.append(ingredient.name)
+        texts.append(ingredient.canonical_name)
     return "\n".join(texts)
 
 

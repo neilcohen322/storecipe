@@ -30,6 +30,7 @@ from ingestion.ai_extractor import (
 from ingestion.catalog_client import CatalogError
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import (
+    DeterministicRecipeCandidate,
     FetchedDocument,
     FetchError,
     FetchFailureCode,
@@ -70,7 +71,7 @@ class Fetcher(Protocol):
 
 
 class DeterministicExtractor(Protocol):
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate: ...
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate: ...
 
 
 class ModelExtractor(Protocol):
@@ -1134,7 +1135,9 @@ class ImportPipeline:
 
     @staticmethod
     def _serialize_candidate(
-        candidate: RecipeImportCandidate | ReviewRecipeCandidate,
+        candidate: RecipeImportCandidate
+        | DeterministicRecipeCandidate
+        | ReviewRecipeCandidate,
     ) -> bytes:
         payload = candidate.model_dump_json().encode("utf-8")
         if len(payload) > MAX_PIPELINE_PAYLOAD_BYTES:

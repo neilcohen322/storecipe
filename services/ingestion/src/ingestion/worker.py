@@ -12,7 +12,7 @@ from celery import Celery
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ingestion.config import Settings
-from ingestion.import_models import FetchedDocument, RecipeImportCandidate
+from ingestion.import_models import DeterministicRecipeCandidate, FetchedDocument
 from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.orchestration import LeaseToken
 from ingestion.pipeline import AiBudgetPolicy, ImportAdapters
@@ -213,7 +213,7 @@ def build_import_runner() -> ImportRunner:
 
 
 class _JsonLdAdapter:
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
         return parse_recipe_jsonld(document)
 
 

@@ -27,6 +27,7 @@ VALID_MODEL_CONTENT = json.dumps(
             {
                 "raw_text": "1 כוס עדשים",
                 "name": "עדשים",
+                "canonical_name": "lentil",
                 "quantity": 1,
                 "unit": "כוס",
             }
@@ -118,6 +119,7 @@ def test_candidate_from_model_content_rejects_radware_shaped_recipe() -> None:
             {
                 "raw_text": "Radware Block Page",
                 "name": "Radware Block Page",
+                "canonical_name": "Radware Block Page",
                 "quantity": None,
                 "unit": None,
             }
@@ -147,6 +149,7 @@ def test_candidate_from_model_content_rejects_split_captcha_phrases() -> None:
             {
                 "raw_text": "2 eggs",
                 "name": "eggs",
+                "canonical_name": "egg",
                 "quantity": 2,
                 "unit": None,
             }
@@ -198,6 +201,7 @@ def test_valid_content_becomes_candidate_with_trusted_source_url() -> None:
     assert candidate.total_minutes == 45
     assert candidate.ingredients[0].raw_text == "1 כוס עדשים"
     assert candidate.ingredients[0].name == "עדשים"
+    assert candidate.ingredients[0].canonical_name == "lentil"
     assert candidate.ingredients[0].quantity == Decimal("1")
     assert candidate.ingredients[0].unit == "כוס"
     assert candidate.instructions == ["שוטפים את העדשים.", "מבשלים עד לריכוך."]

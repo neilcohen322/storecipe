@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from ingestion.import_models import (
     FetchError,
     FetchFailureCode,
-    IngredientCandidate,
+    IngredientNormalizationItem,
     RecipeImportCandidate,
 )
 
@@ -41,9 +41,10 @@ def test_candidate_preserves_hebrew_and_english(
         title=title,
         source_url="https://example.com/מתכון",
         ingredients=[
-            IngredientCandidate(
+            IngredientNormalizationItem(
                 raw_text=raw_text,
                 name=ingredient_name,
+                canonical_name="flour" if ingredient_name in {"קמח", "flour"} else ingredient_name,
             )
         ],
         instructions=[instruction],
@@ -61,7 +62,11 @@ def test_candidate_enforces_catalog_title_limit() -> None:
         RecipeImportCandidate(
             title="x" * 201,
             source_url="https://example.com/recipe",
-            ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+            ingredients=[
+                IngredientNormalizationItem(
+                    raw_text="salt", name="salt", canonical_name="salt"
+                )
+            ],
             instructions=["Mix"],
         )
 
@@ -69,7 +74,9 @@ def test_candidate_enforces_catalog_title_limit() -> None:
 def test_text_import_candidate_allows_missing_source_url() -> None:
     candidate = RecipeImportCandidate(
         title="Family soup",
-        ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+        ingredients=[
+            IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
+        ],
         instructions=["Simmer."],
     )
 
@@ -82,7 +89,11 @@ def test_candidate_rejects_integers_beyond_postgres_int4() -> None:
             title="Big yield",
             source_url="https://example.com/recipe",
             servings=9_999_999_999,
-            ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+            ingredients=[
+                IngredientNormalizationItem(
+                    raw_text="salt", name="salt", canonical_name="salt"
+                )
+            ],
             instructions=["Mix"],
         )
 
@@ -93,7 +104,11 @@ def test_candidate_rejects_source_url_beyond_column_width() -> None:
         RecipeImportCandidate(
             title="Long URL",
             source_url=long_url,
-            ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+            ingredients=[
+                IngredientNormalizationItem(
+                    raw_text="salt", name="salt", canonical_name="salt"
+                )
+            ],
             instructions=["Mix"],
         )
 
