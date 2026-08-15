@@ -345,6 +345,7 @@ def _catalog_payload(candidate: RecipeImportCandidate) -> dict[str, Any]:
             {
                 "rawText": ingredient.raw_text,
                 "name": ingredient.name,
+                "canonicalName": ingredient.canonical_name,
                 "quantity": float(ingredient.quantity) if ingredient.quantity is not None else None,
                 "unit": ingredient.unit,
             }

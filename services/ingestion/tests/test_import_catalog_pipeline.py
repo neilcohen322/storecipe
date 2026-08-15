@@ -2,6 +2,7 @@ import base64
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -10,17 +11,69 @@ import pytest_asyncio
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from ingestion.ai_extractor import OpenRouterUsage
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import (
+    DeterministicRecipeCandidate,
     FetchedDocument,
-    IngredientCandidate,
+    IngredientNormalizationItem,
+    RawIngredientLine,
     RecipeImportCandidate,
+)
+from ingestion.ingredient_normalizer import (
+    PROMPT_VERSION as NORMALIZATION_PROMPT_VERSION,
+)
+from ingestion.ingredient_normalizer import (
+    IngredientNormalizationResult,
 )
 from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.models import Base, ImportInputKind, ImportJob, ImportStage, ImportStatus
-from ingestion.pipeline import ImportAdapters, ImportPipeline
+from ingestion.pipeline import AiBudgetPolicy, ImportAdapters, ImportPipeline
+from ingestion.repositories.budgets import AiBudgetRepository
 from ingestion.repositories.imports import ImportRepository
 from ingestion.server_rendered_variants import ServerRenderedVariantRegistry
+
+
+def normalization_policy() -> AiBudgetPolicy:
+    return AiBudgetPolicy(
+        daily_limit=10_000_000,
+        reservation_tokens=64_000,
+        provider_name="openrouter",
+        model_name="fake-model",
+        prompt_version=NORMALIZATION_PROMPT_VERSION,
+    )
+
+
+class FakeIngredientNormalizer:
+    def __init__(
+        self,
+        *,
+        items: list[IngredientNormalizationItem] | None = None,
+    ) -> None:
+        self.items = items
+        self.calls = 0
+
+    async def normalize(self, raw_lines: list[str]) -> IngredientNormalizationResult:
+        self.calls += 1
+        assert self.items is not None
+        return IngredientNormalizationResult(
+            items=self.items,
+            model="fake-model",
+            prompt_version=NORMALIZATION_PROMPT_VERSION,
+            usage=OpenRouterUsage(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                cost=Decimal("0"),
+            ),
+            latency_ms=1,
+        )
+
+
+def default_normalizer() -> FakeIngredientNormalizer:
+    return FakeIngredientNormalizer(
+        items=[IngredientNormalizationItem(raw_text="water", name="water", canonical_name="water")]
+    )
 
 
 @pytest_asyncio.fixture
@@ -42,17 +95,26 @@ def cipher() -> PayloadCipher:
     return PayloadCipher.from_keyring(active_key_id="current", keyring=f"current={key}")
 
 
+def pipeline(repository: ImportRepository) -> ImportPipeline:
+    return ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(repository.session),
+        normalization_budget_policy=normalization_policy(),
+    )
+
+
 class Fetcher:
     async def fetch(self, url: str) -> FetchedDocument:
         return FetchedDocument(url, url, "<html>", "text/html", 6)
 
 
 class Deterministic:
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
-        return RecipeImportCandidate(
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
+        return DeterministicRecipeCandidate(
             title="Soup",
             source_url=document.final_url,
-            ingredients=[IngredientCandidate(raw_text="water", name="water")],
+            ingredients=[RawIngredientLine(raw_text="water")],
             instructions=["Boil."],
         )
 
@@ -112,11 +174,20 @@ async def test_pipeline_completes_catalog_handoff_after_deterministic_checkpoint
     assert token is not None
     await session.commit()
     catalog = TransactionAwareCatalog(session)
+    normalizer = FakeIngredientNormalizer(
+        items=[IngredientNormalizationItem(raw_text="water", name="water", canonical_name="water")]
+    )
 
-    await ImportPipeline(repository, cipher()).run(
+    await pipeline(repository).run(
         job.id,
         token,
-        ImportAdapters(Fetcher(), Deterministic(), object(), catalog),  # type: ignore[arg-type]
+        ImportAdapters(
+            Fetcher(),
+            Deterministic(),
+            object(),  # type: ignore[arg-type]
+            catalog,
+            normalizer=normalizer,
+        ),
     )
     await session.commit()
 
@@ -126,6 +197,7 @@ async def test_pipeline_completes_catalog_handoff_after_deterministic_checkpoint
     assert job.catalog_recipe_id == catalog.recipe_id
     assert catalog.source_fingerprints == ["a" * 64]
     assert catalog.transaction_open_during_call is False
+    assert catalog.candidates[0].ingredients[0].canonical_name == "water"
     events = [json.loads(record.message) for record in caplog.records]
     assert any(
         event["event"] == "stage.completed" and event["stage"] == "validating" for event in events
@@ -153,10 +225,16 @@ async def test_active_cancellation_is_terminalized_at_a_worker_boundary(
     )
     await session.commit()
 
-    await ImportPipeline(repository, cipher()).run(
+    await pipeline(repository).run(
         job.id,
         token,
-        ImportAdapters(Fetcher(), Deterministic(), object(), None),  # type: ignore[arg-type]
+        ImportAdapters(
+            Fetcher(),
+            Deterministic(),
+            object(),  # type: ignore[arg-type]
+            None,
+            normalizer=default_normalizer(),
+        ),
     )
 
     assert job.status is ImportStatus.CANCELLED
@@ -182,10 +260,16 @@ async def test_expired_deadline_wins_before_catalog_intent_is_reserved(
     await session.commit()
     catalog = Catalog()
 
-    await ImportPipeline(repository, cipher()).run(
+    await pipeline(repository).run(
         job.id,
         token,
-        ImportAdapters(Fetcher(), Deterministic(), object(), catalog),  # type: ignore[arg-type]
+        ImportAdapters(
+            Fetcher(),
+            Deterministic(),
+            object(),  # type: ignore[arg-type]
+            catalog,
+            normalizer=default_normalizer(),
+        ),
     )
 
     assert catalog.calls == 0
@@ -210,7 +294,7 @@ async def test_incomplete_candidate_is_retained_for_review(session: AsyncSession
     await session.commit()
 
     class Incomplete:
-        async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+        async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
             incomplete = FetchedDocument(
                 document.requested_url,
                 document.final_url,
@@ -224,10 +308,16 @@ async def test_incomplete_candidate_is_retained_for_review(session: AsyncSession
             )
             return parse_recipe_jsonld(incomplete)
 
-    await ImportPipeline(repository, cipher()).run(
+    await pipeline(repository).run(
         job.id,
         token,
-        ImportAdapters(Fetcher(), Incomplete(), object(), None),  # type: ignore[arg-type]
+        ImportAdapters(
+            Fetcher(),
+            Incomplete(),
+            object(),  # type: ignore[arg-type]
+            None,
+            normalizer=default_normalizer(),
+        ),
     )
 
     assert job.status is ImportStatus.REVIEW_REQUIRED
@@ -262,7 +352,7 @@ async def test_catalog_receives_primary_source_identity_after_server_rendered_va
             return self.documents.pop(0)
 
     class JsonLdDeterministic:
-        async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+        async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
             return parse_recipe_jsonld(document)
 
     repository = ImportRepository(session)
@@ -282,12 +372,27 @@ async def test_catalog_receives_primary_source_identity_after_server_rendered_va
     registry = ServerRenderedVariantRegistry.from_json(
         '{"www.publisher.test":"mobile.publisher.test"}'
     )
+    normalizer = FakeIngredientNormalizer(
+        items=[
+            IngredientNormalizationItem(
+                raw_text="1 cup lentils", name="lentils", canonical_name="lentil"
+            )
+        ]
+    )
 
-    await ImportPipeline(repository, cipher()).run(
+    await pipeline(repository).run(
         created.id,
         token,
-        ImportAdapters(fetcher, JsonLdDeterministic(), None, catalog, registry),
+        ImportAdapters(
+            fetcher,
+            JsonLdDeterministic(),
+            None,
+            catalog,
+            normalizer=normalizer,
+            variant_registry=registry,
+        ),
     )
 
     assert fetcher.calls == [primary_url, alternate_url]
     assert str(catalog.candidates[0].source_url) == primary_url
+    assert catalog.candidates[0].ingredients[0].canonical_name == "lentil"

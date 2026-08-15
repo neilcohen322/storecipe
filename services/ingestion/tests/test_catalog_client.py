@@ -38,7 +38,13 @@ def candidate() -> RecipeImportCandidate:
             "cook_minutes": 20,
             "total_minutes": 30,
             "ingredients": [
-                {"raw_text": "2 carrots", "name": "carrot", "quantity": "2", "unit": None}
+                {
+                    "raw_text": "2 carrots",
+                    "name": "carrot",
+                    "canonical_name": "carrot",
+                    "quantity": "2",
+                    "unit": None,
+                }
             ],
             "instructions": ["Simmer."],
             "tags": ["Dinner"],
@@ -215,7 +221,13 @@ async def test_catalog_client_uses_catalog_aliases_and_job_id_as_the_idempotency
             "cookMinutes": 20,
             "totalMinutes": 30,
             "ingredients": [
-                {"rawText": "2 carrots", "name": "carrot", "quantity": 2, "unit": None}
+                {
+                    "rawText": "2 carrots",
+                    "name": "carrot",
+                    "canonicalName": "carrot",
+                    "quantity": 2,
+                    "unit": None,
+                }
             ],
             "instructions": ["Simmer."],
             "tags": ["Dinner"],
