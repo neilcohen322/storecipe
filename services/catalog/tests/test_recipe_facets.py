@@ -265,11 +265,11 @@ async def test_omitting_max_total_minutes_includes_untimed_recipes(
         json=_payload(title="Untimed", totalMinutes=None),
     )
     omitted = await api_client.get("/v1/recipes")
-    omitted_ids = {item["recipe"]["id"] for item in omitted.json()["items"]}
+    omitted_ids = {item["id"] for item in omitted.json()["items"]}
     assert timed.json()["id"] in omitted_ids
     assert untimed.json()["id"] in omitted_ids
     capped = await api_client.get("/v1/recipes", params={"maxTotalMinutes": 90})
-    capped_ids = {item["recipe"]["id"] for item in capped.json()["items"]}
+    capped_ids = {item["id"] for item in capped.json()["items"]}
     assert timed.json()["id"] in capped_ids
     assert untimed.json()["id"] not in capped_ids
 
@@ -288,11 +288,11 @@ async def test_omitting_min_rating_includes_unrated_recipes(api_client: AsyncCli
     )
     await api_client.put(f"/v1/recipes/{rated.json()['id']}/rating", json={"value": 1})
     omitted = await api_client.get("/v1/recipes")
-    omitted_ids = {item["recipe"]["id"] for item in omitted.json()["items"]}
+    omitted_ids = {item["id"] for item in omitted.json()["items"]}
     assert unrated.json()["id"] in omitted_ids
     assert rated.json()["id"] in omitted_ids
     filtered = await api_client.get("/v1/recipes", params={"minRating": 1})
-    filtered_ids = {item["recipe"]["id"] for item in filtered.json()["items"]}
+    filtered_ids = {item["id"] for item in filtered.json()["items"]}
     assert rated.json()["id"] in filtered_ids
     assert unrated.json()["id"] not in filtered_ids
 
@@ -374,11 +374,23 @@ async def test_facet_selections_reject_empty_and_overlong_arrays(
     api_client: AsyncClient,
 ) -> None:
     empty_item = await api_client.post("/v1/recipe-facet-selections", json={"ingredients": ["   "]})
-    too_many = await api_client.post(
-        "/v1/recipe-facet-selections", json={"ingredients": ["x"] * 97}
+    too_many_ingredients = await api_client.post(
+        "/v1/recipe-facet-selections", json={"ingredients": ["x"] * 33}
+    )
+    too_many_tags = await api_client.post(
+        "/v1/recipe-facet-selections", json={"tags": ["x"] * 17}
+    )
+    accepted = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={
+            "ingredients": [f"ingredient-{index}" for index in range(32)],
+            "tags": [f"tag-{index}" for index in range(16)],
+        },
     )
     assert empty_item.status_code == 422
-    assert too_many.status_code == 422
+    assert too_many_ingredients.status_code == 422
+    assert too_many_tags.status_code == 422
+    assert accepted.status_code == 200
 
 
 @pytest.mark.asyncio

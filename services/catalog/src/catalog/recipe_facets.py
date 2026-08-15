@@ -133,10 +133,10 @@ class RecipeFacetSelectionsRequest(ApiModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
     ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
-        default_factory=list, max_length=96
+        default_factory=list, max_length=32
     )
     tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
-        default_factory=list, max_length=32
+        default_factory=list, max_length=16
     )
 
     @field_validator("ingredients", "tags")

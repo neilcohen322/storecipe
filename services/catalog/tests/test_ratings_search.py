@@ -178,22 +178,22 @@ async def test_recipe_query_filters_and_cursor_pagination(
     await client.put(f"/v1/recipes/{created['bowl']['id']}/rating", json={"value": 2})
 
     ingredient_search = await client.get("/v1/recipes", params=[("text", "CHICKPEAS")])
-    assert [item["recipe"]["id"] for item in ingredient_search.json()["items"]] == [
+    assert [item["id"] for item in ingredient_search.json()["items"]] == [
         created["curry"]["id"]
     ]
 
     filtered = await client.get(
         "/v1/recipes",
         params=[
-            ("requiredTag", " dinner "),
+            ("tag", " dinner "),
             ("maxTotalMinutes", "40"),
             ("minRating", "4"),
         ],
     )
-    assert [item["recipe"]["id"] for item in filtered.json()["items"]] == [created["curry"]["id"]]
+    assert [item["id"] for item in filtered.json()["items"]] == [created["curry"]["id"]]
 
     literal = await client.get("/v1/recipes", params=[("text", "%")])
-    assert [item["recipe"]["id"] for item in literal.json()["items"]] == [created["literal"]["id"]]
+    assert [item["id"] for item in literal.json()["items"]] == [created["literal"]["id"]]
 
     seen: list[str] = []
     cursor: str | None = None
@@ -202,7 +202,7 @@ async def test_recipe_query_filters_and_cursor_pagination(
         if cursor is not None:
             params["cursor"] = cursor
         page = (await client.get("/v1/recipes", params=params)).json()
-        seen.extend(item["recipe"]["id"] for item in page["items"])
+        seen.extend(item["id"] for item in page["items"])
         cursor = page["nextCursor"]
         if cursor is None:
             break

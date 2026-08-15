@@ -1,9 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from catalog.recipe_queries import (
-    RecipeMatch,
     RecipeQueryCursor,
-    RecipeQueryItem,
     RecipeQueryPage,
     RecipeQueryRequest,
     encode_cursor,
@@ -18,28 +16,6 @@ from catalog.repositories.recipe_queries import (
     fetch_query_candidates,
 )
 from catalog.services.users import resolve_user
-
-
-def _match(request: RecipeQueryRequest, candidate: QueryCandidate) -> RecipeMatch | None:
-    if not request.available_ingredients and not request.preferred_tags:
-        return None
-
-    ingredient_names = {ingredient.normalized_name for ingredient in candidate.recipe.ingredients}
-    available_ingredients = set(request.available_ingredients)
-    tag_names = {recipe_tag.tag.name for recipe_tag in candidate.recipe.recipe_tags}
-    return RecipeMatch(
-        ingredient_coverage=(
-            float(candidate.ingredient_coverage)
-            if candidate.ingredient_coverage is not None
-            else None
-        ),
-        missing_ingredients=sorted(ingredient_names - available_ingredients),
-        tag_coverage=(
-            float(candidate.tag_coverage) if candidate.tag_coverage is not None else None
-        ),
-        matched_preferred_tags=sorted(set(request.preferred_tags) & tag_names),
-        missing_preferred_tags=sorted(set(request.preferred_tags) - tag_names),
-    )
 
 
 def _next_cursor(
@@ -66,10 +42,7 @@ def build_query_page(
     has_more = len(bounded_candidates) > request.limit
     return RecipeQueryPage(
         items=[
-            RecipeQueryItem(
-                recipe=to_recipe_view(candidate.recipe, rating=candidate.rating),
-                match=_match(request, candidate),
-            )
+            to_recipe_view(candidate.recipe, rating=candidate.rating)
             for candidate in page_candidates
         ],
         next_cursor=(

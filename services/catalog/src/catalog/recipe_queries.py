@@ -13,8 +13,6 @@ from pydantic import ConfigDict, Field, ValidationError, field_validator, model_
 from catalog.errors import InvalidCursor, StaleRecipeQueryCursor
 from catalog.schemas import ApiModel, RecipeView
 
-FiniteScore = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
-
 
 def normalize_query_text(value: str) -> str:
     normalized = unicodedata.normalize("NFC", value)
@@ -23,8 +21,6 @@ def normalize_query_text(value: str) -> str:
 
 
 class SortField(StrEnum):
-    INGREDIENT_COVERAGE = "ingredientCoverage"
-    TAG_COVERAGE = "tagCoverage"
     RATING = "rating"
     TOTAL_MINUTES = "totalMinutes"
     CREATED_AT = "createdAt"
@@ -66,10 +62,8 @@ def parse_cursor_sort_token(token: str) -> ParsedSort:
 
 class RecipeQueryRequest(ApiModel):
     text: Annotated[str | None, Field(max_length=200)] = None
-    required_ingredients: Annotated[list[str], Field(max_length=32)] = Field(default_factory=list)
-    available_ingredients: Annotated[list[str], Field(max_length=64)] = Field(default_factory=list)
-    required_tags: Annotated[list[str], Field(max_length=16)] = Field(default_factory=list)
-    preferred_tags: Annotated[list[str], Field(max_length=16)] = Field(default_factory=list)
+    ingredients: Annotated[list[str], Field(max_length=32)] = Field(default_factory=list)
+    tags: Annotated[list[str], Field(max_length=16)] = Field(default_factory=list)
     max_total_minutes: Annotated[int | None, Field(ge=0)] = None
     min_rating: Annotated[int | None, Field(ge=1, le=5)] = None
     rating_state: Literal["any", "rated", "unrated"] = "any"
@@ -84,13 +78,7 @@ class RecipeQueryRequest(ApiModel):
             return value
         return normalize_query_text(value) or None
 
-    @field_validator(
-        "required_ingredients",
-        "available_ingredients",
-        "required_tags",
-        "preferred_tags",
-        mode="before",
-    )
+    @field_validator("ingredients", "tags", mode="before")
     @classmethod
     def normalize_lists(cls, value: Any) -> Any:
         if not isinstance(value, list | tuple | set | frozenset):
@@ -118,28 +106,11 @@ class RecipeQueryRequest(ApiModel):
             raise ValueError("sort contains duplicate sort fields")
         if self.min_rating is not None and self.rating_state == "unrated":
             raise ValueError("min_rating cannot be used with rating_state=unrated")
-        if SortField.INGREDIENT_COVERAGE in fields and not self.available_ingredients:
-            raise ValueError("sort ingredientCoverage requires available_ingredients")
-        if SortField.TAG_COVERAGE in fields and not self.preferred_tags:
-            raise ValueError("sort tagCoverage requires preferred_tags")
         return self
 
 
-class RecipeMatch(ApiModel):
-    ingredient_coverage: FiniteScore | None = None
-    missing_ingredients: list[str] = Field(default_factory=list)
-    tag_coverage: FiniteScore | None = None
-    matched_preferred_tags: list[str] = Field(default_factory=list)
-    missing_preferred_tags: list[str] = Field(default_factory=list)
-
-
-class RecipeQueryItem(ApiModel):
-    recipe: RecipeView
-    match: RecipeMatch | None = None
-
-
 class RecipeQueryPage(ApiModel):
-    items: list[RecipeQueryItem]
+    items: list[RecipeView]
     next_cursor: str | None = None
 
 

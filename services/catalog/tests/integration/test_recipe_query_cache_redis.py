@@ -1,5 +1,6 @@
 """Opt-in checks for recipe-query page caching against a real Redis instance."""
 
+import json
 import os
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID, uuid4
@@ -8,7 +9,6 @@ import pytest
 from redis.asyncio import Redis
 
 from catalog.recipe_queries import (
-    RecipeQueryItem,
     RecipeQueryPage,
     RecipeQueryRequest,
     recipe_query_hash,
@@ -52,32 +52,66 @@ def unavailable_redis_url(url: str) -> str:
 
 
 async def delete_test_namespace(client: Redis, user_id: UUID) -> None:
-    keys = [key async for key in client.scan_iter(match=f"recipe_queries:{user_id}:*")]
+    keys = [key async for key in client.scan_iter(match=f"recipe_queries:v2:{user_id}:*")]
     if keys:
         await client.delete(*keys)
 
 
-def request_and_page() -> tuple[RecipeQueryRequest, RecipeQueryPage]:
-    request = RecipeQueryRequest(text="Wine", required_ingredients=["Basil"])
-    page = RecipeQueryPage(
-        items=[
-            RecipeQueryItem(
-                recipe=RecipeView(
-                    id=UUID("00000000-0000-0000-0000-000000000001"),
-                    title="Wine soup",
-                    source_url=None,
-                    servings=2,
-                    prep_minutes=5,
-                    cook_minutes=10,
-                    total_minutes=15,
-                    ingredients=[],
-                    instructions=[],
-                    tags=[],
-                )
-            )
-        ]
+def _recipe_view() -> RecipeView:
+    return RecipeView(
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        title="Wine soup",
+        source_url=None,
+        servings=2,
+        prep_minutes=5,
+        cook_minutes=10,
+        total_minutes=15,
+        ingredients=[],
+        instructions=[],
+        tags=[],
     )
+
+
+def request_and_page() -> tuple[RecipeQueryRequest, RecipeQueryPage]:
+    request = RecipeQueryRequest(text="Wine", ingredients=["Basil"])
+    page = RecipeQueryPage(items=[_recipe_view()])
     return request, page
+
+
+def _legacy_v1_envelope(request_hash: str, catalog_version: int) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "request_hash": request_hash,
+        "catalog_version": catalog_version,
+        "request": {
+            "text": "wine",
+            "required_ingredients": ["basil"],
+            "available_ingredients": [],
+            "required_tags": [],
+            "preferred_tags": [],
+            "max_total_minutes": None,
+            "min_rating": None,
+            "rating_state": "any",
+            "sort": [],
+            "cursor": None,
+            "limit": 20,
+        },
+        "result": {
+            "items": [
+                {
+                    "recipe": _recipe_view().model_dump(mode="json", by_alias=False),
+                    "match": {
+                        "ingredient_coverage": 1.0,
+                        "missing_ingredients": [],
+                        "tag_coverage": None,
+                        "matched_preferred_tags": [],
+                        "missing_preferred_tags": [],
+                    },
+                }
+            ],
+            "next_cursor": None,
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -94,6 +128,25 @@ async def test_real_redis_cache_ttl_and_catalog_version() -> None:
         assert (await cache.get(user_id, 4, request)).outcome is CacheReadOutcome.MISS
         await client.expire(key, 0)
         assert (await cache.get(user_id, 3, request)).outcome is CacheReadOutcome.MISS
+    finally:
+        await delete_test_namespace(client, user_id)
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_real_redis_misses_legacy_v1_namespace_without_reading_it() -> None:
+    client = redis_client()
+    user_id = uuid4()
+    request, _ = request_and_page()
+    cache = RecipeQueryCache(client)
+    request_hash = recipe_query_hash(request)
+    old_key = f"recipe_queries:{user_id}:3:{request_hash}"
+    new_key = cache.key(user_id, 3, request_hash)
+    try:
+        await client.set(old_key, json.dumps(_legacy_v1_envelope(request_hash, 3)), ex=60)
+        assert (await cache.get(user_id, 3, request)).outcome is CacheReadOutcome.MISS
+        assert await client.get(old_key) is not None
+        assert await client.get(new_key) is None
     finally:
         await delete_test_namespace(client, user_id)
         await client.aclose()

@@ -51,7 +51,7 @@ class CacheRead:
 
 
 class CacheEnvelope(ApiModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     request_hash: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     catalog_version: Annotated[int, Field(ge=0)]
     request: RecipeQueryRequest
@@ -70,7 +70,7 @@ class RecipeQueryCache:
         self._redis_timeout_seconds = redis_timeout_seconds
 
     def key(self, user_id: UUID, catalog_version: int, request_hash: str) -> str:
-        return f"recipe_queries:{user_id}:{catalog_version}:{request_hash}"
+        return f"recipe_queries:v2:{user_id}:{catalog_version}:{request_hash}"
 
     async def get(
         self, user_id: UUID, catalog_version: int, request: RecipeQueryRequest
