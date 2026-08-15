@@ -24,6 +24,7 @@ from ingestion.models import (
     ImportJob,
     ImportStage,
     ImportStatus,
+    LlmOperationKind,
     ProviderAttempt,
 )
 from ingestion.orchestration import LeaseToken, StaleLease
@@ -477,8 +478,11 @@ async def test_concurrent_budget_reservations_cannot_overspend_daily_cap() -> No
             await barrier.wait()
             try:
                 await AiBudgetRepository(session).reserve(
-                    job=job,
-                    provider_attempt=attempt,
+                    owner_subject=job.owner_subject,
+                    provider_operation_id=attempt.operation_id,
+                    operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+                    job_id=job.id,
+                    request_deadline_at=attempt.request_deadline_at,
                     provider_name="openrouter",
                     model_name="test-model",
                     prompt_version="integration",

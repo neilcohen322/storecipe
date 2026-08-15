@@ -75,6 +75,17 @@ class LlmInvocationState(StrEnum):
     AMBIGUOUS = "ambiguous"
 
 
+class LlmOperationKind(StrEnum):
+    IMPORT_EXTRACTION = "import_extraction"
+    INGREDIENT_NORMALIZATION = "ingredient_normalization"
+
+
+class IngredientNormalizationOperationState(StrEnum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 def _enum(enum: type[StrEnum], name: str) -> Enum:
     return Enum(
         enum,
@@ -297,6 +308,84 @@ class ProviderAttempt(Base):
     job: Mapped[ImportJob] = relationship(back_populates="provider_attempts")
 
 
+class IngredientNormalizationOperation(Base):
+    __tablename__ = "ingredient_normalization_operations"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_subject",
+            "idempotency_key",
+            name="uq_ingredient_normalization_operations_owner_idempotency",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[IngredientNormalizationOperationState] = mapped_column(
+        _enum(IngredientNormalizationOperationState, "ingredient_normalization_operation_state"),
+        nullable=False,
+        default=IngredientNormalizationOperationState.PENDING,
+        server_default=text("'pending'"),
+    )
+    result_encryption_key_id: Mapped[str | None] = mapped_column(String(128))
+    result_algorithm: Mapped[str | None] = mapped_column(String(32))
+    result_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
+    result_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary)
+    result_content_hash: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    attempts: Mapped[list["IngredientNormalizationAttempt"]] = relationship(
+        back_populates="operation"
+    )
+
+
+class IngredientNormalizationAttempt(Base):
+    __tablename__ = "ingredient_normalization_attempts"
+    __table_args__ = (
+        UniqueConstraint("operation_id", name="uq_ingredient_normalization_attempts_operation_id"),
+        UniqueConstraint(
+            "normalization_operation_id",
+            "ordinal",
+            name="uq_ingredient_normalization_attempts_operation_ordinal",
+        ),
+        CheckConstraint("ordinal > 0", name="ck_ingredient_normalization_attempts_ordinal"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    normalization_operation_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            f"{SCHEMA}.ingredient_normalization_operations.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+    operation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, default=uuid4)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[AttemptState] = mapped_column(
+        _enum(AttemptState, "provider_attempt_state"), nullable=False
+    )
+    reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome_category: Mapped[str | None] = mapped_column(String(128))
+    provider_name: Mapped[str | None] = mapped_column(String(128))
+    model_name: Mapped[str | None] = mapped_column(String(256))
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_microunits: Mapped[int | None] = mapped_column(Integer)
+
+    operation: Mapped[IngredientNormalizationOperation] = relationship(back_populates="attempts")
+
+
 class AiDailyUsage(Base):
     __tablename__ = "ai_daily_usage"
     __table_args__ = (
@@ -340,19 +429,26 @@ class LlmInvocation(Base):
             "OR total_tokens = input_tokens + output_tokens",
             name="ck_llm_invocations_total_tokens_match",
         ),
+        CheckConstraint(
+            "(operation_kind = 'import_extraction' AND job_id IS NOT NULL) "
+            "OR (operation_kind = 'ingredient_normalization' AND job_id IS NULL)",
+            name="ck_llm_invocations_operation_kind_job",
+        ),
         {"schema": SCHEMA},
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    job_id: Mapped[UUID] = mapped_column(
+    job_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey(f"{SCHEMA}.import_jobs.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
-    provider_operation_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey(f"{SCHEMA}.provider_attempts.operation_id", ondelete="CASCADE"),
+    provider_operation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    operation_kind: Mapped[LlmOperationKind] = mapped_column(
+        _enum(LlmOperationKind, "llm_operation_kind"),
         nullable=False,
+        default=LlmOperationKind.IMPORT_EXTRACTION,
+        server_default=text("'import_extraction'"),
     )
     owner_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     budget_date_utc: Mapped[date] = mapped_column(nullable=False)
@@ -378,7 +474,7 @@ class LlmInvocation(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    job: Mapped[ImportJob] = relationship(back_populates="llm_invocations")
+    job: Mapped[ImportJob | None] = relationship(back_populates="llm_invocations")
 
 
 class CatalogAttempt(Base):

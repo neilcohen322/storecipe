@@ -31,6 +31,7 @@ from ingestion.import_models import (
     FetchError,
     FetchFailureCode,
     IngredientCandidate,
+    IngredientNormalizationItem,
     ParseError,
     ParseFailureCode,
     RecipeImportCandidate,
@@ -102,7 +103,11 @@ def candidate(*, source_url: str | None) -> RecipeImportCandidate:
     return RecipeImportCandidate(
         title="Lentil soup",
         source_url=source_url,
-        ingredients=[IngredientCandidate(raw_text="1 cup lentils", name="lentils")],
+        ingredients=[
+            IngredientNormalizationItem(
+                raw_text="1 cup lentils", name="lentils", canonical_name="lentil"
+            )
+        ],
         instructions=["Cook until tender."],
     )
 

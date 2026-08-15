@@ -16,6 +16,7 @@ from ingestion.models import (
     ImportJob,
     ImportStage,
     ImportStatus,
+    LlmOperationKind,
     ProviderAttempt,
 )
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
@@ -43,8 +44,11 @@ async def reservation_fixture(session: AsyncSession, owner: str, tokens: int = 1
     await session.flush()
     budgets = AiBudgetRepository(session)
     reservation = await budgets.reserve(
-        job=job,
-        provider_attempt=attempt,
+        owner_subject=owner,
+        provider_operation_id=attempt.operation_id,
+        operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+        job_id=job.id,
+        request_deadline_at=attempt.request_deadline_at,
         provider_name="openrouter",
         model_name="model",
         prompt_version="test",
@@ -92,8 +96,11 @@ async def test_reservation_is_idempotent_by_provider_operation(session: AsyncSes
     await session.flush()
     budgets = AiBudgetRepository(session)
     first = await budgets.reserve(
-        job=job,
-        provider_attempt=attempt,
+        owner_subject=job.owner_subject,
+        provider_operation_id=attempt.operation_id,
+        operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+        job_id=job.id,
+        request_deadline_at=attempt.request_deadline_at,
         provider_name="openrouter",
         model_name="openai/gpt-5-nano",
         prompt_version="test",
@@ -101,8 +108,11 @@ async def test_reservation_is_idempotent_by_provider_operation(session: AsyncSes
         daily_limit=1_100_000,
     )
     second = await budgets.reserve(
-        job=job,
-        provider_attempt=attempt,
+        owner_subject=job.owner_subject,
+        provider_operation_id=attempt.operation_id,
+        operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+        job_id=job.id,
+        request_deadline_at=attempt.request_deadline_at,
         provider_name="openrouter",
         model_name="openai/gpt-5-nano",
         prompt_version="test",
@@ -143,8 +153,11 @@ async def test_succeed_is_idempotent_and_rejects_contradictory_usage(
     await session.flush()
     budgets = AiBudgetRepository(session)
     reservation = await budgets.reserve(
-        job=job,
-        provider_attempt=attempt,
+        owner_subject=job.owner_subject,
+        provider_operation_id=attempt.operation_id,
+        operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+        job_id=job.id,
+        request_deadline_at=attempt.request_deadline_at,
         provider_name="openrouter",
         model_name="model",
         prompt_version="test",
@@ -221,8 +234,11 @@ async def test_late_success_replaces_conservative_usage_and_cap_rejects(
     await session.flush()
     with pytest.raises(BudgetExceeded):
         await budgets.reserve(
-            job=job,
-            provider_attempt=attempt,
+            owner_subject=job.owner_subject,
+            provider_operation_id=attempt.operation_id,
+            operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+            job_id=job.id,
+            request_deadline_at=attempt.request_deadline_at,
             provider_name="x",
             model_name="x",
             prompt_version="x",

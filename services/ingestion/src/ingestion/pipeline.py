@@ -39,7 +39,14 @@ from ingestion.import_models import (
     RecipeImportCandidate,
     ReviewRecipeCandidate,
 )
-from ingestion.models import AttemptState, ImportInputKind, ImportJob, ImportStage, ImportStatus
+from ingestion.models import (
+    AttemptState,
+    ImportInputKind,
+    ImportJob,
+    ImportStage,
+    ImportStatus,
+    LlmOperationKind,
+)
 from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.imports import MAX_PIPELINE_PAYLOAD_BYTES, ImportRepository
@@ -620,8 +627,11 @@ class ImportPipeline:
             return
         try:
             reservation = await self._budgets.reserve(
-                job=job,
-                provider_attempt=attempt,
+                owner_subject=job.owner_subject,
+                provider_operation_id=attempt.operation_id,
+                operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+                job_id=job.id,
+                request_deadline_at=attempt.request_deadline_at,
                 provider_name=self._budget_policy.provider_name,
                 model_name=self._budget_policy.model_name,
                 prompt_version=self._budget_policy.prompt_version,
@@ -1135,9 +1145,7 @@ class ImportPipeline:
 
     @staticmethod
     def _serialize_candidate(
-        candidate: RecipeImportCandidate
-        | DeterministicRecipeCandidate
-        | ReviewRecipeCandidate,
+        candidate: RecipeImportCandidate | DeterministicRecipeCandidate | ReviewRecipeCandidate,
     ) -> bytes:
         payload = candidate.model_dump_json().encode("utf-8")
         if len(payload) > MAX_PIPELINE_PAYLOAD_BYTES:
