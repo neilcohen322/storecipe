@@ -112,10 +112,18 @@ class RecipeFacetBounds(ApiModel):
     max: int
 
 
-class RecipeFacetSort(ApiModel):
-    unconditional: list[str]
-    requires_available_ingredient: list[str]
-    requires_preferred_tag: list[str]
+RecipeSort = Literal[
+    "rating:asc",
+    "rating:desc",
+    "totalMinutes:asc",
+    "totalMinutes:desc",
+    "createdAt:asc",
+    "createdAt:desc",
+    "updatedAt:asc",
+    "updatedAt:desc",
+    "title:asc",
+    "title:desc",
+]
 
 
 class RecipeFacetPage(ApiModel):
@@ -126,7 +134,7 @@ class RecipeFacetPage(ApiModel):
     total_minutes: RecipeFacetBounds | None = None
     rating: RecipeFacetBounds
     rating_state: list[Literal["any", "rated", "unrated"]]
-    sort: RecipeFacetSort
+    sort: list[RecipeSort]
 
 
 class RecipeFacetSelectionsRequest(ApiModel):
@@ -169,19 +177,15 @@ class RecipeFacetSelectionsResponse(ApiModel):
 
 RECIPE_FACET_RATING = RecipeFacetBounds(min=1, max=5)
 RECIPE_FACET_RATING_STATES: list[Literal["any", "rated", "unrated"]] = ["any", "rated", "unrated"]
-RECIPE_FACET_SORT = RecipeFacetSort(
-    unconditional=[
-        "rating:asc",
-        "rating:desc",
-        "totalMinutes:asc",
-        "totalMinutes:desc",
-        "createdAt:asc",
-        "createdAt:desc",
-        "updatedAt:asc",
-        "updatedAt:desc",
-        "title:asc",
-        "title:desc",
-    ],
-    requires_available_ingredient=["ingredientCoverage:asc", "ingredientCoverage:desc"],
-    requires_preferred_tag=["tagCoverage:asc", "tagCoverage:desc"],
-)
+RECIPE_FACET_SORT: list[RecipeSort] = [
+    "rating:asc",
+    "rating:desc",
+    "totalMinutes:asc",
+    "totalMinutes:desc",
+    "createdAt:asc",
+    "createdAt:desc",
+    "updatedAt:asc",
+    "updatedAt:desc",
+    "title:asc",
+    "title:desc",
+]

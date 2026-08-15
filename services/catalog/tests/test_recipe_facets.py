@@ -81,6 +81,21 @@ async def test_empty_library_browse_is_success(api_client: AsyncClient) -> None:
     assert body["totalMinutes"] is None
     assert body["rating"] == {"min": 1, "max": 5}
     assert body["ratingState"] == ["any", "rated", "unrated"]
+    assert body["sort"] == [
+        "rating:asc",
+        "rating:desc",
+        "totalMinutes:asc",
+        "totalMinutes:desc",
+        "createdAt:asc",
+        "createdAt:desc",
+        "updatedAt:asc",
+        "updatedAt:desc",
+        "title:asc",
+        "title:desc",
+    ]
+    assert "requiresAvailableIngredient" not in body
+    assert "ingredientCoverage:asc" not in body["sort"]
+    assert "tagCoverage:desc" not in body["sort"]
 
 
 @pytest.mark.asyncio
@@ -226,25 +241,18 @@ async def test_max_page_json_stays_under_one_megabyte() -> None:
             "totalMinutes": {"min": 0, "max": 0},
             "rating": {"min": 1, "max": 5},
             "ratingState": ["any", "rated", "unrated"],
-            "sort": {
-                "unconditional": [
-                    "rating:asc",
-                    "rating:desc",
-                    "totalMinutes:asc",
-                    "totalMinutes:desc",
-                    "createdAt:asc",
-                    "createdAt:desc",
-                    "updatedAt:asc",
-                    "updatedAt:desc",
-                    "title:asc",
-                    "title:desc",
-                ],
-                "requiresAvailableIngredient": [
-                    "ingredientCoverage:asc",
-                    "ingredientCoverage:desc",
-                ],
-                "requiresPreferredTag": ["tagCoverage:asc", "tagCoverage:desc"],
-            },
+            "sort": [
+                "rating:asc",
+                "rating:desc",
+                "totalMinutes:asc",
+                "totalMinutes:desc",
+                "createdAt:asc",
+                "createdAt:desc",
+                "updatedAt:asc",
+                "updatedAt:desc",
+                "title:asc",
+                "title:desc",
+            ],
         }
     )
     assert len(page.model_dump_json(by_alias=True).encode("utf-8")) < 1_048_576

@@ -11,6 +11,7 @@ from storecipe_mcp.models import (
     RecipeCreate,
     RecipeCreateIdempotencyKey,
     RecipeFacetSelectionItem,
+    RecipeFacetSelectionsRequest,
     RecipeQueryPage,
     RecipeQueryRequest,
     RecipeView,
@@ -114,23 +115,50 @@ def test_recipe_create_rejects_openapi_invalid_values(payload: dict[str, object]
         RecipeCreate.model_validate(payload)
 
 
-def test_query_normalizes_set_like_lists_but_preserves_ordered_sorts() -> None:
+def test_query_normalizes_ingredient_and_tag_lists_but_preserves_ordered_sorts() -> None:
     query = RecipeQueryRequest.model_validate(
         {
-            "requiredIngredient": [" Tomato ", "tomato", "Basil"],
-            "availableIngredient": (" onion", "Onion "),
-            "requiredTag": {"Weeknight", "weeknight", "Soup"},
-            "preferredTag": ["Family", " family "],
+            "ingredient": [" Tomato ", "tomato", "Basil"],
+            "tag": {"Weeknight", "weeknight", "Soup"},
             "sort": ["rating:desc", "totalMinutes:asc", "title:desc"],
         }
     )
 
-    assert query.required_ingredients == ["basil", "tomato"]
-    assert query.available_ingredients == ["onion"]
-    assert query.required_tags == ["soup", "weeknight"]
-    assert query.preferred_tags == ["family"]
+    assert query.ingredients == ["basil", "tomato"]
+    assert query.tags == ["soup", "weeknight"]
     assert query.sort == ["rating:desc", "totalMinutes:asc", "title:desc"]
-    assert query.model_dump(by_alias=True)["requiredIngredient"] == ["basil", "tomato"]
+    dumped = query.model_dump(by_alias=True)
+    assert dumped["ingredient"] == ["basil", "tomato"]
+    assert dumped["tag"] == ["soup", "weeknight"]
+    assert "requiredIngredient" not in dumped
+    assert "availableIngredient" not in dumped
+    assert "requiredTag" not in dumped
+    assert "preferredTag" not in dumped
+
+
+def test_recipe_query_schema_accepts_only_ingredient_and_tag_lists() -> None:
+    schema = RecipeQueryRequest.model_json_schema(by_alias=True)
+    properties = schema["properties"]
+    assert "ingredient" in properties
+    assert "tag" in properties
+    assert properties["ingredient"]["maxItems"] == 32
+    assert properties["tag"]["maxItems"] == 16
+    for removed in (
+        "requiredIngredient",
+        "availableIngredient",
+        "requiredTag",
+        "preferredTag",
+    ):
+        assert removed not in properties
+        with pytest.raises(ValidationError):
+            RecipeQueryRequest.model_validate({removed: ["tomato"]})
+    serialized = str(schema)
+    assert "ingredientCoverage" not in serialized
+    assert "tagCoverage" not in serialized
+    with pytest.raises(ValidationError):
+        RecipeQueryRequest.model_validate({"sort": ["ingredientCoverage:desc"]})
+    with pytest.raises(ValidationError):
+        RecipeQueryRequest.model_validate({"sort": ["tagCoverage:asc"]})
 
 
 @pytest.mark.parametrize(
@@ -142,8 +170,8 @@ def test_query_normalizes_set_like_lists_but_preserves_ordered_sorts() -> None:
         ("minRating", 6),
         ("maxTotalMinutes", -1),
         ("sort", ["rating:sideways"]),
-        ("requiredIngredient", ["x" * 201]),
-        ("requiredTag", ["x" * 65]),
+        ("ingredient", ["x" * 201]),
+        ("tag", ["x" * 65]),
     ],
 )
 def test_recipe_query_rejects_openapi_invalid_values(field_name: str, value: object) -> None:
@@ -164,11 +192,10 @@ def test_recipe_view_and_query_page_match_camel_case_response_contract() -> None
         }
     )
     recipe = RecipeView.model_validate(payload)
-    page = RecipeQueryPage.model_validate(
-        {"items": [{"recipe": recipe, "match": None}], "nextCursor": None}
-    )
+    page = RecipeQueryPage.model_validate({"items": [recipe], "nextCursor": None})
 
-    assert isinstance(page.items[0].recipe.id, UUID)
+    assert isinstance(page.items[0].id, UUID)
+    assert "match" not in page.model_dump(by_alias=True)["items"][0]
     assert page.model_dump(by_alias=True)["nextCursor"] is None
 
 
@@ -235,3 +262,21 @@ def test_facet_selection_item_preserves_padded_requested_name() -> None:
     )
     assert item.requested_name == "  tomato  "
     assert item.model_dump(by_alias=True)["requestedName"] == "  tomato  "
+
+
+def test_facet_selections_request_matches_query_limits() -> None:
+    properties = RecipeFacetSelectionsRequest.model_json_schema()["properties"]
+    assert properties["ingredients"]["maxItems"] == 32
+    assert properties["tags"]["maxItems"] == 16
+    RecipeFacetSelectionsRequest.model_validate(
+        {
+            "ingredients": [str(index) for index in range(32)],
+            "tags": [str(index) for index in range(16)],
+        }
+    )
+    with pytest.raises(ValidationError):
+        RecipeFacetSelectionsRequest.model_validate(
+            {"ingredients": [str(index) for index in range(33)]}
+        )
+    with pytest.raises(ValidationError):
+        RecipeFacetSelectionsRequest.model_validate({"tags": [str(index) for index in range(17)]})

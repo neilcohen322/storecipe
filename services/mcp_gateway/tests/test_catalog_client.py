@@ -61,7 +61,7 @@ def _recipe_view_payload() -> dict[str, object]:
 
 
 def _query_page_payload() -> dict[str, object]:
-    return {"items": [{"recipe": _recipe_view_payload(), "match": None}], "nextCursor": None}
+    return {"items": [_recipe_view_payload()], "nextCursor": None}
 
 
 def _facet_page_payload() -> dict[str, object]:
@@ -73,25 +73,18 @@ def _facet_page_payload() -> dict[str, object]:
         "totalMinutes": {"min": 15, "max": 90},
         "rating": {"min": 1, "max": 5},
         "ratingState": ["any", "rated", "unrated"],
-        "sort": {
-            "unconditional": [
-                "rating:asc",
-                "rating:desc",
-                "totalMinutes:asc",
-                "totalMinutes:desc",
-                "createdAt:asc",
-                "createdAt:desc",
-                "updatedAt:asc",
-                "updatedAt:desc",
-                "title:asc",
-                "title:desc",
-            ],
-            "requiresAvailableIngredient": [
-                "ingredientCoverage:asc",
-                "ingredientCoverage:desc",
-            ],
-            "requiresPreferredTag": ["tagCoverage:asc", "tagCoverage:desc"],
-        },
+        "sort": [
+            "rating:asc",
+            "rating:desc",
+            "totalMinutes:asc",
+            "totalMinutes:desc",
+            "createdAt:asc",
+            "createdAt:desc",
+            "updatedAt:asc",
+            "updatedAt:desc",
+            "title:asc",
+            "title:desc",
+        ],
     }
 
 
@@ -196,10 +189,8 @@ async def test_query_recipes_serializes_exact_ordered_repeated_query_tuples() ->
     query = RecipeQueryRequest.model_validate(
         {
             "text": "tomato soup",
-            "requiredIngredient": ["tomato", "basil"],
-            "availableIngredient": ["water", "salt"],
-            "requiredTag": ["dinner", "quick"],
-            "preferredTag": ["family", "weeknight"],
+            "ingredient": ["tomato", "basil"],
+            "tag": ["dinner", "quick"],
             "maxTotalMinutes": 45,
             "minRating": 4,
             "ratingState": "rated",
@@ -212,21 +203,17 @@ async def test_query_recipes_serializes_exact_ordered_repeated_query_tuples() ->
     async with _catalog_client(handler) as client:
         result = await client.query_recipes(query, TOKEN)
 
-    assert result.items[0].recipe.id == RECIPE_ID
+    assert result.items[0].id == RECIPE_ID
     assert len(seen) == 1
     request = seen[0]
     assert request.method == "GET"
     assert request.url.path == "/v1/recipes"
     assert request.url.params.multi_items() == [
         ("text", "tomato soup"),
-        ("requiredIngredient", "basil"),
-        ("requiredIngredient", "tomato"),
-        ("availableIngredient", "salt"),
-        ("availableIngredient", "water"),
-        ("requiredTag", "dinner"),
-        ("requiredTag", "quick"),
-        ("preferredTag", "family"),
-        ("preferredTag", "weeknight"),
+        ("ingredient", "basil"),
+        ("ingredient", "tomato"),
+        ("tag", "dinner"),
+        ("tag", "quick"),
         ("maxTotalMinutes", "45"),
         ("minRating", "4"),
         ("ratingState", "rated"),
@@ -236,6 +223,10 @@ async def test_query_recipes_serializes_exact_ordered_repeated_query_tuples() ->
         ("cursor", "opaque-cursor"),
         ("limit", "7"),
     ]
+    param_names = {name for name, _ in request.url.params.multi_items()}
+    assert param_names.isdisjoint(
+        {"requiredIngredient", "availableIngredient", "requiredTag", "preferredTag"}
+    )
     assert request.headers["Authorization"] == f"Bearer {TOKEN}"
     assert "Idempotency-Key" not in request.headers
     assert "subject-secret" not in str(request.url)

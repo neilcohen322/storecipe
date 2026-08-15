@@ -21,7 +21,6 @@ from storecipe_mcp.models import (
     RecipeFacetPage,
     RecipeFacetSelectionsRequest,
     RecipeFacetSelectionsResponse,
-    RecipeFacetSort,
     RecipeQueryPage,
     RecipeQueryRequest,
     RecipeView,
@@ -71,22 +70,18 @@ def _facet_page() -> RecipeFacetPage:
         total_minutes=None,
         rating=RecipeFacetBounds(min=1, max=5),
         rating_state=["any", "rated", "unrated"],
-        sort=RecipeFacetSort(
-            unconditional=[
-                "rating:asc",
-                "rating:desc",
-                "totalMinutes:asc",
-                "totalMinutes:desc",
-                "createdAt:asc",
-                "createdAt:desc",
-                "updatedAt:asc",
-                "updatedAt:desc",
-                "title:asc",
-                "title:desc",
-            ],
-            requires_available_ingredient=["ingredientCoverage:asc", "ingredientCoverage:desc"],
-            requires_preferred_tag=["tagCoverage:asc", "tagCoverage:desc"],
-        ),
+        sort=[
+            "rating:asc",
+            "rating:desc",
+            "totalMinutes:asc",
+            "totalMinutes:desc",
+            "createdAt:asc",
+            "createdAt:desc",
+            "updatedAt:asc",
+            "updatedAt:desc",
+            "title:asc",
+            "title:desc",
+        ],
     )
 
 
@@ -258,6 +253,26 @@ async def test_gateway_exposes_exact_typed_tools_with_approved_contracts(
     }
     for tool in tools.values():
         assert _property_names(tool.inputSchema).isdisjoint(forbidden_argument_names)
+
+    query_names = _property_names(tools["query_recipes"].inputSchema)
+    assert "ingredient" in query_names
+    assert "tag" in query_names
+    assert query_names.isdisjoint(
+        {
+            "requiredIngredient",
+            "availableIngredient",
+            "requiredTag",
+            "preferredTag",
+        }
+    )
+    query_schema_text = str(tools["query_recipes"].inputSchema)
+    assert "ingredientCoverage" not in query_schema_text
+    assert "tagCoverage" not in query_schema_text
+    assert "Every listed value is required (AND)." in (tools["query_recipes"].description or "")
+    facet_sort = tools["list_recipe_query_options"].outputSchema
+    assert "requiresAvailableIngredient" not in str(facet_sort)
+    assert "requiresPreferredTag" not in str(facet_sort)
+    assert "unconditional" not in str(facet_sort)
 
 
 @pytest.mark.asyncio

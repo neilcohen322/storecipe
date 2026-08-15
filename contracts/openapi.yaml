@@ -17,34 +17,20 @@ paths:
       description: Requires the `recipes:read` scope.
       parameters:
         - {name: text, in: query, schema: {type: [string, "null"], maxLength: 200}}
-        - name: requiredIngredient
+        - name: ingredient
           in: query
           style: form
           explode: true
+          description: Every listed value is required (AND).
           schema:
             type: array
             maxItems: 32
             items: {type: string, minLength: 1, maxLength: 200}
-        - name: availableIngredient
+        - name: tag
           in: query
           style: form
           explode: true
-          schema:
-            type: array
-            maxItems: 64
-            items: {type: string, minLength: 1, maxLength: 200}
-        - name: requiredTag
-          in: query
-          style: form
-          explode: true
-          schema:
-            type: array
-            maxItems: 16
-            items: {type: string, minLength: 1, maxLength: 64}
-        - name: preferredTag
-          in: query
-          style: form
-          explode: true
+          description: Every listed value is required (AND).
           schema:
             type: array
             maxItems: 16
@@ -62,28 +48,10 @@ paths:
           examples:
             ratingFirst:
               value: [rating:desc, totalMinutes:asc]
-            coverageFirst:
-              value: [ingredientCoverage:desc, rating:desc, totalMinutes:asc]
           schema:
             type: array
             maxItems: 6
-            items:
-              type: string
-              enum:
-                - ingredientCoverage:asc
-                - ingredientCoverage:desc
-                - tagCoverage:asc
-                - tagCoverage:desc
-                - rating:asc
-                - rating:desc
-                - totalMinutes:asc
-                - totalMinutes:desc
-                - createdAt:asc
-                - createdAt:desc
-                - updatedAt:asc
-                - updatedAt:desc
-                - title:asc
-                - title:desc
+            items: {$ref: "#/components/schemas/RecipeSort"}
         - {name: cursor, in: query, schema: {type: [string, "null"], maxLength: 1024}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
       responses:
@@ -515,44 +483,31 @@ components:
         name: {type: string, minLength: 1, maxLength: 200}
         quantity: {type: [number, "null"], minimum: 0}
         unit: {type: [string, "null"], minLength: 1, maxLength: 64}
-    RecipeMatch:
-      type: object
-      required: [ingredientCoverage, missingIngredients, tagCoverage, matchedPreferredTags, missingPreferredTags]
-      properties:
-        ingredientCoverage: {type: [number, "null"], minimum: 0, maximum: 1}
-        missingIngredients: {type: array, items: {type: string}}
-        tagCoverage: {type: [number, "null"], minimum: 0, maximum: 1}
-        matchedPreferredTags: {type: array, items: {type: string}}
-        missingPreferredTags: {type: array, items: {type: string}}
-    RecipeQueryItem:
-      type: object
-      required: [recipe, match]
-      properties:
-        recipe: {$ref: "#/components/schemas/Recipe"}
-        match:
-          description: Factual match details; null unless availableIngredient or preferredTag is supplied.
-          anyOf:
-            - {$ref: "#/components/schemas/RecipeMatch"}
-            - {type: "null"}
     RecipeQueryPage:
       type: object
       required: [items, nextCursor]
       properties:
-        items: {type: array, items: {$ref: "#/components/schemas/RecipeQueryItem"}}
+        items: {type: array, items: {$ref: "#/components/schemas/Recipe"}}
         nextCursor: {type: [string, "null"]}
+    RecipeSort:
+      type: string
+      enum:
+        - rating:asc
+        - rating:desc
+        - totalMinutes:asc
+        - totalMinutes:desc
+        - createdAt:asc
+        - createdAt:desc
+        - updatedAt:asc
+        - updatedAt:desc
+        - title:asc
+        - title:desc
     RecipeFacetBounds:
       type: object
       required: [min, max]
       properties:
         min: {type: integer}
         max: {type: integer}
-    RecipeFacetSort:
-      type: object
-      required: [unconditional, requiresAvailableIngredient, requiresPreferredTag]
-      properties:
-        unconditional: {type: array, items: {type: string}}
-        requiresAvailableIngredient: {type: array, items: {type: string}}
-        requiresPreferredTag: {type: array, items: {type: string}}
     RecipeFacetPage:
       type: object
       required: [ingredients, ingredientNextCursor, tags, tagNextCursor, totalMinutes, rating, ratingState, sort]
@@ -573,19 +528,21 @@ components:
         ratingState:
           type: array
           items: {type: string, enum: [any, rated, unrated]}
-        sort: {$ref: "#/components/schemas/RecipeFacetSort"}
+        sort:
+          type: array
+          items: {$ref: "#/components/schemas/RecipeSort"}
     RecipeFacetSelectionsRequest:
       type: object
       additionalProperties: false
       properties:
         ingredients:
           type: array
-          maxItems: 96
+          maxItems: 32
           default: []
           items: {type: string, minLength: 1, maxLength: 200}
         tags:
           type: array
-          maxItems: 32
+          maxItems: 16
           default: []
           items: {type: string, minLength: 1, maxLength: 64}
     RecipeFacetSelection:

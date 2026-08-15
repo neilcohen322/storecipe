@@ -74,17 +74,96 @@ def test_recipe_source_urls_document_catalog_http_url_behavior() -> None:
         }
 
 
-def test_recipe_query_item_match_documents_nullable_recipe_match() -> None:
-    contract = _contract()
-    match_schema = contract["components"]["schemas"]["RecipeQueryItem"]["properties"]["match"]
+REMOVED_RECIPE_QUERY_KEYS = (
+    "requiredIngredient",
+    "availableIngredient",
+    "requiredTag",
+    "preferredTag",
+)
+COVERAGE_SORT_TOKENS = (
+    "ingredientCoverage:asc",
+    "ingredientCoverage:desc",
+    "tagCoverage:asc",
+    "tagCoverage:desc",
+)
+RECIPE_SORT_TOKENS = [
+    "rating:asc",
+    "rating:desc",
+    "totalMinutes:asc",
+    "totalMinutes:desc",
+    "createdAt:asc",
+    "createdAt:desc",
+    "updatedAt:asc",
+    "updatedAt:desc",
+    "title:asc",
+    "title:desc",
+]
 
-    assert match_schema["description"] == (
-        "Factual match details; null unless availableIngredient or preferredTag is supplied."
-    )
-    assert match_schema["anyOf"] == [
-        {"$ref": "#/components/schemas/RecipeMatch"},
-        {"type": "null"},
-    ]
+
+def test_recipe_query_get_exposes_and_ingredient_and_tag_lists() -> None:
+    contract = _contract()
+    operation = contract["paths"]["/v1/recipes"]["get"]
+    parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
+
+    assert "requiredIngredient" not in parameters
+    assert "availableIngredient" not in parameters
+    assert "requiredTag" not in parameters
+    assert "preferredTag" not in parameters
+
+    ingredient = parameters["ingredient"]
+    tag = parameters["tag"]
+    assert ingredient["in"] == "query"
+    assert ingredient["style"] == "form"
+    assert ingredient["explode"] is True
+    assert ingredient["description"] == "Every listed value is required (AND)."
+    assert ingredient["schema"] == {
+        "type": "array",
+        "maxItems": 32,
+        "items": {"type": "string", "minLength": 1, "maxLength": 200},
+    }
+    assert tag["in"] == "query"
+    assert tag["style"] == "form"
+    assert tag["explode"] is True
+    assert tag["description"] == "Every listed value is required (AND)."
+    assert tag["schema"] == {
+        "type": "array",
+        "maxItems": 16,
+        "items": {"type": "string", "minLength": 1, "maxLength": 64},
+    }
+
+
+def test_recipe_query_contract_omits_coverage_ranking_and_match_wrappers() -> None:
+    contract = _contract()
+    schemas = contract["components"]["schemas"]
+    operation = contract["paths"]["/v1/recipes"]["get"]
+    parameters = {parameter["name"]: parameter for parameter in operation["parameters"]}
+
+    assert schemas["RecipeQueryPage"]["properties"]["items"] == {
+        "type": "array",
+        "items": {"$ref": "#/components/schemas/Recipe"},
+    }
+    assert "RecipeMatch" not in schemas
+    assert "RecipeQueryItem" not in schemas
+    assert "RecipeFacetSort" not in schemas
+    assert schemas["RecipeSort"]["enum"] == RECIPE_SORT_TOKENS
+    assert parameters["sort"]["schema"] == {
+        "type": "array",
+        "maxItems": 6,
+        "items": {"$ref": "#/components/schemas/RecipeSort"},
+    }
+    assert "coverageFirst" not in parameters["sort"].get("examples", {})
+    serialized = yaml.dump(contract)
+    for removed in (*REMOVED_RECIPE_QUERY_KEYS, *COVERAGE_SORT_TOKENS):
+        assert removed not in serialized
+
+
+def test_recipe_facet_page_exposes_unconditional_sort_list() -> None:
+    contract = _contract()
+    schemas = contract["components"]["schemas"]
+    assert schemas["RecipeFacetPage"]["properties"]["sort"] == {
+        "type": "array",
+        "items": {"$ref": "#/components/schemas/RecipeSort"},
+    }
 
 
 def test_openapi_31_uses_type_unions_instead_of_legacy_nullable() -> None:
@@ -117,9 +196,9 @@ def test_recipe_facet_selections_post_documents_resolution_contract() -> None:
     ingredients = schema["properties"]["ingredients"]
     tags = schema["properties"]["tags"]
     assert schema.get("additionalProperties") is False
-    assert ingredients["maxItems"] == 96
+    assert ingredients["maxItems"] == 32
     assert ingredients["items"] == {"type": "string", "minLength": 1, "maxLength": 200}
-    assert tags["maxItems"] == 32
+    assert tags["maxItems"] == 16
     assert tags["items"] == {"type": "string", "minLength": 1, "maxLength": 64}
     response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
     assert response_schema == {"$ref": "#/components/schemas/RecipeFacetSelectionsResponse"}

@@ -24,7 +24,6 @@ class ApiModel(BaseModel):
 NonEmptyText = Annotated[str, Field(min_length=1)]
 Title = Annotated[str, Field(min_length=1, max_length=200)]
 TagName = Annotated[str, Field(min_length=1, max_length=64)]
-FiniteScore = Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
 IdempotencyKey = Annotated[str, Field(min_length=1, max_length=255)]
 RecipeCreateIdempotencyKey = Annotated[
     str, Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
@@ -89,8 +88,6 @@ class RecipeView(ApiModel):
 
 
 class SortField(StrEnum):
-    INGREDIENT_COVERAGE = "ingredientCoverage"
-    TAG_COVERAGE = "tagCoverage"
     RATING = "rating"
     TOTAL_MINUTES = "totalMinutes"
     CREATED_AT = "createdAt"
@@ -103,11 +100,7 @@ class SortDirection(StrEnum):
     DESC = "desc"
 
 
-SortToken = Literal[
-    "ingredientCoverage:asc",
-    "ingredientCoverage:desc",
-    "tagCoverage:asc",
-    "tagCoverage:desc",
+RecipeSort = Literal[
     "rating:asc",
     "rating:desc",
     "totalMinutes:asc",
@@ -119,6 +112,7 @@ SortToken = Literal[
     "title:asc",
     "title:desc",
 ]
+SortToken = RecipeSort
 
 
 def normalize_query_text(value: str) -> str:
@@ -129,17 +123,11 @@ def normalize_query_text(value: str) -> str:
 
 class RecipeQueryRequest(ApiModel):
     text: Annotated[str | None, Field(max_length=200)] = None
-    required_ingredients: Annotated[list[QueryIngredient], Field(max_length=32)] = Field(
-        default_factory=list, alias="requiredIngredient"
+    ingredients: Annotated[list[QueryIngredient], Field(max_length=32)] = Field(
+        default_factory=list, alias="ingredient"
     )
-    available_ingredients: Annotated[list[QueryIngredient], Field(max_length=64)] = Field(
-        default_factory=list, alias="availableIngredient"
-    )
-    required_tags: Annotated[list[QueryTag], Field(max_length=16)] = Field(
-        default_factory=list, alias="requiredTag"
-    )
-    preferred_tags: Annotated[list[QueryTag], Field(max_length=16)] = Field(
-        default_factory=list, alias="preferredTag"
+    tags: Annotated[list[QueryTag], Field(max_length=16)] = Field(
+        default_factory=list, alias="tag"
     )
     max_total_minutes: Annotated[int | None, Field(ge=0)] = None
     min_rating: Annotated[int | None, Field(ge=1, le=5)] = None
@@ -155,13 +143,7 @@ class RecipeQueryRequest(ApiModel):
             return value
         return normalize_query_text(value) or None
 
-    @field_validator(
-        "required_ingredients",
-        "available_ingredients",
-        "required_tags",
-        "preferred_tags",
-        mode="before",
-    )
+    @field_validator("ingredients", "tags", mode="before")
     @classmethod
     def _normalize_set_like_lists(cls, value: Any) -> Any:
         if not isinstance(value, list | tuple | set | frozenset):
@@ -192,28 +174,11 @@ class RecipeQueryRequest(ApiModel):
             raise ValueError("sort contains duplicate sort fields")
         if self.min_rating is not None and self.rating_state == "unrated":
             raise ValueError("min_rating cannot be used with rating_state=unrated")
-        if SortField.INGREDIENT_COVERAGE in fields and not self.available_ingredients:
-            raise ValueError("sort ingredientCoverage requires available_ingredients")
-        if SortField.TAG_COVERAGE in fields and not self.preferred_tags:
-            raise ValueError("sort tagCoverage requires preferred_tags")
         return self
 
 
-class RecipeMatch(ApiModel):
-    ingredient_coverage: FiniteScore | None
-    missing_ingredients: list[str]
-    tag_coverage: FiniteScore | None
-    matched_preferred_tags: list[str]
-    missing_preferred_tags: list[str]
-
-
-class RecipeQueryItem(ApiModel):
-    recipe: RecipeView
-    match: RecipeMatch | None
-
-
 class RecipeQueryPage(ApiModel):
-    items: list[RecipeQueryItem]
+    items: list[RecipeView]
     next_cursor: str | None
 
 
@@ -242,12 +207,6 @@ class RecipeFacetBounds(ApiModel):
     max: int
 
 
-class RecipeFacetSort(ApiModel):
-    unconditional: list[str]
-    requires_available_ingredient: list[str]
-    requires_preferred_tag: list[str]
-
-
 class RecipeFacetPage(ApiModel):
     ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]]
     ingredient_next_cursor: Annotated[str | None, Field(max_length=2048)] = None
@@ -256,7 +215,7 @@ class RecipeFacetPage(ApiModel):
     total_minutes: RecipeFacetBounds | None = None
     rating: RecipeFacetBounds
     rating_state: list[Literal["any", "rated", "unrated"]]
-    sort: RecipeFacetSort
+    sort: list[RecipeSort]
 
 
 class RecipeFacetSelectionsRequest(ApiModel):
@@ -268,10 +227,10 @@ class RecipeFacetSelectionsRequest(ApiModel):
     )
 
     ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
-        default_factory=list, max_length=96
+        default_factory=list, max_length=32
     )
     tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
-        default_factory=list, max_length=32
+        default_factory=list, max_length=16
     )
 
     @field_validator("ingredients", "tags")

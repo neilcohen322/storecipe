@@ -122,7 +122,10 @@ def create_mcp_server(
         meta={"securitySchemes": [{"type": "oauth2", "scopes": [_READ_SCOPE]}]},
     )
     async def query_recipes(request: RecipeQueryRequest) -> RecipeQueryPage:
-        """Search recipes with explicit deterministic filters and ordered sorts."""
+        """Search recipes with explicit deterministic filters.
+
+        Every listed value is required (AND).
+        """
 
         return cast(
             RecipeQueryPage,
