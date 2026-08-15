@@ -50,6 +50,7 @@ test("commits search and atomic filters without debounce", async ({ page }) => {
   await expect(page).toHaveURL(/text=tomato(?:%20|\+)pasta/);
 
   await openRecipeFilters(page);
+  await assertStablePageQuality(page, errors);
   const tomatoes = page.getByRole("button", { name: "tomatoes" }).first();
   await expect(tomatoes).toBeVisible();
   await tomatoes.click();
@@ -66,6 +67,7 @@ test("commits search and atomic filters without debounce", async ({ page }) => {
   await expect(page.getByRole("button", { name: /^Filters/ })).toHaveAccessibleName("Filters (1)");
 
   await openRecipeSort(page);
+  await assertStablePageQuality(page, errors);
   await page.getByRole("button", { name: "Highest rated" }).click();
   await expect(page).toHaveURL(/sort=rating(?:%3A|:)desc/);
   await expect(page.getByRole("dialog", { name: "Sort" })).toBeHidden();

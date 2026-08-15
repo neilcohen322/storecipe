@@ -179,6 +179,18 @@ def test_recipe_query_rejects_openapi_invalid_values(field_name: str, value: obj
         RecipeQueryRequest.model_validate({field_name: value})
 
 
+def test_recipe_query_rejects_duplicate_overflow_before_dedupe() -> None:
+    with pytest.raises(ValidationError):
+        RecipeQueryRequest.model_validate({"ingredient": ["egg"] * 33})
+    with pytest.raises(ValidationError):
+        RecipeQueryRequest.model_validate({"tag": ["quick"] * 17})
+    accepted = RecipeQueryRequest.model_validate(
+        {"ingredient": ["egg"] * 32, "tag": ["quick"] * 16}
+    )
+    assert accepted.ingredients == ["egg"]
+    assert accepted.tags == ["quick"]
+
+
 def test_recipe_view_and_query_page_match_camel_case_response_contract() -> None:
     payload = _recipe_view_payload()
     payload.update(

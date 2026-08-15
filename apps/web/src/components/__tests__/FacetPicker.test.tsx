@@ -86,6 +86,30 @@ test("search stays editable while loading", async () => {
   expect(onSearch).toHaveBeenCalledWith("ketchup");
 });
 
+test("disables unselected options when additions are at the limit", async () => {
+  const onAdd = jest.fn();
+  const screen = await render(
+    <FacetPicker
+      label="Ingredients"
+      selected={[{ name: "basil" }]}
+      options={["basil", "tomato"]}
+      search=""
+      onSearch={jest.fn()}
+      hasMore={false}
+      loadingMore={false}
+      onLoadMore={jest.fn()}
+      addDisabled
+      onAdd={onAdd}
+      onRemove={jest.fn()}
+    />,
+  );
+  const option = screen.getByRole("button", { name: "tomato" });
+  expect(option.props.accessibilityState?.disabled).toBe(true);
+  expect(option.props.focusable).toBe(false);
+  await fireEvent.press(option);
+  expect(onAdd).not.toHaveBeenCalled();
+});
+
 test("load more is available until the next cursor is null", async () => {
   const onLoadMore = jest.fn();
   const first = await render(

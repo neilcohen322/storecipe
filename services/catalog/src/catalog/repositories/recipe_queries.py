@@ -239,6 +239,5 @@ async def fetch_query_candidates(
         query.statement.options(*_recipe_load_options()).limit(page_size)
     )
     return [
-        QueryCandidate(recipe=recipe, rating=rating)
-        for recipe, rating in result.unique().all()
+        QueryCandidate(recipe=recipe, rating=rating) for recipe, rating in result.unique().all()
     ]

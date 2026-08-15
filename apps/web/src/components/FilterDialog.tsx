@@ -44,9 +44,10 @@ export function FilterDialog({
   const compact = layoutMode === "compact";
   const titleId = "filter-dialog-title";
   const wasVisible = useRef(visible);
+  const panelRef = useRef<View & Focusable>(null);
 
   useEffect(() => {
-    if (visible) initialFocusRef?.current?.focus();
+    if (visible) (initialFocusRef?.current ?? panelRef.current)?.focus();
     else if (wasVisible.current) returnFocusRef?.current?.focus();
     wasVisible.current = visible;
   }, [initialFocusRef, returnFocusRef, visible]);
@@ -68,22 +69,25 @@ export function FilterDialog({
       testID="filter-dialog"
       visible={visible}
       transparent
+      accessibilityLabel="Filters"
       accessibilityViewIsModal
+      aria-labelledby={titleId}
       onRequestClose={onDismiss}
     >
       <View pointerEvents="box-none" style={[styles.scrim, compact && styles.compactScrim, { backgroundColor: theme.colors.scrim }]}>
         <Pressable
           testID="filter-dialog-backdrop"
-          accessibilityLabel="Dismiss filters"
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          focusable={false}
           onPress={onDismiss}
           style={StyleSheet.absoluteFill}
         />
         <View
+          ref={panelRef}
           testID="filter-dialog-panel"
-          role="dialog"
-          accessibilityViewIsModal
-          aria-modal
-          aria-labelledby={titleId}
+          tabIndex={-1}
           style={[
             styles.panel,
             {

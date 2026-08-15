@@ -385,9 +385,7 @@ async def test_facet_selections_reject_empty_and_overlong_arrays(
     too_many_ingredients = await api_client.post(
         "/v1/recipe-facet-selections", json={"ingredients": ["x"] * 33}
     )
-    too_many_tags = await api_client.post(
-        "/v1/recipe-facet-selections", json={"tags": ["x"] * 17}
-    )
+    too_many_tags = await api_client.post("/v1/recipe-facet-selections", json={"tags": ["x"] * 17})
     accepted = await api_client.post(
         "/v1/recipe-facet-selections",
         json={

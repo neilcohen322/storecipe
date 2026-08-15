@@ -8,7 +8,14 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from catalog.errors import InvalidCursor, StaleRecipeQueryCursor
 from catalog.schemas import ApiModel, RecipeView
@@ -80,9 +87,15 @@ class RecipeQueryRequest(ApiModel):
 
     @field_validator("ingredients", "tags", mode="before")
     @classmethod
-    def normalize_lists(cls, value: Any) -> Any:
+    def normalize_lists(cls, value: Any, info: ValidationInfo) -> Any:
         if not isinstance(value, list | tuple | set | frozenset):
             return value
+        limits = {"ingredients": 32, "tags": 16}
+        field_name = info.field_name
+        if field_name not in limits:
+            return value
+        if len(value) > limits[field_name]:
+            raise ValueError(f"{field_name} must have at most {limits[field_name]} items")
 
         normalized_items: list[str] = []
         for item in value:

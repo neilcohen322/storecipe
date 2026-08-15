@@ -16,6 +16,7 @@ export type FacetPickerProps = {
   loadingMore: boolean;
   onLoadMore(): void;
   loading?: boolean;
+  addDisabled?: boolean;
   onAdd(name: string): void;
   onRemove(name: string): void;
 };
@@ -31,6 +32,7 @@ export function FacetPicker({
   loadingMore,
   onLoadMore,
   loading = false,
+  addDisabled = false,
   onAdd,
   onRemove,
 }: FacetPickerProps) {
@@ -74,7 +76,7 @@ export function FacetPicker({
       {loading ? <ActivityIndicator color={theme.colors.accent} accessibilityLabel={`Loading ${label}`} /> : null}
       <View style={styles.chipRow}>
         {availableOptions.map((option) => (
-          <Button key={option} label={option} variant="secondary" onPress={() => onAdd(option)} />
+          <Button key={option} label={option} variant="secondary" disabled={addDisabled} onPress={() => onAdd(option)} />
         ))}
       </View>
       {hasMore ? (

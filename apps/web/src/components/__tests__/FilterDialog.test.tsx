@@ -1,6 +1,6 @@
 import React from "react";
 import { StyleSheet, Text } from "react-native";
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 10, right: 4, bottom: 12, left: 6 }),
@@ -64,10 +64,16 @@ test("filter dialog is a labelled modal with layout, actions, dismiss, and focus
     </FilterDialog>,
   );
 
+  const dialog = screen.getByTestId("filter-dialog", { includeHiddenElements: true });
   const desktopPanel = screen.getByTestId("filter-dialog-panel", { includeHiddenElements: true });
-  expect(desktopPanel.props.role).toBe("dialog");
-  expect(desktopPanel.props["aria-modal"]).toBe(true);
-  expect(desktopPanel.props["aria-labelledby"]).toBe("filter-dialog-title");
+  const backdrop = screen.getByTestId("filter-dialog-backdrop", { includeHiddenElements: true });
+  expect(dialog.props.accessibilityLabel).toBe("Filters");
+  expect(dialog.props["aria-labelledby"]).toBe("filter-dialog-title");
+  expect(desktopPanel.props.role).not.toBe("dialog");
+  expect(desktopPanel.props["aria-modal"]).toBeUndefined();
+  expect(desktopPanel.props.tabIndex).toBe(-1);
+  expect(backdrop.props.accessible).toBe(false);
+  expect(backdrop.props.focusable).toBe(false);
   expect(StyleSheet.flatten(desktopPanel.props.style).maxWidth).toBe(720);
   expect(initialFocus).toHaveBeenCalledTimes(1);
 
@@ -94,16 +100,18 @@ test("filter dialog is a labelled modal with layout, actions, dismiss, and focus
   expect(compactStyle.paddingBottom).toBe(12);
   expect(compactStyle.paddingLeft).toBe(6);
 
-  fireEvent.press(screen.getByLabelText("Apply", { includeHiddenElements: true }));
-  fireEvent.press(screen.getByLabelText("Clear", { includeHiddenElements: true }));
+  await fireEvent.press(screen.getByLabelText("Apply", { includeHiddenElements: true }));
+  await fireEvent.press(screen.getByLabelText("Clear", { includeHiddenElements: true }));
   expect(onApply).toHaveBeenCalledTimes(1);
   expect(onClear).toHaveBeenCalledTimes(1);
   expect(onDismiss).not.toHaveBeenCalled();
   onApply.mockClear();
 
-  screen.getByTestId("filter-dialog").props.onRequestClose();
-  fireEvent.press(screen.getByTestId("filter-dialog-backdrop", { includeHiddenElements: true }));
-  fireEvent.press(screen.getByRole("button", { name: "Cancel", includeHiddenElements: true }));
+  await act(async () => {
+    screen.getByTestId("filter-dialog").props.onRequestClose();
+  });
+  await fireEvent.press(screen.getByTestId("filter-dialog-backdrop", { includeHiddenElements: true }));
+  await fireEvent.press(screen.getByRole("button", { name: "Cancel", includeHiddenElements: true }));
   expect(onDismiss).toHaveBeenCalledTimes(3);
   expect(onApply).not.toHaveBeenCalled();
 

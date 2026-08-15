@@ -4,7 +4,15 @@ from enum import StrEnum
 from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 def to_camel(value: str) -> str:
@@ -126,9 +134,7 @@ class RecipeQueryRequest(ApiModel):
     ingredients: Annotated[list[QueryIngredient], Field(max_length=32)] = Field(
         default_factory=list, alias="ingredient"
     )
-    tags: Annotated[list[QueryTag], Field(max_length=16)] = Field(
-        default_factory=list, alias="tag"
-    )
+    tags: Annotated[list[QueryTag], Field(max_length=16)] = Field(default_factory=list, alias="tag")
     max_total_minutes: Annotated[int | None, Field(ge=0)] = None
     min_rating: Annotated[int | None, Field(ge=1, le=5)] = None
     rating_state: Literal["any", "rated", "unrated"] = "any"
@@ -145,9 +151,15 @@ class RecipeQueryRequest(ApiModel):
 
     @field_validator("ingredients", "tags", mode="before")
     @classmethod
-    def _normalize_set_like_lists(cls, value: Any) -> Any:
+    def _normalize_set_like_lists(cls, value: Any, info: ValidationInfo) -> Any:
         if not isinstance(value, list | tuple | set | frozenset):
             return value
+        limits = {"ingredients": 32, "tags": 16}
+        field_name = info.field_name
+        if field_name not in limits:
+            return value
+        if len(value) > limits[field_name]:
+            raise ValueError(f"{field_name} must have at most {limits[field_name]} items")
 
         normalized_items: list[str] = []
         for item in value:

@@ -240,7 +240,7 @@ export function RecipeListScreen({
 
   return (
     <>
-    <Screen>
+    <Screen accessibilityElementsHidden={filtersOpen || sortOpen} importantForAccessibility={filtersOpen || sortOpen ? "no-hide-descendants" : "auto"}>
       <PageHeader title="Recipes" subtitle={items.length ? `${items.length} recipes loaded` : undefined} />
       <View style={styles.toolbar}>
         <View style={styles.searchField}>
@@ -305,6 +305,7 @@ export function RecipeListScreen({
           loadingMore={options.lanes.ingredient.loadingMore}
           onLoadMore={() => options.loadMore("ingredient")}
           loading={options.lanes.ingredient.loading}
+          addDisabled={(draft.ingredient?.length ?? 0) >= MAX_INGREDIENT_FILTERS}
           onAdd={(name) => addDraftValue("ingredient", name)}
           onRemove={(name) => removeDraftValue("ingredient", name)}
         />
@@ -319,6 +320,7 @@ export function RecipeListScreen({
           loadingMore={options.lanes.tag.loadingMore}
           onLoadMore={() => options.loadMore("tag")}
           loading={options.lanes.tag.loading}
+          addDisabled={(draft.tag?.length ?? 0) >= MAX_TAG_FILTERS}
           onAdd={(name) => addDraftValue("tag", name)}
           onRemove={(name) => removeDraftValue("tag", name)}
         />

@@ -50,20 +50,27 @@ export function SortMenu({
   }, [onDismiss, visible]);
 
   return (
-    <Modal testID="sort-menu" visible={visible} transparent accessibilityViewIsModal onRequestClose={onDismiss}>
+    <Modal
+      testID="sort-menu"
+      visible={visible}
+      transparent
+      accessibilityLabel="Sort"
+      accessibilityViewIsModal
+      aria-labelledby={titleId}
+      onRequestClose={onDismiss}
+    >
       <View pointerEvents="box-none" style={[styles.scrim, { backgroundColor: theme.colors.scrim }]}>
         <Pressable
           testID="sort-menu-backdrop"
-          accessibilityLabel="Dismiss sort"
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          focusable={false}
           onPress={onDismiss}
           style={StyleSheet.absoluteFill}
         />
         <View
           testID="sort-menu-panel"
-          role="dialog"
-          accessibilityViewIsModal
-          aria-modal
-          aria-labelledby={titleId}
           style={[styles.panel, { backgroundColor: theme.colors.elevatedSurface }]}
         >
           <Text nativeID={titleId} accessibilityRole="header" style={[styles.title, { color: theme.colors.text }]}>

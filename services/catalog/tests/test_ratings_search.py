@@ -178,9 +178,7 @@ async def test_recipe_query_filters_and_cursor_pagination(
     await client.put(f"/v1/recipes/{created['bowl']['id']}/rating", json={"value": 2})
 
     ingredient_search = await client.get("/v1/recipes", params=[("text", "CHICKPEAS")])
-    assert [item["id"] for item in ingredient_search.json()["items"]] == [
-        created["curry"]["id"]
-    ]
+    assert [item["id"] for item in ingredient_search.json()["items"]] == [created["curry"]["id"]]
 
     filtered = await client.get(
         "/v1/recipes",

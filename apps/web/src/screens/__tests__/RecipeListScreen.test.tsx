@@ -537,6 +537,10 @@ test("does not add a 33rd ingredient or 17th tag to the draft", async () => {
   mockPushRoute.mockClear();
   await fireEvent.press(dialogButton(screen, "tomato"));
   await fireEvent.press(dialogButton(screen, "family"));
+  expect(dialogButton(screen, "tomato").props.accessibilityState?.disabled).toBe(true);
+  expect(dialogButton(screen, "family").props.accessibilityState?.disabled).toBe(true);
+  expect(dialogButton(screen, "tomato").props.focusable).toBe(false);
+  expect(dialogButton(screen, "family").props.focusable).toBe(false);
   expect(queryDialogButton(screen, "Remove tomato")).toBeNull();
   expect(queryDialogButton(screen, "Remove family")).toBeNull();
   expect(mockPushRoute).not.toHaveBeenCalled();
@@ -899,6 +903,26 @@ test("time control keeps out-of-range bookmarks until edited and supports max ze
   await fireEvent.press(dialogButton(zeroMax, "0 minutes"));
   await fireEvent.press(dialogButton(zeroMax, "Apply"));
   expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { maxTotalMinutes: "0" } });
+});
+
+test("clears a selection error after a later automatic resolve succeeds", async () => {
+  const resolveRecipeFacetSelections = jest.fn()
+    .mockRejectedValueOnce(new Error("resolve failed"))
+    .mockResolvedValue(echoResolve({ ingredients: ["tomato"] }));
+  mockRouteParams = { ingredient: "basil" };
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [recipe], nextCursor: null }), {
+    resolveRecipeFacetSelections,
+  });
+  await openFilters(screen);
+  await waitFor(() => expect(screen.getByText("We couldn't load filter options. Please try again.", hidden)).toBeTruthy());
+  mockRouteParams = { ingredient: "tomato" };
+  await screen.rerender(
+    <RecipeListScreen
+      catalog={catalogWith(jest.fn().mockResolvedValue({ items: [recipe], nextCursor: null }), { resolveRecipeFacetSelections })}
+      {...actions}
+    />,
+  );
+  await waitFor(() => expect(screen.queryByText("We couldn't load filter options. Please try again.", hidden)).toBeNull());
 });
 
 test("facet errors remain inside Filters while loaded recipes remain visible", async () => {

@@ -165,6 +165,17 @@ def test_request_accepts_max_ingredient_and_tag_counts() -> None:
     assert len(request.tags) == 16
 
 
+def test_request_rejects_duplicate_overflow_before_dedupe() -> None:
+    with pytest.raises(ValidationError, match="ingredients"):
+        RecipeQueryRequest(ingredients=["egg"] * 33)
+    with pytest.raises(ValidationError, match="tags"):
+        RecipeQueryRequest(tags=["quick"] * 17)
+
+    accepted = RecipeQueryRequest(ingredients=["egg"] * 32, tags=["quick"] * 16)
+    assert accepted.ingredients == ["egg"]
+    assert accepted.tags == ["quick"]
+
+
 def test_request_rejects_empty_normalized_list_items() -> None:
     with pytest.raises(ValidationError, match="ingredients"):
         RecipeQueryRequest(ingredients=[" \t "])

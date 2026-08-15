@@ -205,6 +205,25 @@ async def test_recipe_query_rejects_removed_filter_keys_as_problem_details(
 
 
 @pytest.mark.asyncio
+async def test_recipe_query_rejects_duplicate_overflow_as_problem_details(
+    api_client: AsyncClient,
+) -> None:
+    too_many_ingredients = await api_client.get(
+        "/v1/recipes",
+        params=[("ingredient", "egg")] * 33,
+    )
+    too_many_tags = await api_client.get(
+        "/v1/recipes",
+        params=[("tag", "quick")] * 17,
+    )
+
+    assert too_many_ingredients.status_code == 422
+    assert too_many_tags.status_code == 422
+    assert too_many_ingredients.headers["content-type"] == "application/problem+json"
+    assert too_many_tags.headers["content-type"] == "application/problem+json"
+
+
+@pytest.mark.asyncio
 async def test_recipe_query_rejects_invalid_parameters_as_problem_details(
     api_client: AsyncClient,
 ) -> None:

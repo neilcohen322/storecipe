@@ -110,6 +110,7 @@ export function useResolvedRecipeSelections({
       }, { signal: controller.signal });
       if (!mounted.current || generation !== runtime.generation) return;
       if (ingredientTagKey(paramsRef.current) !== requestKey) return;
+      setFacetError("none");
       setResolution(result);
       const next = applyCanonicalSelections(paramsRef.current, result);
       if (bucketsDiffer(paramsRef.current, next)) {

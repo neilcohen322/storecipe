@@ -512,3 +512,28 @@ async def test_typed_success_preserves_structured_output(
 
     assert isinstance(result, tuple)
     assert result[1] == {"items": [], "nextCursor": None}
+
+
+@pytest.mark.asyncio
+async def test_query_recipes_rejects_duplicate_overflow_before_catalog_call(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = RecordingCatalog()
+    server = _server(settings, catalog)
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:read"))
+
+    too_many_ingredients = await server.call_tool(
+        "query_recipes",
+        {"request": {"ingredient": ["egg"] * 33}},
+    )
+    too_many_tags = await server.call_tool(
+        "query_recipes",
+        {"request": {"tag": ["quick"] * 17}},
+    )
+
+    assert isinstance(too_many_ingredients, CallToolResult)
+    assert isinstance(too_many_tags, CallToolResult)
+    assert too_many_ingredients.isError is True
+    assert too_many_tags.isError is True
+    assert len(catalog.calls) == 0

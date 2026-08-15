@@ -45,10 +45,15 @@ test("sort menu is a labelled modal", async () => {
   const screen = await render(
     <SortMenu visible value="updatedAt:desc" options={options} onSelect={jest.fn()} onDismiss={jest.fn()} />,
   );
+  const dialog = screen.getByTestId("sort-menu", { includeHiddenElements: true });
   const panel = screen.getByTestId("sort-menu-panel", { includeHiddenElements: true });
-  expect(panel.props.role).toBe("dialog");
-  expect(panel.props["aria-modal"]).toBe(true);
-  expect(panel.props["aria-labelledby"]).toBe("sort-menu-title");
+  const backdrop = screen.getByTestId("sort-menu-backdrop", { includeHiddenElements: true });
+  expect(dialog.props.accessibilityLabel).toBe("Sort");
+  expect(dialog.props["aria-labelledby"]).toBe("sort-menu-title");
+  expect(panel.props.role).not.toBe("dialog");
+  expect(panel.props["aria-modal"]).toBeUndefined();
+  expect(backdrop.props.accessible).toBe(false);
+  expect(backdrop.props.focusable).toBe(false);
 });
 
 test("one click selects a sort and dismisses", async () => {
