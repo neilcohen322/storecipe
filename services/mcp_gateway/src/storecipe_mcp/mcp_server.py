@@ -18,6 +18,10 @@ from storecipe_mcp.models import (
     RatingView,
     RecipeCreate,
     RecipeCreateIdempotencyKey,
+    RecipeFacetBrowseRequest,
+    RecipeFacetPage,
+    RecipeFacetSelectionsRequest,
+    RecipeFacetSelectionsResponse,
     RecipeQueryPage,
     RecipeQueryRequest,
     RecipeView,
@@ -78,7 +82,7 @@ def create_mcp_server(
     catalog_client_provider: CatalogClientProvider,
     obo_provider_factory: OboTokenProviderFactory,
 ) -> GatewayFastMCP:
-    """Build the gateway MCP server and register its four public tools."""
+    """Build the gateway MCP server and register its six public tools."""
 
     issuer = settings.auth0_issuer or "https://auth.invalid/"
     server = GatewayFastMCP(
@@ -89,6 +93,8 @@ def create_mcp_server(
             "get_recipe": _READ_SCOPE,
             "create_recipe": _WRITE_SCOPE,
             "rate_recipe": _RATING_SCOPE,
+            "list_recipe_query_options": _READ_SCOPE,
+            "resolve_recipe_query_selections": _READ_SCOPE,
         },
         instructions="Access the authenticated user's Storecipe recipe catalog.",
         token_verifier=mcp_auth.McpAuth0TokenVerifier(verifier, settings.mcp_resource_url),
@@ -116,7 +122,10 @@ def create_mcp_server(
         meta={"securitySchemes": [{"type": "oauth2", "scopes": [_READ_SCOPE]}]},
     )
     async def query_recipes(request: RecipeQueryRequest) -> RecipeQueryPage:
-        """Search recipes with explicit deterministic filters and ordered sorts."""
+        """Search recipes with explicit deterministic filters.
+
+        Every listed value is required (AND).
+        """
 
         return cast(
             RecipeQueryPage,
@@ -199,6 +208,60 @@ def create_mcp_server(
                 "rate_recipe",
                 recipe_id,
                 value,
+            ),
+        )
+
+    @server.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        meta={"securitySchemes": [{"type": "oauth2", "scopes": [_READ_SCOPE]}]},
+    )
+    async def list_recipe_query_options(request: RecipeFacetBrowseRequest) -> RecipeFacetPage:
+        """List ingredient, tag, time, and rating values currently present in this user's library.
+
+        Use ingredientQ and tagQ to search. Follow next cursors only for the current search.
+        query_recipes still accepts arbitrary normalized names; unobserved names typically
+        match nothing.
+        """
+
+        return cast(
+            RecipeFacetPage,
+            await _call_catalog(
+                catalog_client_provider,
+                obo_provider_factory,
+                "list_recipe_query_options",
+                request,
+            ),
+        )
+
+    @server.tool(
+        annotations=ToolAnnotations(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+        meta={"securitySchemes": [{"type": "oauth2", "scopes": [_READ_SCOPE]}]},
+    )
+    async def resolve_recipe_query_selections(
+        request: RecipeFacetSelectionsRequest,
+    ) -> RecipeFacetSelectionsResponse:
+        """Ask whether active filters are still observed and obtain Catalog canonical names.
+
+        Do not infer membership from a browse page.
+        """
+
+        return cast(
+            RecipeFacetSelectionsResponse,
+            await _call_catalog(
+                catalog_client_provider,
+                obo_provider_factory,
+                "resolve_recipe_query_selections",
+                request,
             ),
         )
 
@@ -289,6 +352,7 @@ def _catalog_error_result(
         "recipe_not_found": "Recipe not found.",
         "idempotency_conflict": "The idempotency key conflicts with an existing recipe.",
         "stale_recipe_query_cursor": "The recipe query cursor is stale.",
+        "stale_recipe_facet_cursor": "The recipe facet cursor is stale.",
         "catalog_rate_limited": "Catalog is rate limited. Try again later.",
         "temporary_catalog_failure": "Catalog is temporarily unavailable.",
     }

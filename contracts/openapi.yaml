@@ -17,34 +17,20 @@ paths:
       description: Requires the `recipes:read` scope.
       parameters:
         - {name: text, in: query, schema: {type: [string, "null"], maxLength: 200}}
-        - name: requiredIngredient
+        - name: ingredient
           in: query
           style: form
           explode: true
+          description: Every listed value is required (AND).
           schema:
             type: array
             maxItems: 32
             items: {type: string, minLength: 1, maxLength: 200}
-        - name: availableIngredient
+        - name: tag
           in: query
           style: form
           explode: true
-          schema:
-            type: array
-            maxItems: 64
-            items: {type: string, minLength: 1, maxLength: 200}
-        - name: requiredTag
-          in: query
-          style: form
-          explode: true
-          schema:
-            type: array
-            maxItems: 16
-            items: {type: string, minLength: 1, maxLength: 64}
-        - name: preferredTag
-          in: query
-          style: form
-          explode: true
+          description: Every listed value is required (AND).
           schema:
             type: array
             maxItems: 16
@@ -62,28 +48,10 @@ paths:
           examples:
             ratingFirst:
               value: [rating:desc, totalMinutes:asc]
-            coverageFirst:
-              value: [ingredientCoverage:desc, rating:desc, totalMinutes:asc]
           schema:
             type: array
             maxItems: 6
-            items:
-              type: string
-              enum:
-                - ingredientCoverage:asc
-                - ingredientCoverage:desc
-                - tagCoverage:asc
-                - tagCoverage:desc
-                - rating:asc
-                - rating:desc
-                - totalMinutes:asc
-                - totalMinutes:desc
-                - createdAt:asc
-                - createdAt:desc
-                - updatedAt:asc
-                - updatedAt:desc
-                - title:asc
-                - title:desc
+            items: {$ref: "#/components/schemas/RecipeSort"}
         - {name: cursor, in: query, schema: {type: [string, "null"], maxLength: 1024}}
         - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
       responses:
@@ -180,6 +148,48 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+  /v1/recipe-facets:
+    get:
+      operationId: listRecipeFacets
+      description: Requires the `recipes:read` scope. Returns observed facet pages for the caller's recipes.
+      parameters:
+        - {name: ingredientLimit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: tagLimit, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 200}}
+        - {name: ingredientCursor, in: query, schema: {type: [string, "null"], maxLength: 2048}}
+        - {name: tagCursor, in: query, schema: {type: [string, "null"], maxLength: 2048}}
+        - {name: ingredientQ, in: query, schema: {type: [string, "null"], maxLength: 200}}
+        - {name: tagQ, in: query, schema: {type: [string, "null"], maxLength: 64}}
+      responses:
+        "200":
+          description: Observed recipe-query facet pages for the authenticated user
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecipeFacetPage"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/StaleRecipeFacetCursor"}
+        "414": {$ref: "#/components/responses/UriTooLong"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /v1/recipe-facet-selections:
+    post:
+      operationId: resolveRecipeFacetSelections
+      description: Requires the `recipes:read` scope. Resolves requested names to Catalog canonical form and exact observed membership.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RecipeFacetSelectionsRequest"}
+      responses:
+        "200":
+          description: Canonical names and observed membership for requested facet selections
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RecipeFacetSelectionsResponse"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
@@ -365,6 +375,23 @@ components:
             detail: Recipe query cursor is stale.
             request_id: 01JEXAMPLESTALECURSOR
             errorCategory: stale_recipe_query_cursor
+    StaleRecipeFacetCursor:
+      description: The catalog changed after the referenced recipe-facet page was read.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/stale_recipe_facet_cursor
+            title: Conflict
+            status: 409
+            detail: Recipe facet cursor is stale.
+            request_id: 01JEXAMPLESTALEFACET
+            errorCategory: stale_recipe_facet_cursor
+    ServiceUnavailable:
+      description: The catalog could not finish a consistent facet snapshot.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
     ImportBurstExceeded:
       description: Import submission burst limit exceeded; retry after the indicated interval.
       headers:
@@ -456,31 +483,85 @@ components:
         name: {type: string, minLength: 1, maxLength: 200}
         quantity: {type: [number, "null"], minimum: 0}
         unit: {type: [string, "null"], minLength: 1, maxLength: 64}
-    RecipeMatch:
-      type: object
-      required: [ingredientCoverage, missingIngredients, tagCoverage, matchedPreferredTags, missingPreferredTags]
-      properties:
-        ingredientCoverage: {type: [number, "null"], minimum: 0, maximum: 1}
-        missingIngredients: {type: array, items: {type: string}}
-        tagCoverage: {type: [number, "null"], minimum: 0, maximum: 1}
-        matchedPreferredTags: {type: array, items: {type: string}}
-        missingPreferredTags: {type: array, items: {type: string}}
-    RecipeQueryItem:
-      type: object
-      required: [recipe, match]
-      properties:
-        recipe: {$ref: "#/components/schemas/Recipe"}
-        match:
-          description: Factual match details; null unless availableIngredient or preferredTag is supplied.
-          anyOf:
-            - {$ref: "#/components/schemas/RecipeMatch"}
-            - {type: "null"}
     RecipeQueryPage:
       type: object
       required: [items, nextCursor]
       properties:
-        items: {type: array, items: {$ref: "#/components/schemas/RecipeQueryItem"}}
+        items: {type: array, items: {$ref: "#/components/schemas/Recipe"}}
         nextCursor: {type: [string, "null"]}
+    RecipeSort:
+      type: string
+      enum:
+        - rating:asc
+        - rating:desc
+        - totalMinutes:asc
+        - totalMinutes:desc
+        - createdAt:asc
+        - createdAt:desc
+        - updatedAt:asc
+        - updatedAt:desc
+        - title:asc
+        - title:desc
+    RecipeFacetBounds:
+      type: object
+      required: [min, max]
+      properties:
+        min: {type: integer}
+        max: {type: integer}
+    RecipeFacetPage:
+      type: object
+      required: [ingredients, ingredientNextCursor, tags, tagNextCursor, totalMinutes, rating, ratingState, sort]
+      properties:
+        ingredients:
+          type: array
+          items: {type: string, minLength: 1, maxLength: 200}
+        ingredientNextCursor: {type: [string, "null"], maxLength: 2048}
+        tags:
+          type: array
+          items: {type: string, minLength: 1, maxLength: 64}
+        tagNextCursor: {type: [string, "null"], maxLength: 2048}
+        totalMinutes:
+          anyOf:
+            - {$ref: "#/components/schemas/RecipeFacetBounds"}
+            - {type: "null"}
+        rating: {$ref: "#/components/schemas/RecipeFacetBounds"}
+        ratingState:
+          type: array
+          items: {type: string, enum: [any, rated, unrated]}
+        sort:
+          type: array
+          items: {$ref: "#/components/schemas/RecipeSort"}
+    RecipeFacetSelectionsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        ingredients:
+          type: array
+          maxItems: 32
+          default: []
+          items: {type: string, minLength: 1, maxLength: 200}
+        tags:
+          type: array
+          maxItems: 16
+          default: []
+          items: {type: string, minLength: 1, maxLength: 64}
+    RecipeFacetSelection:
+      type: object
+      required: [requestedName, normalizedName, observed]
+      properties:
+        requestedName: {type: string}
+        normalizedName: {type: string}
+        observed: {type: boolean}
+    RecipeFacetSelectionsResponse:
+      type: object
+      required: [ingredients, tags]
+      properties:
+        ingredients:
+          type: array
+          items: {$ref: "#/components/schemas/RecipeFacetSelection"}
+        tags:
+          type: array
+          items: {$ref: "#/components/schemas/RecipeFacetSelection"}
     ImportAccepted:
       type: object
       required: [jobId, status]

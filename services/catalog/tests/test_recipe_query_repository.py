@@ -1,7 +1,6 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from uuid import UUID
 
 import pytest
@@ -135,8 +134,8 @@ async def _query(
     ("query_request", "expected_titles"),
     [
         (RecipeQueryRequest(text="garden"), ["Garden Bowl"]),
-        (RecipeQueryRequest(required_ingredients=["chickpeas", "lime"]), ["Curry"]),
-        (RecipeQueryRequest(required_tags=["dinner", "spicy"]), ["Curry"]),
+        (RecipeQueryRequest(ingredients=["chickpeas", "lime"]), ["Curry"]),
+        (RecipeQueryRequest(tags=["dinner", "spicy"]), ["Curry"]),
         (RecipeQueryRequest(max_total_minutes=30), ["Toast"]),
         (RecipeQueryRequest(min_rating=4), ["Curry"]),
         (RecipeQueryRequest(rating_state="rated"), ["Curry", "Garden Bowl"]),
@@ -174,28 +173,32 @@ async def test_owner_rating_join_uses_only_authenticated_user_rating(
 
 
 @pytest.mark.asyncio
-async def test_coverage_columns_are_factual_distinct_sql_values(
+async def test_ingredient_and_tag_filters_require_every_requested_value(
     seeded_catalog: tuple[async_sessionmaker[AsyncSession], SeededCatalog],
 ) -> None:
     session_factory, catalog = seeded_catalog
-    request = RecipeQueryRequest(
-        available_ingredients=["chickpeas", "lime"],
-        preferred_tags=["dinner", "quick"],
+
+    lime_only = await _query(
+        session_factory, catalog.owner_a_id, RecipeQueryRequest(ingredients=["lime"])
+    )
+    both_ingredients = await _query(
+        session_factory,
+        catalog.owner_a_id,
+        RecipeQueryRequest(ingredients=["chickpeas", "lime"]),
+    )
+    mixed_tags = await _query(
+        session_factory,
+        catalog.owner_a_id,
+        RecipeQueryRequest(tags=["lunch", "spicy"]),
     )
 
-    candidates = await _query(session_factory, catalog.owner_a_id, request)
-    by_title = {candidate.recipe.title: candidate for candidate in candidates}
-
-    assert by_title["Curry"].ingredient_coverage == Decimal("0.66666666666666666667")
-    assert by_title["Curry"].tag_coverage == Decimal("0.5")
-    assert by_title["Garden Bowl"].ingredient_coverage == Decimal("0.33333333333333333333")
-    assert by_title["Garden Bowl"].tag_coverage == Decimal("0.5")
-    assert by_title["Toast"].ingredient_coverage == Decimal("0")
-    assert by_title["Toast"].tag_coverage == Decimal("0")
+    assert {candidate.recipe.title for candidate in lime_only} == {"Curry", "Garden Bowl"}
+    assert {candidate.recipe.title for candidate in both_ingredients} == {"Curry"}
+    assert mixed_tags == []
 
 
 @pytest.mark.asyncio
-async def test_duplicate_normalized_ingredients_count_once_in_coverage(
+async def test_duplicate_normalized_ingredients_count_once_for_and_match(
     seeded_catalog: tuple[async_sessionmaker[AsyncSession], SeededCatalog],
 ) -> None:
     session_factory, catalog = seeded_catalog
@@ -229,26 +232,22 @@ async def test_duplicate_normalized_ingredients_count_once_in_coverage(
         session.add(duplicate)
         await session.commit()
 
-    candidates = await _query(
+    matched = await _query(
         session_factory,
         catalog.owner_a_id,
-        RecipeQueryRequest(available_ingredients=["chickpeas"]),
+        RecipeQueryRequest(ingredients=["chickpeas", "lime"]),
+    )
+    missing = await _query(
+        session_factory,
+        catalog.owner_a_id,
+        RecipeQueryRequest(ingredients=["chickpeas", "saffron"]),
     )
 
-    candidate = next(item for item in candidates if item.recipe.id == duplicate.id)
-    assert candidate.ingredient_coverage == Decimal("0.5")
-
-
-@pytest.mark.asyncio
-async def test_empty_coverage_context_returns_sql_null_columns(
-    seeded_catalog: tuple[async_sessionmaker[AsyncSession], SeededCatalog],
-) -> None:
-    session_factory, catalog = seeded_catalog
-
-    candidates = await _query(session_factory, catalog.owner_a_id, RecipeQueryRequest())
-
-    assert all(candidate.ingredient_coverage is None for candidate in candidates)
-    assert all(candidate.tag_coverage is None for candidate in candidates)
+    assert {candidate.recipe.id for candidate in matched} == {
+        UUID("30000000-0000-0000-0000-000000000001"),
+        duplicate.id,
+    }
+    assert all(candidate.recipe.id != duplicate.id for candidate in missing)
 
 
 @pytest.mark.asyncio
@@ -314,65 +313,6 @@ async def test_sort_nulls_are_last_for_both_directions(
                 RecipeQueryRequest(sort=[f"{field}:{direction}"]),
             )
             assert candidates[-1].recipe.title == expected_last
-
-
-@pytest.mark.asyncio
-async def test_sort_coverage_uses_numeric_ratio_not_sqlite_fraction_text(
-    seeded_catalog: tuple[async_sessionmaker[AsyncSession], SeededCatalog],
-) -> None:
-    session_factory, catalog = seeded_catalog
-    half_coverage = Recipe(
-        id=UUID("30000000-0000-0000-0000-000000000011"),
-        user_id=catalog.owner_a_id,
-        title="Half Coverage",
-        total_minutes=1,
-        ingredients=[
-            Ingredient(
-                position=0, raw_text="1 shared-a", name="shared-a", normalized_name="shared-a"
-            ),
-            Ingredient(
-                position=1, raw_text="1 half-other", name="half-other", normalized_name="half-other"
-            ),
-        ],
-    )
-    two_tenths_coverage = Recipe(
-        id=UUID("30000000-0000-0000-0000-000000000012"),
-        user_id=catalog.owner_a_id,
-        title="Two Tenths Coverage",
-        total_minutes=1,
-        ingredients=[
-            Ingredient(
-                position=0, raw_text="1 shared-a", name="shared-a", normalized_name="shared-a"
-            ),
-            Ingredient(
-                position=1, raw_text="1 shared-b", name="shared-b", normalized_name="shared-b"
-            ),
-            *[
-                Ingredient(
-                    position=position,
-                    raw_text=f"1 other-{position}",
-                    name=f"other-{position}",
-                    normalized_name=f"other-{position}",
-                )
-                for position in range(2, 10)
-            ],
-        ],
-    )
-    async with session_factory() as session:
-        session.add_all([half_coverage, two_tenths_coverage])
-        await session.commit()
-
-    candidates = await _query(
-        session_factory,
-        catalog.owner_a_id,
-        RecipeQueryRequest(
-            available_ingredients=["shared-a", "shared-b"],
-            sort=["ingredientCoverage:desc"],
-        ),
-    )
-
-    coverage_titles = [candidate.recipe.title for candidate in candidates]
-    assert coverage_titles.index("Half Coverage") < coverage_titles.index("Two Tenths Coverage")
 
 
 @pytest.mark.asyncio
@@ -444,7 +384,7 @@ def test_apply_ordering_maps_every_sort_field_to_one_sql_order_by() -> None:
 
     query = build_recipe_query(
         UUID("10000000-0000-0000-0000-000000000001"),
-        RecipeQueryRequest(available_ingredients=["shared-a"], preferred_tags=["dinner"]),
+        RecipeQueryRequest(ingredients=["shared-a"], tags=["dinner"]),
     )
     ordered = apply_ordering(
         query,

@@ -1,7 +1,7 @@
 import { expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-import { fixtureImportJob, fixtureRecipe, fixtureRecipePage } from "../src/testing/fixtures";
+import { fixtureImportJob, fixtureRecipe, fixtureRecipeFacetSelections, fixtureRecipeFacets, fixtureRecipePage } from "../src/testing/fixtures";
 
 export function captureConsoleErrors(page: Page): string[] {
   const errors: string[] = [];
@@ -36,8 +36,29 @@ export async function installApiInterceptions(page: Page): Promise<void> {
       const statuses = ["queued", "processing", "completed"] as const;
       return route.fulfill({ json: fixtureImportJob(statuses[Math.min(importPoll++, statuses.length - 1)]), headers: cors });
     }
+    if (url.pathname === "/v1/recipe-facets" && request.method() === "GET") return route.fulfill({ json: fixtureRecipeFacets, headers: cors });
+    if (url.pathname === "/v1/recipe-facet-selections" && request.method() === "POST") {
+      const body = (request.postDataJSON() ?? {}) as { ingredients?: string[]; tags?: string[] };
+      return route.fulfill({ json: fixtureRecipeFacetSelections(body), headers: cors });
+    }
     return route.fulfill({ status: 404, json: { detail: "Unmatched E2E request" }, headers: cors });
   });
+}
+
+export async function submitRecipeSearch(page: Page, text: string, method: "enter" | "button" = "enter"): Promise<void> {
+  await page.getByLabel("Search recipes").fill(text);
+  if (method === "button") await page.getByRole("button", { name: "Search" }).click();
+  else await page.getByLabel("Search recipes").press("Enter");
+}
+
+export async function openRecipeFilters(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /^Filters/ }).click();
+  await expect(page.getByRole("dialog", { name: "Filters" })).toBeVisible();
+}
+
+export async function openRecipeSort(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Sort" }).click();
+  await expect(page.getByRole("dialog", { name: "Sort" })).toBeVisible();
 }
 
 export async function assertNoHorizontalOverflow(page: Page): Promise<void> {

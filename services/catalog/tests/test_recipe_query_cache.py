@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
-from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
@@ -13,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from catalog.models import Ingredient, Recipe, RecipeTag, Tag
 from catalog.recipe_queries import (
-    RecipeMatch,
-    RecipeQueryItem,
     RecipeQueryPage,
     RecipeQueryRequest,
     decode_cursor,
@@ -28,6 +25,7 @@ class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str | bytes] = {}
         self.last_key = ""
+        self.got_keys: list[str] = []
         self.last_expiry: int | None = None
         self.deleted_keys: list[str] = []
         self.get_error: BaseException | None = None
@@ -37,6 +35,7 @@ class FakeRedis:
 
     async def get(self, key: str) -> str | bytes | None:
         self.last_key = key
+        self.got_keys.append(key)
         if self.get_error:
             raise self.get_error
         return self.values.get(key)
@@ -77,6 +76,7 @@ class HangingRedis:
 class InvalidUtf8Redis(FakeRedis):
     async def get(self, key: str) -> str | bytes | None:
         self.last_key = key
+        self.got_keys.append(key)
         raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
 
@@ -86,6 +86,57 @@ class InvalidValueWithHangingDeleteRedis(HangingRedis):
         return "not-json"
 
 
+def _recipe_view() -> RecipeView:
+    return RecipeView(
+        id=UUID("00000000-0000-0000-0000-000000000001"),
+        title="Wine soup",
+        source_url=None,
+        servings=2,
+        prep_minutes=5,
+        cook_minutes=10,
+        total_minutes=15,
+        ingredients=[],
+        instructions=[],
+        tags=[],
+    )
+
+
+def _legacy_v1_envelope(request_hash: str, catalog_version: int) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "request_hash": request_hash,
+        "catalog_version": catalog_version,
+        "request": {
+            "text": "wine",
+            "required_ingredients": ["basil"],
+            "available_ingredients": [],
+            "required_tags": [],
+            "preferred_tags": [],
+            "max_total_minutes": None,
+            "min_rating": None,
+            "rating_state": "any",
+            "sort": [],
+            "cursor": None,
+            "limit": 20,
+        },
+        "result": {
+            "items": [
+                {
+                    "recipe": _recipe_view().model_dump(mode="json", by_alias=False),
+                    "match": {
+                        "ingredient_coverage": 1.0,
+                        "missing_ingredients": [],
+                        "tag_coverage": None,
+                        "matched_preferred_tags": [],
+                        "missing_preferred_tags": [],
+                    },
+                }
+            ],
+            "next_cursor": None,
+        },
+    }
+
+
 @pytest.fixture
 def user_id() -> UUID:
     return UUID("00000000-0000-0000-0000-000000000042")
@@ -93,30 +144,12 @@ def user_id() -> UUID:
 
 @pytest.fixture
 def recipe_query_request() -> RecipeQueryRequest:
-    return RecipeQueryRequest(text="Wine", available_ingredients=["Basil"])
+    return RecipeQueryRequest(text="Wine", ingredients=["Basil"])
 
 
 @pytest.fixture
 def page() -> RecipeQueryPage:
-    return RecipeQueryPage(
-        items=[
-            RecipeQueryItem(
-                recipe=RecipeView(
-                    id=UUID("00000000-0000-0000-0000-000000000001"),
-                    title="Wine soup",
-                    source_url=None,
-                    servings=2,
-                    prep_minutes=5,
-                    cook_minutes=10,
-                    total_minutes=15,
-                    ingredients=[],
-                    instructions=[],
-                    tags=[],
-                ),
-                match=RecipeMatch(ingredient_coverage=1.0),
-            )
-        ]
-    )
+    return RecipeQueryPage(items=[_recipe_view()])
 
 
 @pytest.mark.asyncio
@@ -133,7 +166,10 @@ async def test_cache_round_trip_uses_versioned_opaque_key(
 
     assert written is True
     assert read == CacheRead(CacheReadOutcome.HIT, page)
-    assert redis.last_key == f"recipe_queries:{user_id}:7:{recipe_query_hash(recipe_query_request)}"
+    assert redis.last_key == (
+        f"recipe_queries:v2:{user_id}:7:{recipe_query_hash(recipe_query_request)}"
+    )
+    assert json.loads(cast(str, redis.values[redis.last_key]))["schema_version"] == 2
     assert redis.last_expiry == 1800
     assert "wine" not in redis.last_key
 
@@ -149,6 +185,27 @@ async def test_cache_returns_miss_for_absent_key(
     assert await cache.get(user_id, 7, recipe_query_request) == CacheRead(
         CacheReadOutcome.MISS, None
     )
+
+
+@pytest.mark.asyncio
+async def test_cache_misses_legacy_v1_namespace_without_reading_it(
+    user_id: UUID, recipe_query_request: RecipeQueryRequest
+) -> None:
+    from catalog.recipe_query_cache import CacheRead, CacheReadOutcome, RecipeQueryCache
+
+    redis = FakeRedis()
+    cache = RecipeQueryCache(redis)
+    request_hash = recipe_query_hash(recipe_query_request)
+    old_key = f"recipe_queries:{user_id}:7:{request_hash}"
+    new_key = f"recipe_queries:v2:{user_id}:7:{request_hash}"
+    redis.values[old_key] = json.dumps(_legacy_v1_envelope(request_hash, 7))
+
+    assert await cache.get(user_id, 7, recipe_query_request) == CacheRead(
+        CacheReadOutcome.MISS, None
+    )
+    assert redis.got_keys == [new_key]
+    assert old_key not in redis.deleted_keys
+    assert old_key in redis.values
 
 
 @pytest.mark.asyncio
@@ -170,8 +227,8 @@ async def test_cache_does_not_reuse_other_catalog_version(
     "payload",
     [
         "not-json",
-        json.dumps({"schema_version": 2, "request_hash": "a" * 64, "result": {}}),
-        json.dumps({"schema_version": 1, "request_hash": "b" * 64, "result": {}}),
+        json.dumps({"schema_version": 1, "request_hash": "a" * 64, "result": {}}),
+        json.dumps({"schema_version": 2, "request_hash": "b" * 64, "result": {}}),
     ],
 )
 async def test_cache_invalidates_malformed_or_mismatched_envelopes(
@@ -201,7 +258,7 @@ async def test_cache_invalidates_envelope_with_page_for_different_request_or_ver
     key = cache.key(user_id, 7, recipe_query_hash(recipe_query_request))
     redis.values[key] = json.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "request_hash": recipe_query_hash(recipe_query_request),
             "catalog_version": 8,
             "request": {"text": "different"},
@@ -292,7 +349,7 @@ async def test_cache_events_do_not_expose_query_or_raw_subject(
     from catalog.recipe_query_cache import RecipeQueryCache
 
     recipe_query_request = RecipeQueryRequest(
-        text="top secret wine", available_ingredients=["private subject"]
+        text="top secret wine", ingredients=["private subject"]
     )
     redis = FakeRedis()
     cache = RecipeQueryCache(redis)
@@ -330,20 +387,15 @@ def _candidate(
         ],
         recipe_tags=[RecipeTag(tag=Tag(name=name)) for name in tags],
     )
-    return QueryCandidate(
-        recipe=recipe,
-        rating=4,
-        ingredient_coverage=Decimal("0.5"),
-        tag_coverage=Decimal("0.5"),
-    )
+    return QueryCandidate(recipe=recipe, rating=4)
 
 
-def test_build_query_page_uses_limit_plus_one_for_factual_matches_and_cursor() -> None:
+def test_build_query_page_uses_limit_plus_one_for_direct_recipe_items_and_cursor() -> None:
     from catalog.services.recipe_queries import build_query_page
 
     request = RecipeQueryRequest(
-        available_ingredients=["basil", "garlic"],
-        preferred_tags=["quick", "vegan"],
+        ingredients=["basil", "garlic"],
+        tags=["quick", "vegan"],
         sort=["title:asc"],
         limit=1,
     )
@@ -361,12 +413,8 @@ def test_build_query_page_uses_limit_plus_one_for_factual_matches_and_cursor() -
     page = build_query_page(request, 7, candidates)
 
     assert len(page.items) == 1
-    assert page.items[0].recipe.title == "A"
-    assert page.items[0].match is not None
-    assert page.items[0].match.missing_ingredients == ["salt"]
-    assert "garlic" not in page.items[0].match.missing_ingredients
-    assert page.items[0].match.matched_preferred_tags == ["quick"]
-    assert page.items[0].match.missing_preferred_tags == ["vegan"]
+    assert page.items[0].title == "A"
+    assert page.items[0].rating == 4
     assert page.next_cursor is not None
     cursor = decode_cursor(page.next_cursor)
     assert cursor.schema_version == 2
@@ -386,18 +434,6 @@ def test_build_query_page_has_no_cursor_without_an_extra_candidate() -> None:
 
     assert len(page.items) == 1
     assert page.next_cursor is None
-
-
-def test_build_query_page_omits_match_without_context() -> None:
-    from catalog.services.recipe_queries import build_query_page
-
-    page = build_query_page(
-        RecipeQueryRequest(),
-        7,
-        [_candidate("00000000-0000-0000-0000-000000000001", "A", ["salt"], ["quick"])],
-    )
-
-    assert page.items[0].match is None
 
 
 def test_title_cursor_fits_limit_for_worst_case_unicode_title() -> None:

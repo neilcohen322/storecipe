@@ -64,6 +64,30 @@ def _recipe_create_payload() -> dict[str, Any]:
     }
 
 
+def _facet_page_payload() -> dict[str, Any]:
+    return {
+        "ingredients": ["basil", "tomato"],
+        "ingredientNextCursor": None,
+        "tags": ["family"],
+        "tagNextCursor": None,
+        "totalMinutes": {"min": 15, "max": 90},
+        "rating": {"min": 1, "max": 5},
+        "ratingState": ["any", "rated", "unrated"],
+        "sort": [
+            "rating:asc",
+            "rating:desc",
+            "totalMinutes:asc",
+            "totalMinutes:desc",
+            "createdAt:asc",
+            "createdAt:desc",
+            "updatedAt:asc",
+            "updatedAt:desc",
+            "title:asc",
+            "title:desc",
+        ],
+    }
+
+
 def _initialize_request() -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
@@ -88,7 +112,7 @@ def _catalog_handler(calls: list[httpx.Request], request: httpx.Request) -> http
     if request.method == "GET" and request.url.path == "/v1/recipes":
         return httpx.Response(
             200,
-            json={"items": [{"recipe": _recipe_view_payload(), "match": None}], "nextCursor": None},
+            json={"items": [_recipe_view_payload()], "nextCursor": None},
             request=request,
         )
     if request.method == "GET" and request.url.path == f"/v1/recipes/{RECIPE_ID}":
@@ -99,6 +123,14 @@ def _catalog_handler(calls: list[httpx.Request], request: httpx.Request) -> http
     if request.method == "PUT" and request.url.path == f"/v1/recipes/{RECIPE_ID}/rating":
         assert request.read() == b'{"value":4}'
         return httpx.Response(200, json={"value": 4}, request=request)
+    if request.method == "GET" and request.url.path == "/v1/recipe-facets":
+        return httpx.Response(200, json=_facet_page_payload(), request=request)
+    if request.method == "POST" and request.url.path == "/v1/recipe-facet-selections":
+        return httpx.Response(
+            200,
+            json={"ingredients": [], "tags": []},
+            request=request,
+        )
     raise AssertionError(f"unexpected Catalog request: {request.method} {request.url}")
 
 
@@ -143,7 +175,7 @@ def test_mcp_streamable_http_requires_bearer_token(settings: Settings) -> None:
     assert "/.well-known/oauth-protected-resource/mcp" in response.headers["www-authenticate"]
 
 
-def test_raw_streamable_http_initialize_list_and_all_four_calls(
+def test_raw_streamable_http_initialize_list_and_all_six_calls(
     settings: Settings,
     monkeypatch: Any,
 ) -> None:
@@ -180,16 +212,20 @@ def test_raw_streamable_http_initialize_list_and_all_four_calls(
             "get_recipe",
             "create_recipe",
             "rate_recipe",
+            "list_recipe_query_options",
+            "resolve_recipe_query_selections",
         }
 
         calls_to_make = [
-            ("query_recipes", {"request": {}}),
+            ("query_recipes", {"request": {"ingredient": ["tomato"], "tag": ["soup"]}}),
             ("get_recipe", {"recipe_id": str(RECIPE_ID)}),
             (
                 "create_recipe",
                 {"idempotency_key": "idem-key-1", "recipe": _recipe_create_payload()},
             ),
             ("rate_recipe", {"recipe_id": str(RECIPE_ID), "value": 4}),
+            ("list_recipe_query_options", {"request": {}}),
+            ("resolve_recipe_query_selections", {"request": {}}),
         ]
         for request_id, (name, arguments) in enumerate(calls_to_make, start=3):
             response = client.post(
@@ -206,14 +242,25 @@ def test_raw_streamable_http_initialize_list_and_all_four_calls(
             assert result["isError"] is False
             assert isinstance(result["structuredContent"], dict)
 
-    assert len(calls) == 4
+    assert len(calls) == 6
     assert [(request.method, request.url.path) for request in calls] == [
         ("GET", "/v1/recipes"),
         ("GET", f"/v1/recipes/{RECIPE_ID}"),
         ("POST", "/v1/recipes"),
         ("PUT", f"/v1/recipes/{RECIPE_ID}/rating"),
+        ("GET", "/v1/recipe-facets"),
+        ("POST", "/v1/recipe-facet-selections"),
     ]
-    assert obo_provider.calls == [MCP_TOKEN] * 4
+    query_names = [name for name, _ in calls[0].url.params.multi_items()]
+    assert ("ingredient", "tomato") in calls[0].url.params.multi_items()
+    assert ("tag", "soup") in calls[0].url.params.multi_items()
+    assert not {
+        "requiredIngredient",
+        "availableIngredient",
+        "requiredTag",
+        "preferredTag",
+    }.intersection(query_names)
+    assert obo_provider.calls == [MCP_TOKEN] * 6
 
 
 def test_read_only_token_cannot_trigger_create_or_catalog_request(

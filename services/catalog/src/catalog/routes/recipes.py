@@ -2,6 +2,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from pydantic import ConfigDict, Field
 
 from catalog.auth import Principal, require_scopes
@@ -12,6 +13,13 @@ from catalog.services import recipe_queries as recipe_query_service
 from catalog.services import recipes as recipe_service
 
 router = APIRouter(prefix="/v1/recipes", tags=["recipes"])
+
+REMOVED_RECIPE_QUERY_KEYS = (
+    "requiredIngredient",
+    "availableIngredient",
+    "requiredTag",
+    "preferredTag",
+)
 
 ReadPrincipal = Annotated[Principal, Depends(require_scopes("recipes:read"))]
 WritePrincipal = Annotated[Principal, Depends(require_scopes("recipes:write"))]
@@ -26,21 +34,32 @@ RecipeCreateIdempotencyKey = Annotated[
 ]
 
 
+def reject_removed_recipe_query_keys(request: Request) -> None:
+    present = [key for key in REMOVED_RECIPE_QUERY_KEYS if key in request.query_params]
+    if not present:
+        return
+    raise RequestValidationError(
+        [
+            {
+                "type": "value_error",
+                "loc": ("query", key),
+                "msg": f"{key} is not a supported query parameter",
+                "input": request.query_params.getlist(key),
+            }
+            for key in present
+        ]
+    )
+
+
 class RecipeQueryParameters(RecipeQueryRequest):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     text: Annotated[str | None, Field(max_length=200)] = None
-    required_ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
-        default_factory=list, max_length=32, alias="requiredIngredient"
+    ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list, max_length=32, alias="ingredient"
     )
-    available_ingredients: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
-        default_factory=list, max_length=64, alias="availableIngredient"
-    )
-    required_tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
-        default_factory=list, max_length=16, alias="requiredTag"
-    )
-    preferred_tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
-        default_factory=list, max_length=16, alias="preferredTag"
+    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
+        default_factory=list, max_length=16, alias="tag"
     )
     max_total_minutes: int | None = Field(default=None, ge=0, alias="maxTotalMinutes")
     min_rating: int | None = Field(default=None, ge=1, le=5, alias="minRating")
@@ -74,6 +93,7 @@ async def query_recipes(
     session: SessionDependency,
     principal: ReadPrincipal,
     parameters: Annotated[RecipeQueryParameters, Query()],
+    _: Annotated[None, Depends(reject_removed_recipe_query_keys)],
 ) -> RecipeQueryPage:
     query = RecipeQueryRequest.model_validate(parameters.model_dump())
     return await recipe_query_service.query_recipes(

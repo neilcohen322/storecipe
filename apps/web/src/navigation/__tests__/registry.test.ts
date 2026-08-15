@@ -1,7 +1,19 @@
-import { actionItems, linkItems, mobilePrimaryItems, moreItems, navigationRegistry } from "../registry";
+import type { Href } from "expo-router";
+
+import { actionItems, isApprovedAppPath, linkItems, mobilePrimaryItems, moreItems, navigationRegistry } from "../registry";
 import type { Availability } from "../types";
 
 describe("navigation registry", () => {
+  it("narrows approved runtime paths to router hrefs", () => {
+    const candidate: string = "/recipes/recipe-42";
+
+    expect(isApprovedAppPath(candidate)).toBe(true);
+    if (!isApprovedAppPath(candidate)) throw new Error("expected an approved path");
+    const href: Href = candidate;
+
+    expect(href).toBe("/recipes/recipe-42");
+  });
+
   it("uses unique link paths and keeps actions free of hrefs", () => {
     expect(new Set(linkItems.map((item) => item.href)).size).toBe(linkItems.length);
     expect(actionItems.every((item) => !("href" in item))).toBe(true);

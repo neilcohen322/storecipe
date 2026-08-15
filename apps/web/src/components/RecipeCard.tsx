@@ -1,11 +1,11 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import type { RecipeQueryItem } from "../api/catalog";
+import type { Recipe } from "../api/catalog";
 import { useTheme } from "../theme/ThemeProvider";
 import { RecipeMedia } from "./RecipeMedia";
 
 export type RecipeCardProps = {
-  item: RecipeQueryItem;
+  item: Recipe;
   onOpen(recipeId: string): void;
   view: "card" | "list";
 };
@@ -15,8 +15,7 @@ function mediaColor(recipeId: string, colors: { accent: string; success: string;
   return palette[recipeId.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % palette.length];
 }
 
-export function RecipeCard({ item, onOpen, view }: RecipeCardProps) {
-  const { recipe } = item;
+export function RecipeCard({ item: recipe, onOpen, view }: RecipeCardProps) {
   const { theme } = useTheme();
   const details = [
     recipe.totalMinutes != null ? `${recipe.totalMinutes} min` : null,

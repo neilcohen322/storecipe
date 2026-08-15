@@ -10,7 +10,6 @@ import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -249,23 +248,30 @@ async def test_postgres_preserves_ordered_precedence_and_nulls_last(
 
 
 @pytest.mark.asyncio
-async def test_postgres_coverage_deduplicates_ingredients_and_reports_tags(
+async def test_postgres_and_filters_require_every_ingredient_and_tag(
     postgres_catalog: PostgresCatalog,
 ) -> None:
-    request = RecipeQueryRequest(
-        available_ingredients=["CHICKPEAS"],
-        preferred_tags=[postgres_catalog.dinner_tag, postgres_catalog.missing_tag],
+    matched = await fetch(
+        postgres_catalog,
+        RecipeQueryRequest(
+            ingredients=["CHICKPEAS", "lime"],
+            tags=[postgres_catalog.dinner_tag],
+        ),
     )
-    candidates = await fetch(postgres_catalog, request)
-    coverage = next(item for item in candidates if item.recipe.title == "coverage")
+    missing_ingredient = await fetch(
+        postgres_catalog,
+        RecipeQueryRequest(ingredients=["chickpeas", "saffron"]),
+    )
+    missing_tag = await fetch(
+        postgres_catalog,
+        RecipeQueryRequest(
+            tags=[postgres_catalog.dinner_tag, postgres_catalog.missing_tag],
+        ),
+    )
 
-    assert request.preferred_tags == [postgres_catalog.dinner_tag, postgres_catalog.missing_tag]
-    assert {item.tag.name for item in coverage.recipe.recipe_tags} == {
-        postgres_catalog.dinner_tag,
-        postgres_catalog.quick_tag,
-    }
-    assert coverage.ingredient_coverage == Decimal("0.5")
-    assert coverage.tag_coverage == Decimal("0.5")
+    assert [item.recipe.title for item in matched] == ["coverage"]
+    assert missing_ingredient == []
+    assert missing_tag == []
 
 
 @pytest.mark.asyncio
@@ -285,7 +291,7 @@ async def test_postgres_query_pages_traverse_three_keyset_pages_without_duplicat
             break
         cursor_request = request.model_copy(update={"cursor": page.next_cursor})
 
-    ids = [item.recipe.id for page in pages for item in page.items]
+    ids = [item.id for page in pages for item in page.items]
     assert [len(page.items) for page in pages] == [2, 2, 1]
     assert len(ids) == len(set(ids)) == 5
 

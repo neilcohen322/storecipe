@@ -3,12 +3,11 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import Numeric, column
+from sqlalchemy import column
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from catalog.main import _status_for
@@ -17,7 +16,6 @@ from catalog.recipe_queries import (
     RecipeQueryCursor,
     RecipeQueryRequest,
     SortDirection,
-    SortField,
     decode_cursor,
     encode_cursor,
     recipe_query_hash,
@@ -26,8 +24,6 @@ from catalog.recipe_queries import (
 from catalog.repositories.recipe_queries import (
     QueryCandidate,
     _after_value,
-    apply_keyset_cursor,
-    build_recipe_query,
     effective_sort,
     fetch_query_candidates,
 )
@@ -90,7 +86,7 @@ def test_validate_request_cursor_binds_hash_sort_and_catalog_version() -> None:
 
     assert validate_request_cursor(request_with_cursor, 7) == cursor
 
-    changed_filter = request_with_cursor.model_copy(update={"text": "different"})
+    changed_filter = request_with_cursor.model_copy(update={"ingredients": ["lime"]})
     with pytest.raises(InvalidCursor):
         validate_request_cursor(changed_filter, 7)
 
@@ -135,27 +131,6 @@ def test_ascending_after_value_includes_nulls_last() -> None:
     sql = str(predicate.compile(compile_kwargs={"literal_binds": True}))
     assert "sort_value > 5" in sql
     assert "sort_value IS NULL" in sql
-
-
-def test_coverage_cursor_binds_to_numeric_sort_expression() -> None:
-    request = RecipeQueryRequest(
-        available_ingredients=["shared"],
-        sort=["ingredientCoverage:asc"],
-    )
-    query = build_recipe_query(OWNER_ID, request)
-    cursor = _cursor_for(
-        request,
-        catalog_version=7,
-        recipe_id=RECIPE_IDS[0],
-    )
-
-    keyed = apply_keyset_cursor(query, cursor, [Decimal("0.5"), RECIPE_IDS[0]])
-
-    expression = keyed.expressions[SortField.INGREDIENT_COVERAGE]
-    assert isinstance(expression.type, Numeric)
-    compiled = str(keyed.statement.compile())
-    assert "CAST" in compiled
-    assert "NULLIF" in compiled
 
 
 def test_descending_branch_for_cursor_value() -> None:
@@ -328,7 +303,7 @@ async def test_title_cursor_reconstructs_database_lower_value_for_unicode() -> N
             session.add_all(recipes)
 
         request = RecipeQueryRequest(
-            required_ingredients=["unicode"],
+            ingredients=["unicode"],
             sort=["title:asc"],
             limit=1,
         )

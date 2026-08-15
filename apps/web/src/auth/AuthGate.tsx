@@ -3,6 +3,7 @@ import { Redirect, usePathname, useRouter } from "expo-router";
 import { authPresentation } from "@storecipe/auth-provider";
 
 import { LandingScreen } from "../screens/LandingScreen";
+import { isApprovedAppPath } from "../navigation/registry";
 import { useAuth } from "./AuthProvider";
 import { returnPathStorage, type ReturnPathStorage, useCommittedReturnPath } from "./returnPathStorage";
 
@@ -29,7 +30,7 @@ export function AuthGate({ children, returnPathStorage: storage = returnPathStor
     );
   }
 
-  if (destination !== pathname) return <Redirect href={destination} />;
+  if (destination !== pathname && isApprovedAppPath(destination)) return <Redirect href={destination} />;
 
   return children;
 }

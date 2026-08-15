@@ -7,10 +7,16 @@ from uuid import UUID
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from storecipe_mcp.catalog_client import CatalogClient
 from storecipe_mcp.errors import CatalogClientError
-from storecipe_mcp.models import RecipeCreate, RecipeQueryRequest
+from storecipe_mcp.models import (
+    RecipeCreate,
+    RecipeFacetBrowseRequest,
+    RecipeFacetSelectionsRequest,
+    RecipeQueryRequest,
+)
 
 TOKEN = "verified-raw-token"
 RECIPE_ID = UUID("95da0a55-128e-43c2-bd21-4ef1ec8198fa")
@@ -55,7 +61,43 @@ def _recipe_view_payload() -> dict[str, object]:
 
 
 def _query_page_payload() -> dict[str, object]:
-    return {"items": [{"recipe": _recipe_view_payload(), "match": None}], "nextCursor": None}
+    return {"items": [_recipe_view_payload()], "nextCursor": None}
+
+
+def _facet_page_payload() -> dict[str, object]:
+    return {
+        "ingredients": ["basil", "tomato"],
+        "ingredientNextCursor": "ing-next",
+        "tags": ["family", "weeknight"],
+        "tagNextCursor": None,
+        "totalMinutes": {"min": 15, "max": 90},
+        "rating": {"min": 1, "max": 5},
+        "ratingState": ["any", "rated", "unrated"],
+        "sort": [
+            "rating:asc",
+            "rating:desc",
+            "totalMinutes:asc",
+            "totalMinutes:desc",
+            "createdAt:asc",
+            "createdAt:desc",
+            "updatedAt:asc",
+            "updatedAt:desc",
+            "title:asc",
+            "title:desc",
+        ],
+    }
+
+
+def _facet_selections_payload() -> dict[str, object]:
+    return {
+        "ingredients": [
+            {"requestedName": "Straße", "normalizedName": "strasse", "observed": True},
+            {"requestedName": "tomato", "normalizedName": "tomato", "observed": True},
+        ],
+        "tags": [
+            {"requestedName": "Weeknight", "normalizedName": "weeknight", "observed": True},
+        ],
+    }
 
 
 @asynccontextmanager
@@ -147,10 +189,8 @@ async def test_query_recipes_serializes_exact_ordered_repeated_query_tuples() ->
     query = RecipeQueryRequest.model_validate(
         {
             "text": "tomato soup",
-            "requiredIngredient": ["tomato", "basil"],
-            "availableIngredient": ["water", "salt"],
-            "requiredTag": ["dinner", "quick"],
-            "preferredTag": ["family", "weeknight"],
+            "ingredient": ["tomato", "basil"],
+            "tag": ["dinner", "quick"],
             "maxTotalMinutes": 45,
             "minRating": 4,
             "ratingState": "rated",
@@ -163,21 +203,17 @@ async def test_query_recipes_serializes_exact_ordered_repeated_query_tuples() ->
     async with _catalog_client(handler) as client:
         result = await client.query_recipes(query, TOKEN)
 
-    assert result.items[0].recipe.id == RECIPE_ID
+    assert result.items[0].id == RECIPE_ID
     assert len(seen) == 1
     request = seen[0]
     assert request.method == "GET"
     assert request.url.path == "/v1/recipes"
     assert request.url.params.multi_items() == [
         ("text", "tomato soup"),
-        ("requiredIngredient", "basil"),
-        ("requiredIngredient", "tomato"),
-        ("availableIngredient", "salt"),
-        ("availableIngredient", "water"),
-        ("requiredTag", "dinner"),
-        ("requiredTag", "quick"),
-        ("preferredTag", "family"),
-        ("preferredTag", "weeknight"),
+        ("ingredient", "basil"),
+        ("ingredient", "tomato"),
+        ("tag", "dinner"),
+        ("tag", "quick"),
         ("maxTotalMinutes", "45"),
         ("minRating", "4"),
         ("ratingState", "rated"),
@@ -187,9 +223,98 @@ async def test_query_recipes_serializes_exact_ordered_repeated_query_tuples() ->
         ("cursor", "opaque-cursor"),
         ("limit", "7"),
     ]
+    param_names = {name for name, _ in request.url.params.multi_items()}
+    assert param_names.isdisjoint(
+        {"requiredIngredient", "availableIngredient", "requiredTag", "preferredTag"}
+    )
     assert request.headers["Authorization"] == f"Bearer {TOKEN}"
     assert "Idempotency-Key" not in request.headers
     assert "subject-secret" not in str(request.url)
+
+
+def test_recipe_facet_browse_cursors_allow_2048_characters() -> None:
+    RecipeFacetBrowseRequest.model_validate(
+        {"ingredientCursor": "x" * 2048, "tagCursor": "y" * 2048}
+    )
+    with pytest.raises(ValidationError):
+        RecipeFacetBrowseRequest.model_validate({"ingredientCursor": "x" * 2049})
+    with pytest.raises(ValidationError):
+        RecipeFacetBrowseRequest.model_validate({"tagCursor": "y" * 2049})
+
+
+@pytest.mark.asyncio
+async def test_list_recipe_query_options_serializes_browse_query_in_specified_order() -> None:
+    seen: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_facet_page_payload())
+
+    browse = RecipeFacetBrowseRequest.model_validate(
+        {
+            "ingredientLimit": 10,
+            "tagLimit": 20,
+            "ingredientCursor": "ing-cursor",
+            "tagCursor": "tag-cursor",
+            "ingredientQ": "tom",
+            "tagQ": "week",
+        }
+    )
+
+    async with _catalog_client(handler) as client:
+        result = await client.list_recipe_query_options(browse, TOKEN)
+
+    assert result.ingredients == ["basil", "tomato"]
+    assert len(seen) == 1
+    request = seen[0]
+    assert request.method == "GET"
+    assert request.url.path == "/v1/recipe-facets"
+    assert request.url.params.multi_items() == [
+        ("ingredientLimit", "10"),
+        ("tagLimit", "20"),
+        ("ingredientCursor", "ing-cursor"),
+        ("tagCursor", "tag-cursor"),
+        ("ingredientQ", "tom"),
+        ("tagQ", "week"),
+    ]
+    assert "requiredIngredient" not in {name for name, _ in request.url.params.multi_items()}
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert "Idempotency-Key" not in request.headers
+    assert "Content-Type" not in request.headers
+
+
+@pytest.mark.asyncio
+async def test_resolve_recipe_query_selections_sends_json_body() -> None:
+    seen: list[httpx.Request] = []
+    payload = RecipeFacetSelectionsRequest.model_validate(
+        {
+            "ingredients": ["Straße", "tomato", "tomato"],
+            "tags": ["Weeknight"],
+        }
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=_facet_selections_payload())
+
+    async with _catalog_client(handler) as client:
+        result = await client.resolve_recipe_query_selections(payload, TOKEN)
+
+    assert result.ingredients[0].requested_name == "Straße"
+    assert result.ingredients[0].normalized_name == "strasse"
+    assert result.ingredients[0].observed is True
+    assert len(seen) == 1
+    request = seen[0]
+    assert request.method == "POST"
+    assert request.url.path == "/v1/recipe-facet-selections"
+    assert request.url.query == b""
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert request.headers["Content-Type"] == "application/json"
+    assert "Idempotency-Key" not in request.headers
+    assert json.loads(request.content) == {
+        "ingredients": ["Straße", "tomato"],
+        "tags": ["Weeknight"],
+    }
 
 
 @pytest.mark.asyncio
@@ -328,6 +453,11 @@ async def test_not_found_maps_to_safe_recipe_category() -> None:
     [
         ("create", "idempotency_conflict", {"errorCategory": "idempotency_conflict"}),
         ("query", "stale_recipe_query_cursor", {"errorCategory": "stale_recipe_query_cursor"}),
+        (
+            "list_recipe_query_options",
+            "stale_recipe_facet_cursor",
+            {"errorCategory": "stale_recipe_facet_cursor"},
+        ),
     ],
 )
 async def test_allowlisted_conflicts_are_preserved_without_body_fields(
@@ -348,8 +478,10 @@ async def test_allowlisted_conflicts_are_preserved_without_body_fields(
         with pytest.raises(CatalogClientError) as captured:
             if method == "create":
                 await client.create_recipe(_recipe_create(), "idem-secret-key", TOKEN)
-            else:
+            elif method == "query":
                 await client.query_recipes(RecipeQueryRequest(), TOKEN)
+            else:
+                await client.list_recipe_query_options(RecipeFacetBrowseRequest(), TOKEN)
 
     error = captured.value
     assert error.category == expected_category

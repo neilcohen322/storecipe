@@ -33,21 +33,8 @@ export type RecipeCreate = {
   tags?: string[];
 };
 
-export type RecipeMatch = {
-  ingredientCoverage: number | null;
-  missingIngredients: string[];
-  tagCoverage: number | null;
-  matchedPreferredTags: string[];
-  missingPreferredTags: string[];
-};
-
-export type RecipeQueryItem = {
-  recipe: Recipe;
-  match: RecipeMatch | null;
-};
-
 export type RecipeQueryPage = {
-  items: RecipeQueryItem[];
+  items: Recipe[];
   nextCursor: string | null;
 };
 
@@ -56,10 +43,6 @@ export type Rating = {
 };
 
 export type RecipeSort =
-  | "ingredientCoverage:asc"
-  | "ingredientCoverage:desc"
-  | "tagCoverage:asc"
-  | "tagCoverage:desc"
   | "rating:asc"
   | "rating:desc"
   | "totalMinutes:asc"
@@ -73,10 +56,8 @@ export type RecipeSort =
 
 export type ListRecipesParams = {
   text?: string | null;
-  requiredIngredient?: string[];
-  availableIngredient?: string[];
-  requiredTag?: string[];
-  preferredTag?: string[];
+  ingredient?: string[];
+  tag?: string[];
   maxTotalMinutes?: number | null;
   minRating?: number | null;
   ratingState?: "any" | "rated" | "unrated";
@@ -86,6 +67,51 @@ export type ListRecipesParams = {
 };
 
 export type ListRecipesOptions = {
+  signal?: AbortSignal;
+};
+
+export type RecipeFacetBounds = {
+  min: number;
+  max: number;
+};
+
+export type RecipeFacetPage = {
+  ingredients: string[];
+  ingredientNextCursor: string | null;
+  tags: string[];
+  tagNextCursor: string | null;
+  totalMinutes: RecipeFacetBounds | null;
+  rating: RecipeFacetBounds;
+  ratingState: ("any" | "rated" | "unrated")[];
+  sort: RecipeSort[];
+};
+
+export type RecipeFacetBrowseParams = {
+  ingredientLimit?: number;
+  tagLimit?: number;
+  ingredientCursor?: string | null;
+  tagCursor?: string | null;
+  ingredientQ?: string | null;
+  tagQ?: string | null;
+};
+
+export type RecipeFacetSelection = {
+  requestedName: string;
+  normalizedName: string;
+  observed: boolean;
+};
+
+export type RecipeFacetSelectionsRequest = {
+  ingredients?: string[];
+  tags?: string[];
+};
+
+export type RecipeFacetSelectionsResponse = {
+  ingredients: RecipeFacetSelection[];
+  tags: RecipeFacetSelection[];
+};
+
+export type RecipeFacetOptions = {
   signal?: AbortSignal;
 };
 
@@ -118,6 +144,27 @@ export function buildRecipeQueryPath(params?: ListRecipesParams): string {
   return query ? `/v1/recipes?${query}` : "/v1/recipes";
 }
 
+export function buildRecipeFacetPath(params?: RecipeFacetBrowseParams): string {
+  if (!params) {
+    return "/v1/recipe-facets";
+  }
+
+  const search = new URLSearchParams();
+  for (const key of ["ingredientLimit", "tagLimit", "ingredientCursor", "tagCursor", "ingredientQ", "tagQ"] as const) {
+    const value = params[key];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (typeof value === "string" && value === "") {
+      continue;
+    }
+    search.append(key, String(value));
+  }
+
+  const query = search.toString();
+  return query ? `/v1/recipe-facets?${query}` : "/v1/recipe-facets";
+}
+
 export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
   const listRecipes = async (params?: ListRecipesParams, options: ListRecipesOptions = {}): Promise<RecipeQueryPage> => {
     const page = await client.getJson<unknown>(buildRecipeQueryPath(params), options);
@@ -125,7 +172,7 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
       throw new Error("Invalid recipe library response");
     }
     return {
-      items: (page as { items: RecipeQueryItem[] }).items,
+      items: (page as { items: Recipe[] }).items,
       nextCursor: typeof (page as { nextCursor?: unknown }).nextCursor === "string" ? (page as { nextCursor: string }).nextCursor : null,
     };
   };
@@ -160,5 +207,29 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
     return (await response.json()) as Rating;
   };
 
-  return { listRecipes, getRecipe, createRecipe, putRating };
+  const listRecipeFacets = async (
+    params?: RecipeFacetBrowseParams,
+    options: RecipeFacetOptions = {},
+  ): Promise<RecipeFacetPage> => {
+    const page = await client.getJson<unknown>(buildRecipeFacetPath(params), options);
+    if (!page || typeof page !== "object") {
+      throw new Error("Invalid recipe facet response");
+    }
+    return page as RecipeFacetPage;
+  };
+
+  const resolveRecipeFacetSelections = async (
+    body: RecipeFacetSelectionsRequest,
+    options: RecipeFacetOptions = {},
+  ): Promise<RecipeFacetSelectionsResponse> => {
+    const response = await client.request("/v1/recipe-facet-selections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: options.signal,
+    });
+    return (await response.json()) as RecipeFacetSelectionsResponse;
+  };
+
+  return { listRecipes, getRecipe, createRecipe, putRating, listRecipeFacets, resolveRecipeFacetSelections };
 }

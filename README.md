@@ -183,8 +183,8 @@ reported to MCP as a safe retryable `catalog_rate_limited` result.
 ## Deterministic recipe queries
 
 `GET /v1/recipes` is the authenticated collection-read endpoint. Repeat
-`requiredIngredient`, `preferredTag`, and the other ingredient/tag context parameters
-to provide sets; repeat `sort` to provide an ordered precedence list such as
+`ingredient` and `tag` to require every listed value (AND); at most 32
+ingredients and 16 tags. Repeat `sort` to provide an ordered precedence list such as
 `sort=rating:desc&sort=totalMinutes:asc`. Catalog applies those explicit filters and
 sorts, places missing values last, and appends `recipeId ASC` as a deterministic final
 tie-breaker.

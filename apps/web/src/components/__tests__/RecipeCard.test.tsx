@@ -1,7 +1,7 @@
 import { fireEvent, render } from "@testing-library/react-native";
 import { Platform, StyleSheet } from "react-native";
 
-import type { RecipeQueryItem } from "../../api/catalog";
+import type { Recipe } from "../../api/catalog";
 import { RecipeCard } from "../RecipeCard";
 
 jest.mock("../../theme/ThemeProvider", () => ({
@@ -20,21 +20,18 @@ jest.mock("../../theme/ThemeProvider", () => ({
   }),
 }));
 
-const recipe: RecipeQueryItem = {
-  recipe: {
-    id: "recipe-1",
-    title: "Lemon pasta",
-    sourceUrl: null,
-    servings: 4,
-    prepMinutes: 10,
-    cookMinutes: 15,
-    totalMinutes: 25,
-    ingredients: [],
-    instructions: [],
-    tags: ["weeknight", "pasta"],
-    rating: 4,
-  },
-  match: null,
+const recipe: Recipe = {
+  id: "recipe-1",
+  title: "Lemon pasta",
+  sourceUrl: null,
+  servings: 4,
+  prepMinutes: 10,
+  cookMinutes: 15,
+  totalMinutes: 25,
+  ingredients: [],
+  instructions: [],
+  tags: ["weeknight", "pasta"],
+  rating: 4,
 };
 
 test("opens a recipe from an accessible stable card with deterministic theme media", async () => {

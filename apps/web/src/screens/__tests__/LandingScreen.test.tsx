@@ -2,18 +2,20 @@ import { fireEvent, render } from "@testing-library/react-native";
 
 import IndexRoute from "../../../app/index";
 import { authPresentation as productionAuthPresentation } from "../../app/ProductionAuthProvider";
+import { returnPathStorage } from "../../auth/returnPathStorage";
 import { LandingScreen } from "../LandingScreen";
 import { authPresentation as fixtureAuthPresentation } from "../../testing/E2EAuthProvider";
 import { ThemeProvider } from "../../theme/ThemeProvider";
 
 const mockRootRedirect = jest.fn();
+const mockReplace = jest.fn();
 
 jest.mock("expo-router", () => ({
   Redirect: ({ href }: { href: string }) => {
     mockRootRedirect(href);
     return null;
   },
-  useRouter: () => ({ replace: jest.fn() }),
+  useRouter: () => ({ replace: mockReplace }),
 }));
 
 jest.mock("../../auth/AuthProvider", () => ({
@@ -25,6 +27,12 @@ const { useAuth } = jest.requireMock("../../auth/AuthProvider") as { useAuth: je
 function renderWithTheme(ui: React.ReactElement) {
   return render(<ThemeProvider systemSchemeOverride="light">{ui}</ThemeProvider>);
 }
+
+beforeEach(() => {
+  mockRootRedirect.mockReset();
+  mockReplace.mockReset();
+  returnPathStorage.clear();
+});
 
 test("presents neutral Auth0 sign-in alongside the local recipe preview", async () => {
   const onLogin = jest.fn();
@@ -82,8 +90,9 @@ test("keeps a cancelled login on the landing view", async () => {
   expect(screen.queryByText("Login cancelled")).toBeNull();
 });
 
-test("redirects an authenticated root visit to recipes", async () => {
+test("redirects an authenticated root visit to recipes when a return path is saved", async () => {
   mockRootRedirect.mockReset();
+  returnPathStorage.save("/recipes");
   useAuth.mockReturnValue({
     isLoading: false,
     isAuthenticated: true,
@@ -94,4 +103,38 @@ test("redirects an authenticated root visit to recipes", async () => {
   await renderWithTheme(<IndexRoute />);
 
   expect(mockRootRedirect).toHaveBeenCalledWith("/recipes");
+});
+
+test("does not bounce an authenticated root visit back to recipes when no return path is saved", async () => {
+  mockRootRedirect.mockReset();
+  returnPathStorage.clear();
+  useAuth.mockReturnValue({
+    isLoading: false,
+    isAuthenticated: true,
+    errorMessage: null,
+    login: jest.fn(),
+  });
+
+  const screen = await renderWithTheme(<IndexRoute />);
+
+  expect(mockRootRedirect).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Continue to recipes" })).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: "Continue to recipes" }));
+  expect(mockReplace).toHaveBeenCalledWith("/recipes");
+});
+
+test("saves recipes as the return path before starting sign-in from the root landing", async () => {
+  const login = jest.fn().mockResolvedValue(undefined);
+  useAuth.mockReturnValue({
+    isLoading: false,
+    isAuthenticated: false,
+    errorMessage: null,
+    login,
+  });
+
+  const screen = await renderWithTheme(<IndexRoute />);
+  await fireEvent.press(screen.getByRole("button", { name: "Sign in" }));
+
+  expect(returnPathStorage.peek()).toBe("/recipes");
+  expect(login).toHaveBeenCalledTimes(1);
 });

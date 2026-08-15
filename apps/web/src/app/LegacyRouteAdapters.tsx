@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useWindowDimensions } from "react-native";
 import { authPresentation } from "@storecipe/auth-provider";
@@ -26,9 +26,9 @@ function useLegacyApis() {
 
 function useUnauthorizedHandler() {
   const router = useRouter();
-  return () => {
+  return useCallback(() => {
     router.replace("/");
-  };
+  }, [router]);
 }
 
 export function LandingRouteAdapter() {
@@ -52,6 +52,7 @@ export function RecipesRouteAdapter() {
   const auth = useAuth();
   const router = useRouter();
   const onUnauthorized = useUnauthorizedHandler();
+  const { width } = useWindowDimensions();
   return (
     <AuthGate>
       <RecipeListScreen
@@ -63,6 +64,7 @@ export function RecipesRouteAdapter() {
         onImport={() => router.push("/imports")}
         onLogout={() => void auth.logout().then(() => router.replace("/"))}
         onUnauthorized={onUnauthorized}
+        layoutMode={getLayoutMode(width)}
       />
     </AuthGate>
   );

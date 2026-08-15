@@ -135,10 +135,9 @@ async def test_recipe_query_returns_structured_page_with_repeated_parameters(
     filtered = await api_client.get(
         "/v1/recipes",
         params=[
-            ("availableIngredient", "chickpeas"),
-            ("availableIngredient", "onion"),
-            ("requiredTag", "dinner"),
-            ("sort", "ingredientCoverage:desc"),
+            ("ingredient", "chickpeas"),
+            ("ingredient", "onion"),
+            ("tag", "dinner"),
             ("sort", "rating:desc"),
             ("sort", "totalMinutes:asc"),
             ("limit", "10"),
@@ -147,12 +146,13 @@ async def test_recipe_query_returns_structured_page_with_repeated_parameters(
 
     assert filtered.status_code == 200
     body = filtered.json()
-    assert [item["recipe"]["id"] for item in body["items"]] == [recipe_id]
-    assert body["items"][0]["match"]["ingredientCoverage"] == 1.0
+    assert [item["id"] for item in body["items"]] == [recipe_id]
+    assert "match" not in body["items"][0]
+    assert "recipe" not in body["items"][0]
 
 
 @pytest.mark.asyncio
-async def test_recipe_query_accepts_repeated_required_ingredients_and_preferred_tags(
+async def test_recipe_query_accepts_repeated_ingredients_and_tags(
     api_client: AsyncClient,
 ) -> None:
     response = await api_client.post(
@@ -166,18 +166,17 @@ async def test_recipe_query_accepts_repeated_required_ingredients_and_preferred_
     filtered = await api_client.get(
         "/v1/recipes",
         params=[
-            ("requiredIngredient", "CHICKPEAS"),
-            ("requiredIngredient", " onion "),
-            ("preferredTag", "DINNER"),
-            ("preferredTag", "SPICY"),
+            ("ingredient", "CHICKPEAS"),
+            ("ingredient", " onion "),
+            ("tag", "DINNER"),
+            ("tag", "SPICY"),
         ],
     )
 
     assert filtered.status_code == 200
     body = filtered.json()
-    assert [item["recipe"]["id"] for item in body["items"]] == [recipe_id]
-    assert body["items"][0]["match"]["matchedPreferredTags"] == ["dinner", "spicy"]
-    assert body["items"][0]["match"]["missingPreferredTags"] == []
+    assert [item["id"] for item in body["items"]] == [recipe_id]
+    assert "match" not in body["items"][0]
 
 
 @pytest.mark.asyncio
@@ -189,16 +188,39 @@ async def test_recipe_query_accepts_empty_query(api_client: AsyncClient) -> None
 
 
 @pytest.mark.asyncio
-async def test_recipe_query_returns_null_match_without_context(api_client: AsyncClient) -> None:
-    created = await api_client.post(
-        "/v1/recipes", headers={"Idempotency-Key": "query-empty-match-key"}, json=recipe_payload()
+async def test_recipe_query_rejects_removed_filter_keys_as_problem_details(
+    api_client: AsyncClient,
+) -> None:
+    removed_keys = [
+        [("requiredIngredient", "chickpeas")],
+        [("availableIngredient", "onion")],
+        [("requiredTag", "dinner")],
+        [("preferredTag", "spicy")],
+    ]
+
+    for params in removed_keys:
+        response = await api_client.get("/v1/recipes", params=params)
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+
+
+@pytest.mark.asyncio
+async def test_recipe_query_rejects_duplicate_overflow_as_problem_details(
+    api_client: AsyncClient,
+) -> None:
+    too_many_ingredients = await api_client.get(
+        "/v1/recipes",
+        params=[("ingredient", "egg")] * 33,
     )
-    assert created.status_code == 201
+    too_many_tags = await api_client.get(
+        "/v1/recipes",
+        params=[("tag", "quick")] * 17,
+    )
 
-    response = await api_client.get("/v1/recipes")
-
-    assert response.status_code == 200
-    assert response.json()["items"][0]["match"] is None
+    assert too_many_ingredients.status_code == 422
+    assert too_many_tags.status_code == 422
+    assert too_many_ingredients.headers["content-type"] == "application/problem+json"
+    assert too_many_tags.headers["content-type"] == "application/problem+json"
 
 
 @pytest.mark.asyncio
@@ -208,6 +230,7 @@ async def test_recipe_query_rejects_invalid_parameters_as_problem_details(
     invalid_queries = [
         [("sort", "rating:desc"), ("sort", "rating:asc")],
         [("sort", "ingredientCoverage:desc")],
+        [("sort", "tagCoverage:asc")],
         [("minRating", "4"), ("ratingState", "unrated")],
         [("sort", "recipeId:asc")],
         [("unexpected", "value")],
@@ -318,10 +341,10 @@ async def test_recipe_crud_round_trip(api_client: AsyncClient) -> None:
 
     list_response = await api_client.get(
         "/v1/recipes",
-        params=[("text", "curry"), ("requiredTag", "DINNER")],
+        params=[("text", "curry"), ("tag", "DINNER")],
     )
     assert list_response.status_code == 200
-    assert [item["recipe"]["id"] for item in list_response.json()["items"]] == [recipe_id]
+    assert [item["id"] for item in list_response.json()["items"]] == [recipe_id]
 
     update_response = await api_client.patch(
         f"/v1/recipes/{recipe_id}",

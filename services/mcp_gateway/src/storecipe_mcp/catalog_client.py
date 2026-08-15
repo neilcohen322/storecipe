@@ -13,6 +13,10 @@ from storecipe_mcp.models import (
     RatingView,
     RecipeCreate,
     RecipeCreateIdempotencyKey,
+    RecipeFacetBrowseRequest,
+    RecipeFacetPage,
+    RecipeFacetSelectionsRequest,
+    RecipeFacetSelectionsResponse,
     RecipeQueryPage,
     RecipeQueryRequest,
     RecipeView,
@@ -28,7 +32,9 @@ DEFAULT_READINESS_TIMEOUT_SECONDS = 5.0
 _READ_SCOPE = "recipes:read"
 _WRITE_SCOPE = "recipes:write"
 _RATING_SCOPE = "ratings:write"
-_ALLOWLISTED_CONFLICT_CATEGORIES = frozenset({"idempotency_conflict", "stale_recipe_query_cursor"})
+_ALLOWLISTED_CONFLICT_CATEGORIES = frozenset(
+    {"idempotency_conflict", "stale_recipe_query_cursor", "stale_recipe_facet_cursor"}
+)
 _IDEMPOTENCY_KEY_ADAPTER = TypeAdapter(RecipeCreateIdempotencyKey)
 
 QueryValue = str | int | float | bool | None
@@ -75,6 +81,36 @@ class CatalogClient:
             invalid_category="invalid_query",
         )
         return _decode_model(response, RecipeQueryPage)
+
+    async def list_recipe_query_options(
+        self, request: RecipeFacetBrowseRequest, token: str
+    ) -> RecipeFacetPage:
+        token = _require_bearer_token(token)
+        response = await self._request(
+            "GET",
+            "/v1/recipe-facets",
+            token=token,
+            required_scope=_READ_SCOPE,
+            params=_query_params(request),
+            success_statuses=frozenset({200}),
+            invalid_category="invalid_query",
+        )
+        return _decode_model(response, RecipeFacetPage)
+
+    async def resolve_recipe_query_selections(
+        self, request: RecipeFacetSelectionsRequest, token: str
+    ) -> RecipeFacetSelectionsResponse:
+        token = _require_bearer_token(token)
+        response = await self._request(
+            "POST",
+            "/v1/recipe-facet-selections",
+            token=token,
+            required_scope=_READ_SCOPE,
+            json_body=request.model_dump(mode="json", by_alias=True),
+            success_statuses=frozenset({200}),
+            invalid_category="invalid_input",
+        )
+        return _decode_model(response, RecipeFacetSelectionsResponse)
 
     async def get_recipe(self, recipe_id: UUID, token: str) -> RecipeView:
         token = _require_bearer_token(token)
@@ -242,7 +278,7 @@ def _validate_idempotency_key(value: str) -> str:
         raise CatalogClientError("invalid_input", retryable=False) from None
 
 
-def _query_params(query: RecipeQueryRequest) -> QueryParams:
+def _query_params(query: BaseModel) -> QueryParams:
     """Serialize the model fields in OpenAPI order, retaining repeated values."""
 
     values = query.model_dump(mode="json", by_alias=True, exclude_none=True)

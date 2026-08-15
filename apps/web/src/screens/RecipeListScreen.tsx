@@ -1,18 +1,43 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type RefObject } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, TextInput, View } from "react-native";
 
 import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
-import type { createCatalogApi, ListRecipesParams, RecipeQueryItem, RecipeSort } from "../api/catalog";
+import type { createCatalogApi, ListRecipesParams, Recipe, RecipeSort } from "../api/catalog";
+import type { FacetPickerSelection } from "../components/FacetPicker";
+import { DurationFilter } from "../components/DurationFilter";
+import { FacetPicker } from "../components/FacetPicker";
+import { FilterDialog, type FilterDraft } from "../components/FilterDialog";
+import { RatingFilter } from "../components/RatingFilter";
 import { RecipeCard } from "../components/RecipeCard";
-import { Button, EmptyState, ErrorState, Field, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Section, Skeleton } from "../components";
+import { SortMenu } from "../components/SortMenu";
+import { Button, EmptyState, ErrorState, Field, InlineNotice, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Skeleton } from "../components";
+import type { LayoutMode } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
+import {
+  DEFAULT_SORT,
+  MAX_INGREDIENT_FILTERS,
+  MAX_TAG_FILTERS,
+  normalizeRecipeListParams,
+  serializeRecipeListParams,
+  type RouteQuery,
+} from "./recipeListParams";
+import { useRecipeFacetOptions, type LaneId } from "./useRecipeFacetOptions";
+import { useResolvedRecipeSelections } from "./useResolvedRecipeSelections";
 
-type RouteValue = string | string[] | undefined;
-type RouteQuery = Record<string, RouteValue>;
+export {
+  applyCanonicalSelections,
+  DEFAULT_SORT,
+  normalizeRecipeListParams,
+  routeStrings,
+  sameStringList,
+  serializeRecipeListParams,
+} from "./recipeListParams";
+
 type LibraryError = "none" | "offline" | "generic";
-const SORTS: RecipeSort[] = ["ingredientCoverage:asc", "ingredientCoverage:desc", "tagCoverage:asc", "tagCoverage:desc", "rating:asc", "rating:desc", "totalMinutes:asc", "totalMinutes:desc", "createdAt:asc", "createdAt:desc", "updatedAt:asc", "updatedAt:desc", "title:asc", "title:desc"];
-const DEFAULT_SORT: RecipeSort[] = ["updatedAt:desc"];
+type TriggerRef = ComponentRef<typeof Button>;
+type FocusableRef = RefObject<{ focus: () => void } | null>;
+
 const SORT_CHOICES: { value: RecipeSort; label: string }[] = [
   { value: "updatedAt:desc", label: "Recently updated" },
   { value: "createdAt:desc", label: "Newest" },
@@ -24,17 +49,6 @@ const SORT_CHOICES: { value: RecipeSort; label: string }[] = [
   { value: "totalMinutes:desc", label: "Longest time" },
 ];
 
-function sortChoices(params: ListRecipesParams): { value: RecipeSort; label: string }[] {
-  return [
-    ...SORT_CHOICES,
-    ...(params.availableIngredient?.length ? [{ value: "ingredientCoverage:desc" as const, label: "Best ingredient match" }] : []),
-    ...(params.preferredTag?.length ? [{ value: "tagCoverage:desc" as const, label: "Best tag match" }] : []),
-  ];
-}
-
-function strings(value: RouteValue): string[] { return (Array.isArray(value) ? value : value ? [value] : []).flatMap((entry) => entry.split(",")).map((entry) => entry.trim().replace(/\s+/g, " ")).filter(Boolean); }
-function normalizedSet(value: RouteValue): string[] { return [...new Set(strings(value).map((entry) => entry.toLocaleLowerCase()))].sort((a, b) => a.localeCompare(b)); }
-function numberValue(value: RouteValue, minimum: number, maximum = Number.MAX_SAFE_INTEGER): number | null { const raw = Array.isArray(value) ? value[0] : value; const parsed = raw === undefined ? Number.NaN : Number(raw); return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : null; }
 function isAbortError(error: unknown): boolean { return error instanceof Error && error.name === "AbortError"; }
 export function isOfflineError(error: unknown): boolean {
   if (error instanceof ApiNetworkError) return true;
@@ -58,40 +72,144 @@ export function createPaginationRequestGuard() {
   };
 }
 
-export function normalizeRecipeListParams(route: RouteQuery): ListRecipesParams {
-  const text = strings(route.text).join(" ").toLocaleLowerCase() || null;
-  const requiredIngredient = normalizedSet(route.requiredIngredient); const availableIngredient = normalizedSet(route.availableIngredient);
-  const requiredTag = normalizedSet(route.requiredTag); const preferredTag = normalizedSet(route.preferredTag);
-  const seenSortFields = new Set<string>();
-  const sort = strings(route.sort).filter((entry): entry is RecipeSort => (SORTS as string[]).includes(entry)).filter((entry) => { const field = entry.split(":")[0]; if (seenSortFields.has(field)) return false; seenSortFields.add(field); return true; }).filter((entry) => entry.split(":")[0] !== "ingredientCoverage" || availableIngredient.length > 0).filter((entry) => entry.split(":")[0] !== "tagCoverage" || preferredTag.length > 0);
-  const ratingState = route.ratingState === "rated" || route.ratingState === "unrated" ? route.ratingState : "any";
-  const maxTotalMinutes = numberValue(route.maxTotalMinutes, 0); const minRating = ratingState === "unrated" ? null : numberValue(route.minRating, 1, 5);
-  return { ...(text ? { text } : {}), ...(requiredIngredient.length ? { requiredIngredient } : {}), ...(availableIngredient.length ? { availableIngredient } : {}), ...(requiredTag.length ? { requiredTag } : {}), ...(preferredTag.length ? { preferredTag } : {}), ...(maxTotalMinutes !== null ? { maxTotalMinutes } : {}), ...(minRating !== null ? { minRating } : {}), ...(ratingState !== "any" ? { ratingState } : {}), sort: sort.length ? sort : DEFAULT_SORT, limit: 20 };
+function emptyDraft(): FilterDraft {
+  return {};
 }
 
-export function serializeRecipeListParams(params: ListRecipesParams): Record<string, string | string[]> {
-  const { limit: _limit, cursor: _cursor, ...query } = params; const serialized: Record<string, string | string[]> = {};
-  for (const key of ["text", "requiredIngredient", "availableIngredient", "requiredTag", "preferredTag", "maxTotalMinutes", "minRating", "ratingState", "sort"] as const) {
-    const value = query[key]; if (value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0) || (key === "ratingState" && value === "any") || (key === "sort" && Array.isArray(value) && value.join("|") === DEFAULT_SORT.join("|"))) continue;
-    serialized[key] = Array.isArray(value) ? value : String(value);
-  }
-  return serialized;
+function draftFromParams(params: ListRecipesParams): FilterDraft {
+  return {
+    ingredient: params.ingredient,
+    tag: params.tag,
+    maxTotalMinutes: params.maxTotalMinutes,
+    minRating: params.minRating,
+    ratingState: params.ratingState ?? "any",
+  };
 }
 
-export type RecipeListScreenProps = { catalog: ReturnType<typeof createCatalogApi>; onOpenDetail(recipeId: string): void; onCreate(): void; onImport(): void; onLogout(): void; onUnauthorized(): void; };
+export function activeFilterCount(source: FilterDraft): number {
+  return (source.ingredient?.length ?? 0)
+    + (source.tag?.length ?? 0)
+    + (source.maxTotalMinutes != null ? 1 : 0)
+    + (source.minRating != null ? 1 : 0)
+    + (source.ratingState && source.ratingState !== "any" ? 1 : 0);
+}
 
-export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, onLogout, onUnauthorized }: RecipeListScreenProps) {
-  const router = useRouter(); const route = useLocalSearchParams() as RouteQuery; const routeKey = JSON.stringify(route);
-  const params = useMemo(() => normalizeRecipeListParams(route), [routeKey]); const queryKey = JSON.stringify(serializeRecipeListParams(params));
-  const routeSearchText = params.text ?? ""; const [items, setItems] = useState<RecipeQueryItem[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<LibraryError>("none"); const [view, setView] = useState<"card" | "list">("card"); const [searchDraft, setSearchDraft] = useState(routeSearchText);
-  const mounted = useRef(true); const requestId = useRef(0); const debounce = useRef<ReturnType<typeof setTimeout> | null>(null); const draftGeneration = useRef(0); const controller = useRef<AbortController | null>(null); const paginationGuard = useRef(createPaginationRequestGuard());
+function decorateDraftChips(values: string[] | undefined, committed: FacetPickerSelection[]): FacetPickerSelection[] {
+  if (!values?.length) return [];
+  const byName = new Map(committed.map((item) => [item.name, item]));
+  return values.map((name) => byName.get(name) ?? { name });
+}
+
+function sameSerialized(left: ListRecipesParams, right: ListRecipesParams): boolean {
+  return JSON.stringify(serializeRecipeListParams(left)) === JSON.stringify(serializeRecipeListParams(right));
+}
+
+export type RecipeListScreenProps = {
+  catalog: ReturnType<typeof createCatalogApi>;
+  onOpenDetail(recipeId: string): void;
+  onCreate(): void;
+  onImport(): void;
+  onLogout(): void;
+  onUnauthorized(): void;
+  layoutMode?: LayoutMode;
+};
+
+export function RecipeListScreen({
+  catalog,
+  onOpenDetail,
+  onCreate,
+  onImport,
+  onLogout,
+  onUnauthorized,
+  layoutMode = "medium",
+}: RecipeListScreenProps) {
+  const router = useRouter();
+  const route = useLocalSearchParams() as RouteQuery;
+  const routeKey = JSON.stringify(route);
+  const params = useMemo(() => normalizeRecipeListParams(route), [routeKey]);
+  const queryKey = JSON.stringify(serializeRecipeListParams(params));
+  const routeSearchText = params.text ?? "";
+  const [items, setItems] = useState<Recipe[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<LibraryError>("none");
+  const [view, setView] = useState<"card" | "list">("card");
+  const [searchDraft, setSearchDraft] = useState(routeSearchText);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [draft, setDraft] = useState<FilterDraft>(emptyDraft);
+  const mounted = useRef(true);
+  const requestId = useRef(0);
+  const controller = useRef<AbortController | null>(null);
+  const paginationGuard = useRef(createPaginationRequestGuard());
   const previousRouteSearchText = useRef(routeSearchText);
+  const filtersTriggerRef = useRef<TriggerRef | null>(null);
+  const sortTriggerRef = useRef<TriggerRef | null>(null);
   const { theme } = useTheme();
   const currentSort = params.sort?.[0] ?? DEFAULT_SORT[0];
-  const choices = sortChoices(params);
-  if (previousRouteSearchText.current !== routeSearchText) { previousRouteSearchText.current = routeSearchText; draftGeneration.current += 1; setSearchDraft(routeSearchText); }
+  if (previousRouteSearchText.current !== routeSearchText) {
+    previousRouteSearchText.current = routeSearchText;
+    setSearchDraft(routeSearchText);
+  }
   void onCreate; void onImport; void onLogout;
-  const navigate = useCallback((next: ListRecipesParams) => router.push({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
+  const onUnauthorizedRef = useRef(onUnauthorized);
+  onUnauthorizedRef.current = onUnauthorized;
+  const pushFilters = useCallback((next: ListRecipesParams) => router.push({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
+  const replaceFilters = useCallback((next: ListRecipesParams) => router.replace({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
+  const options = useRecipeFacetOptions({ catalog, onUnauthorized });
+  const selections = useResolvedRecipeSelections({ catalog, params, replaceFilters, onUnauthorized });
+  const facetError = options.facetError !== "none" || selections.facetError !== "none";
+  const committedCount = activeFilterCount(draftFromParams(params));
+  const previousFiltersOpen = useRef(false);
+
+  useEffect(() => {
+    if (filtersOpen && !previousFiltersOpen.current) options.browse();
+    previousFiltersOpen.current = filtersOpen;
+  }, [filtersOpen, options.browse]);
+
+  const retryFacets = () => {
+    options.retryFacets();
+    selections.retrySelections();
+  };
+
+  const addDraftValue = (key: LaneId, name: string) => {
+    const current = draft[key] ?? [];
+    const limit = key === "ingredient" ? MAX_INGREDIENT_FILTERS : MAX_TAG_FILTERS;
+    if (current.length >= limit || current.includes(name)) return;
+    setDraft({ ...draft, [key]: [...current, name] });
+  };
+  const removeDraftValue = (key: LaneId, name: string) => {
+    setDraft({ ...draft, [key]: (draft[key] ?? []).filter((entry) => entry !== name) });
+  };
+
+  const submitSearch = () => {
+    const next = normalizeRecipeListParams({
+      ...serializeRecipeListParams(params),
+      text: searchDraft,
+    });
+    if (sameSerialized(next, params)) return;
+    pushFilters(next);
+  };
+
+  const applyFilters = () => {
+    const next = normalizeRecipeListParams({
+      ...serializeRecipeListParams(params),
+      ingredient: draft.ingredient,
+      tag: draft.tag,
+      maxTotalMinutes: draft.maxTotalMinutes == null ? undefined : String(draft.maxTotalMinutes),
+      minRating: draft.minRating == null ? undefined : String(draft.minRating),
+      ratingState: draft.ratingState,
+    });
+    pushFilters(next);
+    setFiltersOpen(false);
+  };
+
+  const openFilters = () => {
+    setDraft(draftFromParams(params));
+    setFiltersOpen(true);
+  };
+
   const request = useCallback(async (cursor: string | null = null) => {
     const pagination = cursor !== null;
     if (pagination && paginationGuard.current.isActive()) return;
@@ -102,65 +220,48 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
     try {
       const page = await catalog.listRecipes({ ...params, ...(cursor ? { cursor } : {}) }, { signal: nextController.signal });
       if (!mounted.current || id !== requestId.current) return;
-      setItems((current) => pagination ? [...new Map([...current, ...page.items].map((item) => [item.recipe.id, item])).values()] : page.items);
+      setItems((current) => pagination ? [...new Map([...current, ...page.items].map((item) => [item.id, item])).values()] : page.items);
       setNextCursor(page.nextCursor);
     } catch (caught) {
       if (!mounted.current || id !== requestId.current || isAbortError(caught)) return;
-      if (caught instanceof ApiUnauthorizedError) onUnauthorized(); else setError(isOfflineError(caught) ? "offline" : "generic");
+      if (caught instanceof ApiUnauthorizedError) onUnauthorizedRef.current(); else setError(isOfflineError(caught) ? "offline" : "generic");
     } finally {
       if (pagination) paginationGuard.current.finish(id);
       if (mounted.current && id === requestId.current) { setLoading(false); setLoadingMore(false); }
     }
-  }, [catalog, onUnauthorized, params]);
+  }, [catalog, params]);
   useEffect(() => { mounted.current = true; void request(); return () => { mounted.current = false; controller.current?.abort(); requestId.current += 1; paginationGuard.current.reset(); }; }, [queryKey, request]);
-  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
-  const scheduleSearch = (text: string) => { setSearchDraft(text); if (debounce.current) clearTimeout(debounce.current); const generation = ++draftGeneration.current; debounce.current = setTimeout(() => { if (draftGeneration.current === generation) navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), text })); }, 300); };
-  const update = (key: keyof ListRecipesParams, value: string) => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), [key]: value }));
+
   const errorContent = error === "offline"
     ? <><OfflineBanner message="You’re offline. Check your connection and try again." /><Button label="Try again" onPress={() => void request()} /></>
     : <ErrorState title="We couldn't load your recipes. Please try again." description="Your library is still here. Retry when you're ready." action={<Button label="Try again" onPress={() => void request()} />} />;
   const placeholder = theme.colors.mutedText;
+  const filtersLabel = committedCount ? `Filters (${committedCount})` : "Filters";
+
   return (
-    <Screen>
+    <>
+    <Screen accessibilityElementsHidden={filtersOpen || sortOpen} importantForAccessibility={filtersOpen || sortOpen ? "no-hide-descendants" : "auto"}>
       <PageHeader title="Recipes" subtitle={items.length ? `${items.length} recipes loaded` : undefined} />
-      <Field
-        label="Search recipes"
-        hint="Search titles and recipe text"
-        control={<TextInput value={searchDraft} onChangeText={scheduleSearch} placeholder="Tomato soup" placeholderTextColor={placeholder} />}
-      />
-      <Section title="Filters">
-        <ResponsiveGrid minItemWidth={240}>
-          <Field label="Required ingredients" hint="Must include every item, comma-separated" control={<TextInput value={params.requiredIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("requiredIngredient", event.nativeEvent.text)} placeholder="tomato, basil" placeholderTextColor={placeholder} />} />
-          <Field label="Available ingredients" hint="What you have on hand, comma-separated" control={<TextInput value={params.availableIngredient?.join(", ") ?? ""} onEndEditing={(event) => update("availableIngredient", event.nativeEvent.text)} placeholder="onion, garlic" placeholderTextColor={placeholder} />} />
-          <Field label="Required tags" hint="Must include every tag, comma-separated" control={<TextInput value={params.requiredTag?.join(", ") ?? ""} onEndEditing={(event) => update("requiredTag", event.nativeEvent.text)} placeholder="vegan, weeknight" placeholderTextColor={placeholder} />} />
-          <Field label="Preferred tags" hint="Nice to have, comma-separated" control={<TextInput value={params.preferredTag?.join(", ") ?? ""} onEndEditing={(event) => update("preferredTag", event.nativeEvent.text)} placeholder="family" placeholderTextColor={placeholder} />} />
-          <Field label="Maximum total minutes" hint="Whole minutes only" control={<TextInput value={params.maxTotalMinutes?.toString() ?? ""} keyboardType="numeric" onEndEditing={(event) => update("maxTotalMinutes", event.nativeEvent.text)} placeholder="30" placeholderTextColor={placeholder} />} />
-          <Field label="Minimum rating" hint="1 to 5" control={<TextInput value={params.minRating?.toString() ?? ""} keyboardType="numeric" onEndEditing={(event) => update("minRating", event.nativeEvent.text)} placeholder="4" placeholderTextColor={placeholder} />} />
-        </ResponsiveGrid>
-      </Section>
-      <Section title="Sort">
-        <View style={styles.chipRow}>
-          {choices.map((choice) => (
-            <Button
-              key={choice.value}
-              label={choice.label}
-              variant={currentSort === choice.value ? "primary" : "secondary"}
-              accessibilityState={{ selected: currentSort === choice.value }}
-              onPress={() => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), sort: choice.value }))}
-            />
-          ))}
-        </View>
-      </Section>
-      <View style={styles.chipRow}>
-        {(["any", "rated", "unrated"] as const).map((state) => (
-          <Button
-            key={state}
-            label={state === "any" ? "Any rating" : state === "rated" ? "Rated only" : "Unrated only"}
-            variant={(params.ratingState ?? "any") === state ? "primary" : "secondary"}
-            accessibilityState={{ selected: (params.ratingState ?? "any") === state }}
-            onPress={() => navigate(normalizeRecipeListParams({ ...serializeRecipeListParams(params), ratingState: state }))}
+      <View style={styles.toolbar}>
+        <View style={styles.searchField}>
+          <Field
+            label="Search recipes"
+            hint="Search titles and recipe text"
+            control={
+              <TextInput
+                value={searchDraft}
+                onChangeText={setSearchDraft}
+                onSubmitEditing={submitSearch}
+                returnKeyType="search"
+                placeholder="Tomato soup"
+                placeholderTextColor={placeholder}
+              />
+            }
           />
-        ))}
+        </View>
+        <Button label="Search" onPress={submitSearch} />
+        <Button ref={filtersTriggerRef} label={filtersLabel} onPress={openFilters} />
+        <Button ref={sortTriggerRef} label="Sort" onPress={() => setSortOpen(true)} />
       </View>
       <View style={[styles.chipRow, styles.viewToggle]}>
         <Button label="Card view" variant={view === "card" ? "primary" : "secondary"} onPress={() => setView("card")} />
@@ -173,14 +274,86 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
           : items.length === 0
             ? <EmptyState title="Your recipe library is empty." description="Create or import a recipe to start building your library." />
             : view === "card"
-              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="card" />)}</ResponsiveGrid>
-              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.recipe.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
+              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="card" />)}</ResponsiveGrid>
+              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
       {nextCursor ? <Button label="Load more recipes" loading={loadingMore} onPress={() => void request(nextCursor)} /> : null}
     </Screen>
+    <FilterDialog
+        visible={filtersOpen}
+        layoutMode={layoutMode}
+        draft={draft}
+        onChange={setDraft}
+        onApply={applyFilters}
+        onClear={() => setDraft(emptyDraft())}
+        onDismiss={() => setFiltersOpen(false)}
+        returnFocusRef={filtersTriggerRef as FocusableRef}
+      >
+        {facetError ? (
+          <>
+            <InlineNotice tone="error" message="We couldn't load filter options. Please try again." />
+            <Button label="Try filters again" onPress={retryFacets} />
+          </>
+        ) : null}
+        <FacetPicker
+          label="Ingredients"
+          hint="Must include every selected ingredient"
+          selected={decorateDraftChips(draft.ingredient, selections.selected.ingredient)}
+          options={options.lanes.ingredient.options}
+          search={options.lanes.ingredient.search}
+          onSearch={(value) => options.searchLane("ingredient", value)}
+          hasMore={Boolean(options.lanes.ingredient.nextCursor)}
+          loadingMore={options.lanes.ingredient.loadingMore}
+          onLoadMore={() => options.loadMore("ingredient")}
+          loading={options.lanes.ingredient.loading}
+          addDisabled={(draft.ingredient?.length ?? 0) >= MAX_INGREDIENT_FILTERS}
+          onAdd={(name) => addDraftValue("ingredient", name)}
+          onRemove={(name) => removeDraftValue("ingredient", name)}
+        />
+        <FacetPicker
+          label="Tags"
+          hint="Must include every selected tag"
+          selected={decorateDraftChips(draft.tag, selections.selected.tag)}
+          options={options.lanes.tag.options}
+          search={options.lanes.tag.search}
+          onSearch={(value) => options.searchLane("tag", value)}
+          hasMore={Boolean(options.lanes.tag.nextCursor)}
+          loadingMore={options.lanes.tag.loadingMore}
+          onLoadMore={() => options.loadMore("tag")}
+          loading={options.lanes.tag.loading}
+          addDisabled={(draft.tag?.length ?? 0) >= MAX_TAG_FILTERS}
+          onAdd={(name) => addDraftValue("tag", name)}
+          onRemove={(name) => removeDraftValue("tag", name)}
+        />
+        <DurationFilter
+          observed={options.observedMinutes}
+          value={draft.maxTotalMinutes ?? null}
+          onChange={(value) => setDraft({ ...draft, maxTotalMinutes: value })}
+        />
+        <RatingFilter
+          minRating={draft.minRating ?? null}
+          ratingState={draft.ratingState ?? "any"}
+          onMinRating={(value) => setDraft({ ...draft, minRating: value })}
+          onRatingState={(value) => setDraft({ ...draft, ratingState: value, ...(value === "unrated" ? { minRating: null } : {}) })}
+        />
+      </FilterDialog>
+      <SortMenu
+        visible={sortOpen}
+        value={currentSort}
+        options={SORT_CHOICES}
+        onSelect={(value) => {
+          const next = normalizeRecipeListParams({ ...serializeRecipeListParams(params), sort: value });
+          if (!sameSerialized(next, params)) pushFilters(next);
+        }}
+        onDismiss={() => setSortOpen(false)}
+        returnFocusRef={sortTriggerRef as FocusableRef}
+      />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  toolbar: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", gap: 8, marginBottom: 12 },
+  searchField: { flexGrow: 1, flexBasis: 220, minWidth: 0 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   viewToggle: { marginBottom: 16 },
 });

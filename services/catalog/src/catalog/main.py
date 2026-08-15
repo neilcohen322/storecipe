@@ -14,6 +14,7 @@ from catalog.recipe_query_cache import RecipeQueryCache, create_redis_client
 from catalog.routes.health import router as health_router
 from catalog.routes.internal_recipes import router as internal_recipes_router
 from catalog.routes.ratings import router as ratings_router
+from catalog.routes.recipe_facets import router as recipe_facets_router
 from catalog.routes.recipes import router as recipes_router
 from catalog.services.errors import (
     CatalogError,
@@ -21,7 +22,9 @@ from catalog.services.errors import (
     InvalidCursor,
     InvalidFilter,
     RecipeNotFound,
+    StaleRecipeFacetCursor,
     StaleRecipeQueryCursor,
+    UnstableCatalogSnapshot,
 )
 
 settings = get_settings()
@@ -31,7 +34,9 @@ token_verifier = build_token_verifier(settings)
 def _status_for(exc: CatalogError) -> int:
     if isinstance(exc, RecipeNotFound):
         return status.HTTP_404_NOT_FOUND
-    if isinstance(exc, StaleRecipeQueryCursor):
+    if isinstance(exc, UnstableCatalogSnapshot):
+        return status.HTTP_503_SERVICE_UNAVAILABLE
+    if isinstance(exc, StaleRecipeQueryCursor | StaleRecipeFacetCursor):
         return status.HTTP_409_CONFLICT
     if isinstance(exc, IdempotencyConflict):
         return status.HTTP_409_CONFLICT
@@ -46,14 +51,18 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
         raise exc
     detail = "Recipe not found." if isinstance(exc, RecipeNotFound) else str(exc)
     problem_type = (
-        f"{PROBLEM_TYPE_BASE}/stale_recipe_query_cursor"
+        f"{PROBLEM_TYPE_BASE}/stale_recipe_facet_cursor"
+        if isinstance(exc, StaleRecipeFacetCursor)
+        else f"{PROBLEM_TYPE_BASE}/stale_recipe_query_cursor"
         if isinstance(exc, StaleRecipeQueryCursor)
         else f"{PROBLEM_TYPE_BASE}/idempotency_conflict"
         if isinstance(exc, IdempotencyConflict)
         else None
     )
     extra: dict[str, object] | None = None
-    if isinstance(exc, StaleRecipeQueryCursor):
+    if isinstance(exc, StaleRecipeFacetCursor):
+        extra = {"errorCategory": "stale_recipe_facet_cursor"}
+    elif isinstance(exc, StaleRecipeQueryCursor):
         extra = {"errorCategory": "stale_recipe_query_cursor"}
     elif isinstance(exc, IdempotencyConflict):
         extra = {"errorCategory": "idempotency_conflict"}
@@ -116,6 +125,7 @@ async def reject_oversized_query(request: Request, call_next: RequestResponseEnd
 install_problem_details(app)
 app.add_exception_handler(CatalogError, catalog_error)
 app.include_router(recipes_router)
+app.include_router(recipe_facets_router)
 app.include_router(ratings_router)
 app.include_router(internal_recipes_router)
 app.include_router(health_router)

@@ -1,5 +1,5 @@
 import type { ImportJob } from "../api/ingestion";
-import type { Recipe, RecipeQueryPage } from "../api/catalog";
+import type { Recipe, RecipeFacetPage, RecipeFacetSelectionsRequest, RecipeFacetSelectionsResponse, RecipeQueryPage } from "../api/catalog";
 
 export const fixtureRecipe: Recipe = {
   id: "recipe-weeknight-pasta",
@@ -19,9 +19,25 @@ export const fixtureRecipe: Recipe = {
 };
 
 export const fixtureRecipePage: RecipeQueryPage = {
-  items: [{ recipe: fixtureRecipe, match: null }],
+  items: [fixtureRecipe],
   nextCursor: null,
 };
+
+export const fixtureRecipeFacets: RecipeFacetPage = {
+  ingredients: ["tomatoes", "pasta"],
+  ingredientNextCursor: null,
+  tags: ["weeknight", "vegetarian"],
+  tagNextCursor: null,
+  totalMinutes: { min: 10, max: 60 },
+  rating: { min: 1, max: 5 },
+  ratingState: ["any", "rated", "unrated"],
+  sort: ["rating:asc", "rating:desc", "totalMinutes:asc", "totalMinutes:desc", "createdAt:asc", "createdAt:desc", "updatedAt:asc", "updatedAt:desc", "title:asc", "title:desc"],
+};
+
+export function fixtureRecipeFacetSelections(body: RecipeFacetSelectionsRequest = {}): RecipeFacetSelectionsResponse {
+  const observed = (names: string[] = []) => names.map((requestedName) => ({ requestedName, normalizedName: requestedName, observed: true as const }));
+  return { ingredients: observed(body.ingredients), tags: observed(body.tags) };
+}
 
 export function fixtureImportJob(status: ImportJob["status"]): ImportJob {
   return {
