@@ -1,0 +1,126 @@
+import React from "react";
+import { StyleSheet, Text } from "react-native";
+import { fireEvent, render } from "@testing-library/react-native";
+
+jest.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ top: 10, right: 4, bottom: 12, left: 6 }),
+}));
+
+jest.mock("../../theme/ThemeProvider", () => ({
+  ThemeProvider: ({ children }: { children: React.ReactNode }) => children,
+  useTheme: () => ({
+    theme: {
+      colors: {
+        canvas: "#f7fff9",
+        surface: "#fff",
+        elevatedSurface: "#fff",
+        text: "#10231c",
+        mutedText: "#527060",
+        border: "#d0e5d6",
+        accent: "#2d6a4f",
+        accentHover: "#1b4332",
+        accentContrast: "#fff",
+        success: "#2d6a4f",
+        warning: "#b7791f",
+        danger: "#b42318",
+        focusRing: "#40916c",
+        scrim: "rgba(0,0,0,.4)",
+      },
+      spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 },
+      sizing: { control: 44, icon: 24, touchTarget: 48 },
+      radii: { sm: 8, md: 12, lg: 16, pill: 999 },
+      type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 },
+    },
+  }),
+}));
+
+import { FilterDialog, type FilterDraft } from "../FilterDialog";
+
+const draft: FilterDraft = { ingredient: ["egg"], tag: ["quick"], maxTotalMinutes: 30, minRating: 4, ratingState: "rated" };
+
+test("filter dialog is a labelled modal with layout, actions, dismiss, and focus", async () => {
+  const onApply = jest.fn();
+  const onClear = jest.fn();
+  const onDismiss = jest.fn();
+  const onChange = jest.fn();
+  const initialFocus = jest.fn();
+  const returnFocus = jest.fn();
+  const initialFocusRef = { current: { focus: initialFocus } };
+  const returnFocusRef = { current: { focus: returnFocus } };
+
+  const screen = await render(
+    <FilterDialog
+      visible
+      layoutMode="expanded"
+      draft={draft}
+      onChange={onChange}
+      onApply={onApply}
+      onClear={onClear}
+      onDismiss={onDismiss}
+      initialFocusRef={initialFocusRef}
+      returnFocusRef={returnFocusRef}
+    >
+      <Text>Bound controls</Text>
+    </FilterDialog>,
+  );
+
+  const desktopPanel = screen.getByTestId("filter-dialog-panel", { includeHiddenElements: true });
+  expect(desktopPanel.props.role).toBe("dialog");
+  expect(desktopPanel.props["aria-modal"]).toBe(true);
+  expect(desktopPanel.props["aria-labelledby"]).toBe("filter-dialog-title");
+  expect(StyleSheet.flatten(desktopPanel.props.style).maxWidth).toBe(720);
+  expect(initialFocus).toHaveBeenCalledTimes(1);
+
+  await screen.rerender(
+    <FilterDialog
+      visible
+      layoutMode="compact"
+      draft={draft}
+      onChange={onChange}
+      onApply={onApply}
+      onClear={onClear}
+      onDismiss={onDismiss}
+      initialFocusRef={initialFocusRef}
+      returnFocusRef={returnFocusRef}
+    >
+      <Text>Bound controls</Text>
+    </FilterDialog>,
+  );
+  const compactStyle = StyleSheet.flatten(screen.getByTestId("filter-dialog-panel", { includeHiddenElements: true }).props.style);
+  expect(compactStyle.flex).toBe(1);
+  expect(compactStyle.maxWidth).toBeUndefined();
+  expect(compactStyle.paddingTop).toBe(10);
+  expect(compactStyle.paddingRight).toBe(4);
+  expect(compactStyle.paddingBottom).toBe(12);
+  expect(compactStyle.paddingLeft).toBe(6);
+
+  fireEvent.press(screen.getByLabelText("Apply", { includeHiddenElements: true }));
+  fireEvent.press(screen.getByLabelText("Clear", { includeHiddenElements: true }));
+  expect(onApply).toHaveBeenCalledTimes(1);
+  expect(onClear).toHaveBeenCalledTimes(1);
+  expect(onDismiss).not.toHaveBeenCalled();
+  onApply.mockClear();
+
+  screen.getByTestId("filter-dialog").props.onRequestClose();
+  fireEvent.press(screen.getByTestId("filter-dialog-backdrop", { includeHiddenElements: true }));
+  fireEvent.press(screen.getByRole("button", { name: "Cancel", includeHiddenElements: true }));
+  expect(onDismiss).toHaveBeenCalledTimes(3);
+  expect(onApply).not.toHaveBeenCalled();
+
+  await screen.rerender(
+    <FilterDialog
+      visible={false}
+      layoutMode="expanded"
+      draft={draft}
+      onChange={onChange}
+      onApply={onApply}
+      onClear={onClear}
+      onDismiss={onDismiss}
+      initialFocusRef={initialFocusRef}
+      returnFocusRef={returnFocusRef}
+    >
+      <Text>Bound controls</Text>
+    </FilterDialog>,
+  );
+  expect(returnFocus).toHaveBeenCalledTimes(1);
+});
