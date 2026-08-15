@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useFocusEffect } from "expo-router";
 
 import { ApiError, ApiUnauthorizedError } from "../api/client";
 import type {
@@ -233,10 +232,6 @@ export function useRecipeFacetOptions({ catalog, onUnauthorized }: UseRecipeFace
     }
   }, []);
 
-  useFocusEffect(useCallback(() => {
-    void loadFocusFacets();
-  }, [loadFocusFacets]));
-
   const searchLane = (id: LaneId, value: string) => {
     const runtime = runtimes.current[id];
     runtime.controller?.abort();
@@ -267,5 +262,6 @@ export function useRecipeFacetOptions({ catalog, onUnauthorized }: UseRecipeFace
     searchLane,
     loadMore,
     retryFacets,
+    browse: loadFocusFacets,
   };
 }

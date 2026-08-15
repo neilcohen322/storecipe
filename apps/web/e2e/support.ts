@@ -45,6 +45,22 @@ export async function installApiInterceptions(page: Page): Promise<void> {
   });
 }
 
+export async function submitRecipeSearch(page: Page, text: string, method: "enter" | "button" = "enter"): Promise<void> {
+  await page.getByLabel("Search recipes").fill(text);
+  if (method === "button") await page.getByRole("button", { name: "Search" }).click();
+  else await page.getByLabel("Search recipes").press("Enter");
+}
+
+export async function openRecipeFilters(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /^Filters/ }).click();
+  await expect(page.getByRole("dialog", { name: "Filters" })).toBeVisible();
+}
+
+export async function openRecipeSort(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Sort" }).click();
+  await expect(page.getByRole("dialog", { name: "Sort" })).toBeVisible();
+}
+
 export async function assertNoHorizontalOverflow(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 }

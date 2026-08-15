@@ -29,10 +29,12 @@ export function SortMenu({
   const { theme } = useTheme();
   const selectedRef = useRef<React.ElementRef<typeof Pressable>>(null);
   const titleId = "sort-menu-title";
+  const wasVisible = useRef(visible);
 
   useEffect(() => {
     if (visible) (initialFocusRef?.current ?? selectedRef.current)?.focus();
-    else returnFocusRef?.current?.focus();
+    else if (wasVisible.current) returnFocusRef?.current?.focus();
+    wasVisible.current = visible;
   }, [initialFocusRef, returnFocusRef, visible]);
 
   useEffect(() => {
@@ -49,7 +51,7 @@ export function SortMenu({
 
   return (
     <Modal testID="sort-menu" visible={visible} transparent accessibilityViewIsModal onRequestClose={onDismiss}>
-      <View style={[styles.scrim, { backgroundColor: theme.colors.scrim }]}>
+      <View pointerEvents="box-none" style={[styles.scrim, { backgroundColor: theme.colors.scrim }]}>
         <Pressable
           testID="sort-menu-backdrop"
           accessibilityLabel="Dismiss sort"

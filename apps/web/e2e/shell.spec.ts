@@ -9,17 +9,22 @@ test.beforeEach(async ({ page }) => {
 
 test("renders the responsive shell, restores history, and has no serious accessibility violations", async ({ page }, testInfo) => {
   const errors = captureConsoleErrors(page);
-  await page.goto("/recipes?text=pasta&requiredIngredient=tomato&availableIngredient=garlic&requiredTag=weeknight&preferredTag=vegetarian&maxTotalMinutes=30&minRating=4&ratingState=rated&sort=rating%3Adesc");
+  await page.goto("/recipes?text=pasta&ingredient=tomato&ingredient=garlic&tag=weeknight&tag=vegetarian&maxTotalMinutes=30&minRating=4&ratingState=rated&sort=rating%3Adesc");
   await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
   await expect(page.getByLabel("Search recipes")).toHaveValue("pasta");
-  await expect(page.getByLabel("Required ingredients")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Filters (7)" })).toBeVisible();
+  await page.getByRole("button", { name: "Filters (7)" }).click();
+  await expect(page.getByRole("dialog", { name: "Filters" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Remove tomato" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Remove garlic" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Remove weeknight" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Remove vegetarian" })).toBeVisible();
   await expect(page.getByLabel("30 minutes")).toBeVisible();
   await expect(page.getByRole("button", { name: "4 and up" })).toBeVisible();
+  await page.getByTestId("filter-dialog-cancel").click();
+  await page.getByRole("button", { name: "Sort" }).click();
   await expect(page.getByRole("button", { name: "Highest rated" })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   const compact = testInfo.project.name.startsWith("compact");
   await expect(page.getByTestId(compact ? "app-shell-compact" : testInfo.project.name.startsWith("medium") ? "app-shell-medium" : "app-shell-expanded")).toBeVisible();

@@ -1,5 +1,5 @@
-import React, { useEffect, type ReactNode, type RefObject } from "react";
-import { Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { ListRecipesParams } from "../api/catalog";
@@ -43,10 +43,12 @@ export function FilterDialog({
   const insets = useSafeAreaInsets();
   const compact = layoutMode === "compact";
   const titleId = "filter-dialog-title";
+  const wasVisible = useRef(visible);
 
   useEffect(() => {
     if (visible) initialFocusRef?.current?.focus();
-    else returnFocusRef?.current?.focus();
+    else if (wasVisible.current) returnFocusRef?.current?.focus();
+    wasVisible.current = visible;
   }, [initialFocusRef, returnFocusRef, visible]);
 
   useEffect(() => {
@@ -69,7 +71,7 @@ export function FilterDialog({
       accessibilityViewIsModal
       onRequestClose={onDismiss}
     >
-      <View style={[styles.scrim, compact && styles.compactScrim, { backgroundColor: theme.colors.scrim }]}>
+      <View pointerEvents="box-none" style={[styles.scrim, compact && styles.compactScrim, { backgroundColor: theme.colors.scrim }]}>
         <Pressable
           testID="filter-dialog-backdrop"
           accessibilityLabel="Dismiss filters"
@@ -101,11 +103,17 @@ export function FilterDialog({
           <Text nativeID={titleId} accessibilityRole="header" style={[styles.title, { color: theme.colors.text }]}>
             Filters
           </Text>
-          {children}
+          <ScrollView
+            style={compact ? styles.compactBody : styles.body}
+            contentContainerStyle={styles.bodyContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {children}
+          </ScrollView>
           <View style={styles.actions}>
-            <Button label="Clear" variant="quiet" onPress={onClear} />
-            <Button label="Cancel" variant="secondary" onPress={onDismiss} />
-            <Button label="Apply" onPress={onApply} />
+            <Button testID="filter-dialog-clear" label="Clear" variant="quiet" onPress={onClear} />
+            <Button testID="filter-dialog-cancel" label="Cancel" variant="secondary" onPress={onDismiss} />
+            <Button testID="filter-dialog-apply" label="Apply" onPress={onApply} />
           </View>
         </View>
       </View>
@@ -116,7 +124,10 @@ export function FilterDialog({
 const styles = StyleSheet.create({
   scrim: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   compactScrim: { padding: 0 },
-  panel: { width: "100%", gap: 16, padding: 24, borderRadius: 16, zIndex: 1 },
+  panel: { width: "100%", gap: 16, padding: 24, borderRadius: 16, zIndex: 1, maxHeight: "100%" },
   title: { fontSize: 18, fontWeight: "700" },
+  body: { maxHeight: 420 },
+  compactBody: { flex: 1, minHeight: 0 },
+  bodyContent: { gap: 16, flexGrow: 1 },
   actions: { flexDirection: "row", justifyContent: "flex-end", flexWrap: "wrap", gap: 8 },
 });

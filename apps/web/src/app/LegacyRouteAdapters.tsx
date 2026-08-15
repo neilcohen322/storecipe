@@ -52,6 +52,7 @@ export function RecipesRouteAdapter() {
   const auth = useAuth();
   const router = useRouter();
   const onUnauthorized = useUnauthorizedHandler();
+  const { width } = useWindowDimensions();
   return (
     <AuthGate>
       <RecipeListScreen
@@ -63,6 +64,7 @@ export function RecipesRouteAdapter() {
         onImport={() => router.push("/imports")}
         onLogout={() => void auth.logout().then(() => router.replace("/"))}
         onUnauthorized={onUnauthorized}
+        layoutMode={getLayoutMode(width)}
       />
     </AuthGate>
   );

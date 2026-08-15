@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type RefObject } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, TextInput, View } from "react-native";
 
 import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi, ListRecipesParams, Recipe, RecipeSort } from "../api/catalog";
+import type { FacetPickerSelection } from "../components/FacetPicker";
 import { DurationFilter } from "../components/DurationFilter";
 import { FacetPicker } from "../components/FacetPicker";
+import { FilterDialog, type FilterDraft } from "../components/FilterDialog";
 import { RatingFilter } from "../components/RatingFilter";
 import { RecipeCard } from "../components/RecipeCard";
-import { Button, EmptyState, ErrorState, Field, InlineNotice, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Section, Skeleton } from "../components";
+import { SortMenu } from "../components/SortMenu";
+import { Button, EmptyState, ErrorState, Field, InlineNotice, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Skeleton } from "../components";
+import type { LayoutMode } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
 import {
   DEFAULT_SORT,
@@ -29,7 +33,11 @@ export {
   sameStringList,
   serializeRecipeListParams,
 } from "./recipeListParams";
+
 type LibraryError = "none" | "offline" | "generic";
+type TriggerRef = ComponentRef<typeof Button>;
+type FocusableRef = RefObject<{ focus: () => void } | null>;
+
 const SORT_CHOICES: { value: RecipeSort; label: string }[] = [
   { value: "updatedAt:desc", label: "Recently updated" },
   { value: "createdAt:desc", label: "Newest" },
@@ -64,17 +72,86 @@ export function createPaginationRequestGuard() {
   };
 }
 
-export type RecipeListScreenProps = { catalog: ReturnType<typeof createCatalogApi>; onOpenDetail(recipeId: string): void; onCreate(): void; onImport(): void; onLogout(): void; onUnauthorized(): void; };
+function emptyDraft(): FilterDraft {
+  return {};
+}
 
-export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, onLogout, onUnauthorized }: RecipeListScreenProps) {
-  const router = useRouter(); const route = useLocalSearchParams() as RouteQuery; const routeKey = JSON.stringify(route);
-  const params = useMemo(() => normalizeRecipeListParams(route), [routeKey]); const queryKey = JSON.stringify(serializeRecipeListParams(params));
-  const routeSearchText = params.text ?? ""; const [items, setItems] = useState<Recipe[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null); const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<LibraryError>("none"); const [view, setView] = useState<"card" | "list">("card"); const [searchDraft, setSearchDraft] = useState(routeSearchText);
-  const mounted = useRef(true); const requestId = useRef(0); const debounce = useRef<ReturnType<typeof setTimeout> | null>(null); const draftGeneration = useRef(0); const controller = useRef<AbortController | null>(null); const paginationGuard = useRef(createPaginationRequestGuard());
+function draftFromParams(params: ListRecipesParams): FilterDraft {
+  return {
+    ingredient: params.ingredient,
+    tag: params.tag,
+    maxTotalMinutes: params.maxTotalMinutes,
+    minRating: params.minRating,
+    ratingState: params.ratingState ?? "any",
+  };
+}
+
+export function activeFilterCount(source: FilterDraft): number {
+  return (source.ingredient?.length ?? 0)
+    + (source.tag?.length ?? 0)
+    + (source.maxTotalMinutes != null ? 1 : 0)
+    + (source.minRating != null ? 1 : 0)
+    + (source.ratingState && source.ratingState !== "any" ? 1 : 0);
+}
+
+function decorateDraftChips(values: string[] | undefined, committed: FacetPickerSelection[]): FacetPickerSelection[] {
+  if (!values?.length) return [];
+  const byName = new Map(committed.map((item) => [item.name, item]));
+  return values.map((name) => byName.get(name) ?? { name });
+}
+
+function sameSerialized(left: ListRecipesParams, right: ListRecipesParams): boolean {
+  return JSON.stringify(serializeRecipeListParams(left)) === JSON.stringify(serializeRecipeListParams(right));
+}
+
+export type RecipeListScreenProps = {
+  catalog: ReturnType<typeof createCatalogApi>;
+  onOpenDetail(recipeId: string): void;
+  onCreate(): void;
+  onImport(): void;
+  onLogout(): void;
+  onUnauthorized(): void;
+  layoutMode?: LayoutMode;
+};
+
+export function RecipeListScreen({
+  catalog,
+  onOpenDetail,
+  onCreate,
+  onImport,
+  onLogout,
+  onUnauthorized,
+  layoutMode = "medium",
+}: RecipeListScreenProps) {
+  const router = useRouter();
+  const route = useLocalSearchParams() as RouteQuery;
+  const routeKey = JSON.stringify(route);
+  const params = useMemo(() => normalizeRecipeListParams(route), [routeKey]);
+  const queryKey = JSON.stringify(serializeRecipeListParams(params));
+  const routeSearchText = params.text ?? "";
+  const [items, setItems] = useState<Recipe[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<LibraryError>("none");
+  const [view, setView] = useState<"card" | "list">("card");
+  const [searchDraft, setSearchDraft] = useState(routeSearchText);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [draft, setDraft] = useState<FilterDraft>(emptyDraft);
+  const mounted = useRef(true);
+  const requestId = useRef(0);
+  const controller = useRef<AbortController | null>(null);
+  const paginationGuard = useRef(createPaginationRequestGuard());
   const previousRouteSearchText = useRef(routeSearchText);
+  const filtersTriggerRef = useRef<TriggerRef | null>(null);
+  const sortTriggerRef = useRef<TriggerRef | null>(null);
   const { theme } = useTheme();
   const currentSort = params.sort?.[0] ?? DEFAULT_SORT[0];
-  if (previousRouteSearchText.current !== routeSearchText) { previousRouteSearchText.current = routeSearchText; draftGeneration.current += 1; setSearchDraft(routeSearchText); }
+  if (previousRouteSearchText.current !== routeSearchText) {
+    previousRouteSearchText.current = routeSearchText;
+    setSearchDraft(routeSearchText);
+  }
   void onCreate; void onImport; void onLogout;
   const onUnauthorizedRef = useRef(onUnauthorized);
   onUnauthorizedRef.current = onUnauthorized;
@@ -83,26 +160,56 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
   const options = useRecipeFacetOptions({ catalog, onUnauthorized });
   const selections = useResolvedRecipeSelections({ catalog, params, replaceFilters, onUnauthorized });
   const facetError = options.facetError !== "none" || selections.facetError !== "none";
+  const committedCount = activeFilterCount(draftFromParams(params));
+  const previousFiltersOpen = useRef(false);
+
+  useEffect(() => {
+    if (filtersOpen && !previousFiltersOpen.current) options.browse();
+    previousFiltersOpen.current = filtersOpen;
+  }, [filtersOpen, options.browse]);
+
   const retryFacets = () => {
     options.retryFacets();
     selections.retrySelections();
   };
-  const commitFilters = (patch: Record<string, string | string[] | undefined>) => {
-    pushFilters(normalizeRecipeListParams({ ...serializeRecipeListParams(params), ...patch }));
-  };
-  const addFilterValue = (key: LaneId, name: string) => {
-    const current = params[key] ?? [];
+
+  const addDraftValue = (key: LaneId, name: string) => {
+    const current = draft[key] ?? [];
     const limit = key === "ingredient" ? MAX_INGREDIENT_FILTERS : MAX_TAG_FILTERS;
-    if (current.length >= limit) return;
-    commitFilters({ [key]: [...current, name] });
+    if (current.length >= limit || current.includes(name)) return;
+    setDraft({ ...draft, [key]: [...current, name] });
   };
-  const removeFilterValue = (key: LaneId, name: string) => {
-    const bucket = params[key] ?? [];
-    const chips = selections.selected[key];
-    commitFilters({
-      [key]: bucket.filter((entry, index) => entry !== name && chips[index]?.name !== name),
+  const removeDraftValue = (key: LaneId, name: string) => {
+    setDraft({ ...draft, [key]: (draft[key] ?? []).filter((entry) => entry !== name) });
+  };
+
+  const submitSearch = () => {
+    const next = normalizeRecipeListParams({
+      ...serializeRecipeListParams(params),
+      text: searchDraft,
     });
+    if (sameSerialized(next, params)) return;
+    pushFilters(next);
   };
+
+  const applyFilters = () => {
+    const next = normalizeRecipeListParams({
+      ...serializeRecipeListParams(params),
+      ingredient: draft.ingredient,
+      tag: draft.tag,
+      maxTotalMinutes: draft.maxTotalMinutes == null ? undefined : String(draft.maxTotalMinutes),
+      minRating: draft.minRating == null ? undefined : String(draft.minRating),
+      ratingState: draft.ratingState,
+    });
+    pushFilters(next);
+    setFiltersOpen(false);
+  };
+
+  const openFilters = () => {
+    setDraft(draftFromParams(params));
+    setFiltersOpen(true);
+  };
+
   const request = useCallback(async (cursor: string | null = null) => {
     const pagination = cursor !== null;
     if (pagination && paginationGuard.current.isActive()) return;
@@ -124,82 +231,38 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
     }
   }, [catalog, params]);
   useEffect(() => { mounted.current = true; void request(); return () => { mounted.current = false; controller.current?.abort(); requestId.current += 1; paginationGuard.current.reset(); }; }, [queryKey, request]);
-  useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
-  const scheduleSearch = (text: string) => { setSearchDraft(text); if (debounce.current) clearTimeout(debounce.current); const generation = ++draftGeneration.current; debounce.current = setTimeout(() => { if (draftGeneration.current === generation) pushFilters(normalizeRecipeListParams({ ...serializeRecipeListParams(params), text })); }, 300); };
+
   const errorContent = error === "offline"
     ? <><OfflineBanner message="You’re offline. Check your connection and try again." /><Button label="Try again" onPress={() => void request()} /></>
     : <ErrorState title="We couldn't load your recipes. Please try again." description="Your library is still here. Retry when you're ready." action={<Button label="Try again" onPress={() => void request()} />} />;
   const placeholder = theme.colors.mutedText;
+  const filtersLabel = committedCount ? `Filters (${committedCount})` : "Filters";
+
   return (
+    <>
     <Screen>
       <PageHeader title="Recipes" subtitle={items.length ? `${items.length} recipes loaded` : undefined} />
-      <Field
-        label="Search recipes"
-        hint="Search titles and recipe text"
-        control={<TextInput value={searchDraft} onChangeText={scheduleSearch} placeholder="Tomato soup" placeholderTextColor={placeholder} />}
-      />
-      <Section title="Filters">
-        {facetError ? (
-          <>
-            <InlineNotice tone="error" message="We couldn't load filter options. Please try again." />
-            <Button label="Try filters again" onPress={retryFacets} />
-          </>
-        ) : null}
-        <ResponsiveGrid minItemWidth={240}>
-          <FacetPicker
-            label="Ingredients"
-            hint="Must include every selected ingredient"
-            selected={selections.selected.ingredient}
-            options={options.lanes.ingredient.options}
-            search={options.lanes.ingredient.search}
-            onSearch={(value) => options.searchLane("ingredient", value)}
-            hasMore={Boolean(options.lanes.ingredient.nextCursor)}
-            loadingMore={options.lanes.ingredient.loadingMore}
-            onLoadMore={() => options.loadMore("ingredient")}
-            loading={options.lanes.ingredient.loading}
-            onAdd={(name) => addFilterValue("ingredient", name)}
-            onRemove={(name) => removeFilterValue("ingredient", name)}
+      <View style={styles.toolbar}>
+        <View style={styles.searchField}>
+          <Field
+            label="Search recipes"
+            hint="Search titles and recipe text"
+            control={
+              <TextInput
+                value={searchDraft}
+                onChangeText={setSearchDraft}
+                onSubmitEditing={submitSearch}
+                returnKeyType="search"
+                placeholder="Tomato soup"
+                placeholderTextColor={placeholder}
+              />
+            }
           />
-          <FacetPicker
-            label="Tags"
-            hint="Must include every selected tag"
-            selected={selections.selected.tag}
-            options={options.lanes.tag.options}
-            search={options.lanes.tag.search}
-            onSearch={(value) => options.searchLane("tag", value)}
-            hasMore={Boolean(options.lanes.tag.nextCursor)}
-            loadingMore={options.lanes.tag.loadingMore}
-            onLoadMore={() => options.loadMore("tag")}
-            loading={options.lanes.tag.loading}
-            onAdd={(name) => addFilterValue("tag", name)}
-            onRemove={(name) => removeFilterValue("tag", name)}
-          />
-          <DurationFilter
-            observed={options.observedMinutes}
-            value={params.maxTotalMinutes ?? null}
-            onChange={(value) => commitFilters({ maxTotalMinutes: value === null ? undefined : String(value) })}
-          />
-          <RatingFilter
-            minRating={params.minRating ?? null}
-            ratingState={params.ratingState ?? "any"}
-            onMinRating={(value) => commitFilters({ minRating: value === null ? undefined : String(value) })}
-            onRatingState={(value) => commitFilters({ ratingState: value })}
-          />
-        </ResponsiveGrid>
-      </Section>
-      <Section title="Sort">
-        <View style={styles.chipRow}>
-          {SORT_CHOICES.map((choice) => (
-            <Button
-              key={choice.value}
-              label={choice.label}
-              variant={currentSort === choice.value ? "primary" : "secondary"}
-              accessibilityState={{ selected: currentSort === choice.value }}
-              onPress={() => commitFilters({ sort: choice.value })}
-            />
-          ))}
         </View>
-      </Section>
+        <Button label="Search" onPress={submitSearch} />
+        <Button ref={filtersTriggerRef} label={filtersLabel} onPress={openFilters} />
+        <Button ref={sortTriggerRef} label="Sort" onPress={() => setSortOpen(true)} />
+      </View>
       <View style={[styles.chipRow, styles.viewToggle]}>
         <Button label="Card view" variant={view === "card" ? "primary" : "secondary"} onPress={() => setView("card")} />
         <Button label="List view" variant={view === "list" ? "primary" : "secondary"} onPress={() => setView("list")} />
@@ -215,10 +278,80 @@ export function RecipeListScreen({ catalog, onOpenDetail, onCreate, onImport, on
               : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
       {nextCursor ? <Button label="Load more recipes" loading={loadingMore} onPress={() => void request(nextCursor)} /> : null}
     </Screen>
+    <FilterDialog
+        visible={filtersOpen}
+        layoutMode={layoutMode}
+        draft={draft}
+        onChange={setDraft}
+        onApply={applyFilters}
+        onClear={() => setDraft(emptyDraft())}
+        onDismiss={() => setFiltersOpen(false)}
+        returnFocusRef={filtersTriggerRef as FocusableRef}
+      >
+        {facetError ? (
+          <>
+            <InlineNotice tone="error" message="We couldn't load filter options. Please try again." />
+            <Button label="Try filters again" onPress={retryFacets} />
+          </>
+        ) : null}
+        <FacetPicker
+          label="Ingredients"
+          hint="Must include every selected ingredient"
+          selected={decorateDraftChips(draft.ingredient, selections.selected.ingredient)}
+          options={options.lanes.ingredient.options}
+          search={options.lanes.ingredient.search}
+          onSearch={(value) => options.searchLane("ingredient", value)}
+          hasMore={Boolean(options.lanes.ingredient.nextCursor)}
+          loadingMore={options.lanes.ingredient.loadingMore}
+          onLoadMore={() => options.loadMore("ingredient")}
+          loading={options.lanes.ingredient.loading}
+          onAdd={(name) => addDraftValue("ingredient", name)}
+          onRemove={(name) => removeDraftValue("ingredient", name)}
+        />
+        <FacetPicker
+          label="Tags"
+          hint="Must include every selected tag"
+          selected={decorateDraftChips(draft.tag, selections.selected.tag)}
+          options={options.lanes.tag.options}
+          search={options.lanes.tag.search}
+          onSearch={(value) => options.searchLane("tag", value)}
+          hasMore={Boolean(options.lanes.tag.nextCursor)}
+          loadingMore={options.lanes.tag.loadingMore}
+          onLoadMore={() => options.loadMore("tag")}
+          loading={options.lanes.tag.loading}
+          onAdd={(name) => addDraftValue("tag", name)}
+          onRemove={(name) => removeDraftValue("tag", name)}
+        />
+        <DurationFilter
+          observed={options.observedMinutes}
+          value={draft.maxTotalMinutes ?? null}
+          onChange={(value) => setDraft({ ...draft, maxTotalMinutes: value })}
+        />
+        <RatingFilter
+          minRating={draft.minRating ?? null}
+          ratingState={draft.ratingState ?? "any"}
+          onMinRating={(value) => setDraft({ ...draft, minRating: value })}
+          onRatingState={(value) => setDraft({ ...draft, ratingState: value, ...(value === "unrated" ? { minRating: null } : {}) })}
+        />
+      </FilterDialog>
+      <SortMenu
+        visible={sortOpen}
+        value={currentSort}
+        options={SORT_CHOICES}
+        onSelect={(value) => {
+          const next = normalizeRecipeListParams({ ...serializeRecipeListParams(params), sort: value });
+          if (!sameSerialized(next, params)) pushFilters(next);
+        }}
+        onDismiss={() => setSortOpen(false)}
+        returnFocusRef={sortTriggerRef as FocusableRef}
+      />
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  toolbar: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", gap: 8, marginBottom: 12 },
+  searchField: { flexGrow: 1, flexBasis: 220, minWidth: 0 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   viewToggle: { marginBottom: 16 },
 });

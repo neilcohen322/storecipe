@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { assertStablePageQuality, captureConsoleErrors, installApiInterceptions } from "./support";
+import { assertStablePageQuality, captureConsoleErrors, installApiInterceptions, openRecipeFilters, openRecipeSort, submitRecipeSearch } from "./support";
 
 test.beforeEach(async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -11,7 +11,9 @@ test("searches, opens a recipe, and saves a rating", async ({ page }) => {
   const errors = captureConsoleErrors(page);
   await page.goto("/recipes");
   await page.getByLabel("Search recipes").fill("tomato pasta");
-  await expect(page).toHaveURL(/text=tomato(?:%20|\+)pasta/, { timeout: 3_000 });
+  await expect(page).not.toHaveURL(/text=/, { timeout: 800 });
+  await page.getByLabel("Search recipes").press("Enter");
+  await expect(page).toHaveURL(/text=tomato(?:%20|\+)pasta/);
   await page.getByRole("button", { name: "Open Weeknight tomato pasta" }).click();
   await expect(page.getByRole("heading", { name: "Weeknight tomato pasta" })).toBeVisible();
   await page.getByRole("button", { name: "Rate 5 out of 5" }).click();
@@ -37,17 +39,47 @@ test("validates and creates a recipe", async ({ page }, testInfo) => {
   await assertStablePageQuality(page, errors);
 });
 
-test("filters with observed pickers instead of raw query parameter fields", async ({ page }) => {
+test("commits search and atomic filters without debounce", async ({ page }) => {
   const errors = captureConsoleErrors(page);
   await page.goto("/recipes");
-  await page.getByLabel("Required ingredients").fill("tom");
+  await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
+  await expect(page.getByText("Required ingredients")).toHaveCount(0);
+  await expect(page.getByText("requiredIngredient")).toHaveCount(0);
+
+  await submitRecipeSearch(page, "tomato pasta", "button");
+  await expect(page).toHaveURL(/text=tomato(?:%20|\+)pasta/);
+
+  await openRecipeFilters(page);
   const tomatoes = page.getByRole("button", { name: "tomatoes" }).first();
   await expect(tomatoes).toBeVisible();
   await tomatoes.click();
-  await expect(page).toHaveURL(/requiredIngredient=tomatoes/);
-  await expect(page.getByText("requiredIngredient")).toHaveCount(0);
-  await page.getByRole("button", { name: "Any duration" }).click();
-  await expect(page).not.toHaveURL(/maxTotalMinutes=/);
+  await expect(page).not.toHaveURL(/ingredient=/);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog", { name: "Filters" })).toBeHidden();
+  await expect(page).not.toHaveURL(/ingredient=/);
+
+  await openRecipeFilters(page);
+  await expect(page.getByRole("button", { name: "Remove tomatoes" })).toHaveCount(0);
+  await page.getByRole("button", { name: "tomatoes" }).first().click();
+  await page.getByRole("button", { name: "Apply" }).click();
+  await expect(page).toHaveURL(/ingredient=tomatoes/);
+  await expect(page.getByRole("button", { name: /^Filters/ })).toHaveAccessibleName("Filters (1)");
+
+  await openRecipeSort(page);
+  await page.getByRole("button", { name: "Highest rated" }).click();
+  await expect(page).toHaveURL(/sort=rating(?:%3A|:)desc/);
+  await expect(page.getByRole("dialog", { name: "Sort" })).toBeHidden();
+
+  const filteredUrl = page.url();
+  await page.goBack();
+  await expect(page).not.toHaveURL(/sort=/);
+  await page.goForward();
+  await expect(page).toHaveURL(filteredUrl);
+
+  await openRecipeFilters(page);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("button", { name: /^Filters/ })).toBeFocused();
+
   await assertStablePageQuality(page, errors);
 });
 
