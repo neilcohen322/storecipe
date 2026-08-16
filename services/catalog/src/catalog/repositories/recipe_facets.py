@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -16,7 +16,7 @@ def _escape_like(value: str) -> str:
 
 def _facet_column(kind: FacetKind) -> ColumnElement[Any]:
     if kind is FacetKind.INGREDIENT:
-        return cast(ColumnElement[Any], Ingredient.normalized_name)
+        return cast(ColumnElement[Any], Ingredient.canonical_name)
     return cast(ColumnElement[Any], Tag.name)
 
 
@@ -39,7 +39,16 @@ async def fetch_distinct_facet_names(
     column = _facet_column(kind)
     statement = _owner_facet_statement(user_id, kind)
     if search != "":
-        statement = statement.where(column.like("%" + _escape_like(search) + "%", escape="\\"))
+        pattern = "%" + _escape_like(search) + "%"
+        if kind is FacetKind.INGREDIENT:
+            statement = statement.where(
+                or_(
+                    Ingredient.canonical_name.like(pattern, escape="\\"),
+                    Ingredient.normalized_name.like(pattern, escape="\\"),
+                )
+            )
+        else:
+            statement = statement.where(column.like(pattern, escape="\\"))
     if after is not None:
         statement = statement.where(column > after)
     statement = statement.order_by(column).limit(limit + 1)
@@ -58,6 +67,20 @@ async def fetch_total_minutes_bounds(
     if minimum is None:
         return None
     return int(minimum), int(maximum)
+
+
+async def fetch_owner_ingredient_identities(
+    session: AsyncSession,
+    user_id: UUID,
+) -> list[tuple[str, str]]:
+    statement = (
+        select(Ingredient.canonical_name, Ingredient.normalized_name)
+        .join(Recipe)
+        .where(Recipe.user_id == user_id)
+        .distinct()
+    )
+    rows = (await session.execute(statement)).all()
+    return [(row[0], row[1]) for row in rows]
 
 
 async def fetch_observed_names(

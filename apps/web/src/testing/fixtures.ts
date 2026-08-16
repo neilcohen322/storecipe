@@ -35,8 +35,13 @@ export const fixtureRecipeFacets: RecipeFacetPage = {
 };
 
 export function fixtureRecipeFacetSelections(body: RecipeFacetSelectionsRequest = {}): RecipeFacetSelectionsResponse {
-  const observed = (names: string[] = []) => names.map((requestedName) => ({ requestedName, normalizedName: requestedName, observed: true as const }));
-  return { ingredients: observed(body.ingredients), tags: observed(body.tags) };
+  const resolved = (names: string[] = []) =>
+    names.map((requestedName) => ({
+      requestedName,
+      resolvedName: requestedName,
+      status: "observed" as const,
+    }));
+  return { ingredients: resolved(body.ingredients), tags: resolved(body.tags) };
 }
 
 export function fixtureImportJob(status: ImportJob["status"]): ImportJob {

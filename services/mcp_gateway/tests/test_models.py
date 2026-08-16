@@ -342,8 +342,8 @@ def test_facet_selection_item_preserves_padded_requested_name() -> None:
     item = RecipeFacetSelectionItem.model_validate(
         {
             "requestedName": "  tomato  ",
-            "normalizedName": "tomato",
-            "observed": True,
+            "resolvedName": "tomato",
+            "status": "observed",
         }
     )
     assert item.requested_name == "  tomato  "

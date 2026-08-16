@@ -332,11 +332,11 @@ async def test_facet_selections_map_requested_names_with_catalog_casefold(
     )
     assert response.status_code == 200
     assert response.json()["ingredients"] == [
-        {"requestedName": "Straße", "normalizedName": "strasse", "observed": True},
-        {"requestedName": "tomato", "normalizedName": "tomato", "observed": True},
+        {"requestedName": "Straße", "resolvedName": "strasse", "status": "observed"},
+        {"requestedName": "tomato", "resolvedName": "tomato", "status": "observed"},
     ]
     assert response.json()["tags"] == [
-        {"requestedName": "Weeknight", "normalizedName": "weeknight", "observed": True}
+        {"requestedName": "Weeknight", "resolvedName": "weeknight", "status": "observed"}
     ]
 
 
@@ -355,7 +355,7 @@ async def test_facet_selections_preserve_padded_requested_name(
     )
     assert response.status_code == 200
     assert response.json()["ingredients"] == [
-        {"requestedName": "  tomato  ", "normalizedName": "tomato", "observed": True}
+        {"requestedName": "  tomato  ", "resolvedName": "tomato", "status": "observed"}
     ]
 
 
@@ -369,7 +369,7 @@ async def test_empty_library_returns_unobserved_results_for_supplied_names(
     )
     assert response.status_code == 200
     assert response.json() == {
-        "ingredients": [{"requestedName": "ghost", "normalizedName": "ghost", "observed": False}],
+        "ingredients": [{"requestedName": "ghost", "resolvedName": None, "status": "unavailable"}],
         "tags": [],
     }
 
@@ -418,7 +418,7 @@ async def test_membership_does_not_depend_on_browse_page(
         "/v1/recipe-facet-selections", json={"ingredients": ["zucchini"]}
     )
     assert resolved.json()["ingredients"] == [
-        {"requestedName": "zucchini", "normalizedName": "zucchini", "observed": True}
+        {"requestedName": "zucchini", "resolvedName": "zucchini", "status": "observed"}
     ]
 
 
@@ -449,7 +449,7 @@ async def test_facet_selections_membership_is_owner_scoped(
     )
     assert response.status_code == 200
     assert response.json()["ingredients"] == [
-        {"requestedName": "saffron", "normalizedName": "saffron", "observed": False}
+        {"requestedName": "saffron", "resolvedName": None, "status": "unavailable"}
     ]
 
 
@@ -518,7 +518,7 @@ async def test_resolve_fails_closed_when_catalog_version_keeps_changing(
     from catalog.services import recipe_facets as facet_service
     from catalog.services.users import advance_catalog_version
 
-    original = facet_service.fetch_observed_names
+    original = facet_service.fetch_owner_ingredient_identities
 
     async def bump_every_read(session, user_id, **kwargs):
         result = await original(session, user_id, **kwargs)
@@ -526,7 +526,7 @@ async def test_resolve_fails_closed_when_catalog_version_keeps_changing(
         await session.commit()
         return result
 
-    monkeypatch.setattr(facet_service, "fetch_observed_names", bump_every_read)
+    monkeypatch.setattr(facet_service, "fetch_owner_ingredient_identities", bump_every_read)
     response = await api_client.post(
         "/v1/recipe-facet-selections",
         json={"ingredients": ["tomato"], "tags": ["family"]},
@@ -548,12 +548,12 @@ async def test_resolve_retries_when_catalog_version_changes_during_read(
     from catalog.services import recipe_facets as facet_service
     from catalog.services.users import advance_catalog_version
 
-    original = facet_service.fetch_observed_names
+    original = facet_service.fetch_owner_ingredient_identities
     calls = {"count": 0}
 
     async def bump_and_clear(session, user_id, **kwargs):
         calls["count"] += 1
-        result = await original(session, user_id, **kwargs)
+        result = await original(session, user_id)
         if calls["count"] == 1:
             recipes = list(await session.scalars(select(Recipe).where(Recipe.user_id == user_id)))
             for recipe in recipes:
@@ -562,15 +562,185 @@ async def test_resolve_retries_when_catalog_version_changes_during_read(
             await session.commit()
         return result
 
-    monkeypatch.setattr(facet_service, "fetch_observed_names", bump_and_clear)
+    monkeypatch.setattr(facet_service, "fetch_owner_ingredient_identities", bump_and_clear)
     response = await api_client.post(
         "/v1/recipe-facet-selections",
         json={"ingredients": ["tomato"], "tags": ["family"]},
     )
     assert response.status_code == 200
     assert response.json()["ingredients"] == [
-        {"requestedName": "tomato", "normalizedName": "tomato", "observed": False}
+        {"requestedName": "tomato", "resolvedName": None, "status": "unavailable"}
     ]
     assert response.json()["tags"] == [
-        {"requestedName": "family", "normalizedName": "family", "observed": False}
+        {"requestedName": "family", "resolvedName": None, "status": "unavailable"}
+    ]
+
+
+def _canonical_egg_payloads() -> list[dict[str, object]]:
+    return [
+        {
+            "title": "One egg",
+            "ingredients": [{"rawText": "1 egg", "name": "egg", "canonicalName": "egg"}],
+            "instructions": ["Cook."],
+            "tags": [],
+        },
+        {
+            "title": "Two eggs",
+            "ingredients": [{"rawText": "2 eggs", "name": "eggs", "canonicalName": "egg"}],
+            "instructions": ["Cook."],
+            "tags": [],
+        },
+        {
+            "title": "Hebrew egg",
+            "ingredients": [{"rawText": "1 ביצה", "name": "ביצה", "canonicalName": "egg"}],
+            "instructions": ["Cook."],
+            "tags": [],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_canonical_ingredient_facets_group_aliases_and_search_both_languages(
+    api_client: AsyncClient,
+) -> None:
+    for index, payload in enumerate(_canonical_egg_payloads()):
+        response = await api_client.post(
+            "/v1/recipes",
+            headers={"Idempotency-Key": f"canonical-egg-{index}"},
+            json=payload,
+        )
+        assert response.status_code == 201
+
+    browse = await api_client.get("/v1/recipe-facets", params={"ingredientLimit": 10})
+    assert browse.json()["ingredients"] == ["egg"]
+
+    egg_search = await api_client.get("/v1/recipe-facets", params={"ingredientQ": "egg"})
+    assert egg_search.json()["ingredients"] == ["egg"]
+
+    hebrew_search = await api_client.get("/v1/recipe-facets", params={"ingredientQ": "ביצה"})
+    assert hebrew_search.json()["ingredients"] == ["egg"]
+
+    filtered = await api_client.get("/v1/recipes", params={"ingredient": "egg"})
+    assert len(filtered.json()["items"]) == 3
+    raw_texts = {
+        ingredient["rawText"]
+        for recipe in filtered.json()["items"]
+        for ingredient in recipe["ingredients"]
+    }
+    assert raw_texts == {"1 egg", "2 eggs", "1 ביצה"}
+
+
+@pytest.mark.asyncio
+async def test_canonical_ingredient_facets_and_filters_are_owner_scoped(
+    api_client: AsyncClient,
+) -> None:
+    current_subject = "auth0|egg-owner-b"
+
+    async def principal_for_request() -> Principal:
+        return Principal(
+            subject=current_subject,
+            scopes=frozenset({"recipes:read", "recipes:write"}),
+            claims={},
+        )
+
+    app.dependency_overrides[get_principal] = principal_for_request
+    await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "egg-owner-b"},
+        json=_canonical_egg_payloads()[0],
+    )
+
+    current_subject = "auth0|default-user"
+    for index, payload in enumerate(_canonical_egg_payloads()):
+        await api_client.post(
+            "/v1/recipes",
+            headers={"Idempotency-Key": f"canonical-egg-owner-a-{index}"},
+            json=payload,
+        )
+
+    browse = await api_client.get("/v1/recipe-facets", params={"ingredientLimit": 10})
+    assert browse.json()["ingredients"] == ["egg"]
+
+    current_subject = "auth0|egg-owner-b"
+    other_browse = await api_client.get("/v1/recipe-facets", params={"ingredientLimit": 10})
+    assert other_browse.json()["ingredients"] == ["egg"]
+
+    current_subject = "auth0|default-user"
+    other_filter = await api_client.get("/v1/recipes", params={"ingredient": "egg"})
+    assert len(other_filter.json()["items"]) == 3
+
+    current_subject = "auth0|egg-owner-b"
+    isolated_filter = await api_client.get("/v1/recipes", params={"ingredient": "egg"})
+    assert len(isolated_filter.json()["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_canonical_ingredient_resolution_precedence_and_ambiguity(
+    api_client: AsyncClient,
+) -> None:
+    await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "canonical-resolve-egg"},
+        json=_canonical_egg_payloads()[2],
+    )
+
+    exact = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["egg"], "tags": []},
+    )
+    assert exact.json()["ingredients"] == [
+        {"requestedName": "egg", "resolvedName": "egg", "status": "observed"}
+    ]
+
+    alias = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["ביצה"], "tags": []},
+    )
+    assert alias.json()["ingredients"] == [
+        {"requestedName": "ביצה", "resolvedName": "egg", "status": "observed"}
+    ]
+
+    missing = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["ghost"], "tags": []},
+    )
+    assert missing.json()["ingredients"] == [
+        {"requestedName": "ghost", "resolvedName": None, "status": "unavailable"}
+    ]
+
+    await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "canonical-resolve-ambiguous"},
+        json={
+            "title": "Ambiguous Hebrew egg",
+            "ingredients": [
+                {"rawText": "1 ביצה", "name": "ביצה", "canonicalName": "chicken egg"},
+            ],
+            "instructions": ["Cook."],
+            "tags": [],
+        },
+    )
+    ambiguous = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": ["ביצה"], "tags": []},
+    )
+    assert ambiguous.json()["ingredients"] == [
+        {"requestedName": "ביצה", "resolvedName": None, "status": "ambiguous"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tag_resolution_never_produces_ambiguous(api_client: AsyncClient) -> None:
+    await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "canonical-resolve-tags"},
+        json=_payload(tags=["Weeknight"]),
+    )
+    response = await api_client.post(
+        "/v1/recipe-facet-selections",
+        json={"ingredients": [], "tags": ["Weeknight", "ghost"]},
+    )
+    assert response.json()["tags"] == [
+        {"requestedName": "Weeknight", "resolvedName": "weeknight", "status": "observed"},
+        {"requestedName": "ghost", "resolvedName": None, "status": "unavailable"},
     ]

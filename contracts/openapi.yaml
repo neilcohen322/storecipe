@@ -604,11 +604,11 @@ components:
           items: {type: string, minLength: 1, maxLength: 64}
     RecipeFacetSelection:
       type: object
-      required: [requestedName, normalizedName, observed]
+      required: [requestedName, resolvedName, status]
       properties:
         requestedName: {type: string}
-        normalizedName: {type: string}
-        observed: {type: boolean}
+        resolvedName: {type: [string, "null"]}
+        status: {type: string, enum: [observed, unavailable, ambiguous]}
     RecipeFacetSelectionsResponse:
       type: object
       required: [ingredients, tags]

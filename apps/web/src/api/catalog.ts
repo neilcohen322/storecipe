@@ -106,8 +106,8 @@ export type RecipeFacetBrowseParams = {
 
 export type RecipeFacetSelection = {
   requestedName: string;
-  normalizedName: string;
-  observed: boolean;
+  resolvedName: string | null;
+  status: "observed" | "unavailable" | "ambiguous";
 };
 
 export type RecipeFacetSelectionsRequest = {

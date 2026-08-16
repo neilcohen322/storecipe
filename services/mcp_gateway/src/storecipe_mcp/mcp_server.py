@@ -274,8 +274,8 @@ def create_mcp_server(
         """List ingredient, tag, time, and rating values currently present in this user's library.
 
         Use ingredientQ and tagQ to search. Follow next cursors only for the current search.
-        query_recipes still accepts arbitrary normalized names; unobserved names typically
-        match nothing.
+        query_recipes still accepts canonical ingredient names; unavailable or ambiguous
+        names typically match nothing.
         """
 
         return cast(
@@ -300,9 +300,10 @@ def create_mcp_server(
     async def resolve_recipe_query_selections(
         request: RecipeFacetSelectionsRequest,
     ) -> RecipeFacetSelectionsResponse:
-        """Ask whether active filters are still observed and obtain Catalog canonical names.
+        """Ask whether active filters resolve and obtain Catalog canonical names.
 
-        Do not infer membership from a browse page.
+        Do not infer membership from a browse page. Ambiguous ingredient aliases are never
+        rewritten automatically.
         """
 
         return cast(

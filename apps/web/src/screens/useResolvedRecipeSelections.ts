@@ -44,8 +44,13 @@ function selectedFor(
   return values.map((name) => {
     const resolved = byRequested.get(name);
     if (!resolved) return { name };
-    if (resolved.observed) return { name: resolved.normalizedName };
-    return { name: resolved.requestedName, unavailable: true };
+    if (resolved.status === "observed" && resolved.resolvedName !== null) {
+      return { name: resolved.resolvedName };
+    }
+    if (resolved.status === "unavailable") {
+      return { name: resolved.requestedName, unavailable: true };
+    }
+    return { name: resolved.requestedName };
   });
 }
 

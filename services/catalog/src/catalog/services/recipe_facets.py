@@ -25,6 +25,7 @@ from catalog.recipe_queries import normalize_query_text
 from catalog.repositories.recipe_facets import (
     fetch_distinct_facet_names,
     fetch_observed_names,
+    fetch_owner_ingredient_identities,
     fetch_total_minutes_bounds,
 )
 from catalog.services.errors import UnstableCatalogSnapshot
@@ -157,20 +158,73 @@ async def browse_recipe_facets(
     return await _read_stable_catalog_snapshot(session, user.id, read)
 
 
-async def _resolve_kind(
+async def _resolve_ingredients(
     session: AsyncSession,
     *,
     user_id: UUID,
-    kind: FacetKind,
     requested: list[str],
 ) -> list[RecipeFacetSelectionItem]:
     normalized_names = [normalize_query_text(name) for name in requested]
-    observed = await fetch_observed_names(session, user_id, kind=kind, names=normalized_names)
+    identities = await fetch_owner_ingredient_identities(session, user_id)
+    canonical_names = {canonical for canonical, _ in identities}
+    alias_to_canonicals: dict[str, set[str]] = {}
+    for canonical, normalized in identities:
+        alias_to_canonicals.setdefault(normalized, set()).add(canonical)
+
+    items: list[RecipeFacetSelectionItem] = []
+    for name, normalized in zip(requested, normalized_names, strict=True):
+        if normalized in canonical_names:
+            items.append(
+                RecipeFacetSelectionItem(
+                    requested_name=name,
+                    resolved_name=normalized,
+                    status="observed",
+                )
+            )
+            continue
+        alias_matches = alias_to_canonicals.get(normalized, set())
+        if len(alias_matches) == 1:
+            items.append(
+                RecipeFacetSelectionItem(
+                    requested_name=name,
+                    resolved_name=next(iter(alias_matches)),
+                    status="observed",
+                )
+            )
+        elif not alias_matches:
+            items.append(
+                RecipeFacetSelectionItem(
+                    requested_name=name,
+                    resolved_name=None,
+                    status="unavailable",
+                )
+            )
+        else:
+            items.append(
+                RecipeFacetSelectionItem(
+                    requested_name=name,
+                    resolved_name=None,
+                    status="ambiguous",
+                )
+            )
+    return items
+
+
+async def _resolve_tags(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    requested: list[str],
+) -> list[RecipeFacetSelectionItem]:
+    normalized_names = [normalize_query_text(name) for name in requested]
+    observed = await fetch_observed_names(
+        session, user_id, kind=FacetKind.TAG, names=normalized_names
+    )
     return [
         RecipeFacetSelectionItem(
             requested_name=name,
-            normalized_name=normalized,
-            observed=normalized in observed,
+            resolved_name=normalized if normalized in observed else None,
+            status="observed" if normalized in observed else "unavailable",
         )
         for name, normalized in zip(requested, normalized_names, strict=True)
     ]
@@ -185,16 +239,14 @@ async def resolve_recipe_facet_selections(
 
     async def read(_version: int) -> RecipeFacetSelectionsResponse:
         return RecipeFacetSelectionsResponse(
-            ingredients=await _resolve_kind(
+            ingredients=await _resolve_ingredients(
                 session,
                 user_id=user.id,
-                kind=FacetKind.INGREDIENT,
                 requested=request.ingredients,
             ),
-            tags=await _resolve_kind(
+            tags=await _resolve_tags(
                 session,
                 user_id=user.id,
-                kind=FacetKind.TAG,
                 requested=request.tags,
             ),
         )

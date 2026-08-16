@@ -255,6 +255,45 @@ async def test_duplicate_normalized_ingredients_count_once_for_and_match(
 
 
 @pytest.mark.asyncio
+async def test_ingredient_filter_matches_canonical_name_not_source_alias(
+    seeded_catalog: tuple[async_sessionmaker[AsyncSession], SeededCatalog],
+) -> None:
+    session_factory, catalog = seeded_catalog
+    alias_recipe = Recipe(
+        id=UUID("30000000-0000-0000-0000-000000000014"),
+        user_id=catalog.owner_a_id,
+        title="Plural eggs",
+        total_minutes=10,
+        ingredients=[
+            Ingredient(
+                position=0,
+                raw_text="2 eggs",
+                name="eggs",
+                normalized_name="eggs",
+                canonical_name="egg",
+            )
+        ],
+    )
+    async with session_factory() as session:
+        session.add(alias_recipe)
+        await session.commit()
+
+    canonical_match = await _query(
+        session_factory,
+        catalog.owner_a_id,
+        RecipeQueryRequest(ingredients=["egg"]),
+    )
+    alias_miss = await _query(
+        session_factory,
+        catalog.owner_a_id,
+        RecipeQueryRequest(ingredients=["eggs"]),
+    )
+
+    assert {candidate.recipe.id for candidate in canonical_match} == {alias_recipe.id}
+    assert alias_miss == []
+
+
+@pytest.mark.asyncio
 async def test_sort_terms_preserve_caller_precedence_and_default_is_created_desc(
     seeded_catalog: tuple[async_sessionmaker[AsyncSession], SeededCatalog],
 ) -> None:

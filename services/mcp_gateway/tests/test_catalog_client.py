@@ -103,11 +103,11 @@ def _facet_page_payload() -> dict[str, object]:
 def _facet_selections_payload() -> dict[str, object]:
     return {
         "ingredients": [
-            {"requestedName": "Straße", "normalizedName": "strasse", "observed": True},
-            {"requestedName": "tomato", "normalizedName": "tomato", "observed": True},
+            {"requestedName": "Straße", "resolvedName": "strasse", "status": "observed"},
+            {"requestedName": "tomato", "resolvedName": "tomato", "status": "observed"},
         ],
         "tags": [
-            {"requestedName": "Weeknight", "normalizedName": "weeknight", "observed": True},
+            {"requestedName": "Weeknight", "resolvedName": "weeknight", "status": "observed"},
         ],
     }
 
@@ -313,8 +313,8 @@ async def test_resolve_recipe_query_selections_sends_json_body() -> None:
         result = await client.resolve_recipe_query_selections(payload, TOKEN)
 
     assert result.ingredients[0].requested_name == "Straße"
-    assert result.ingredients[0].normalized_name == "strasse"
-    assert result.ingredients[0].observed is True
+    assert result.ingredients[0].resolved_name == "strasse"
+    assert result.ingredients[0].status == "observed"
     assert len(seen) == 1
     request = seen[0]
     assert request.method == "POST"

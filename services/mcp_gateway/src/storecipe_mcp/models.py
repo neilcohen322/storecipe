@@ -287,8 +287,8 @@ class RecipeFacetSelectionItem(ApiModel):
     )
 
     requested_name: str
-    normalized_name: str
-    observed: bool
+    resolved_name: str | None
+    status: Literal["observed", "unavailable", "ambiguous"]
 
 
 class RecipeFacetSelectionsResponse(ApiModel):
