@@ -1,3 +1,4 @@
+import type { RecipeCreate } from "../api/catalog";
 import { randomUuid } from "./randomUuid";
 
 export type IdempotencySession = {
@@ -20,6 +21,14 @@ export function resolveIdempotencySession(
 export type ImportIdempotencyAttempt = {
   session: IdempotencySession;
   jobId: string | null;
+};
+
+/** Reviewed manual create attempt retained across review/save retries. */
+export type ReviewedCreateAttempt = {
+  rawFingerprint: string;
+  normalizationSession: IdempotencySession;
+  reviewedPayload: RecipeCreate;
+  catalogSession: IdempotencySession;
 };
 
 export function resolveImportIdempotencyAttempt(

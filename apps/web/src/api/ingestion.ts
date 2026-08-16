@@ -29,6 +29,18 @@ export type ImportSubmission = {
   jobId: string;
 };
 
+export type NormalizedIngredient = {
+  rawText: string;
+  name: string;
+  canonicalName: string;
+  quantity: number | null;
+  unit: string | null;
+};
+
+export type IngredientNormalizationResponse = {
+  ingredients: NormalizedIngredient[];
+};
+
 type ImportCreateOptions = {
   idempotencyKey?: string;
 };
@@ -88,5 +100,21 @@ export function createIngestionApi(client: ReturnType<typeof createApiClient>) {
       service: "ingestion",
     });
 
-  return { createUrlImport, createTextImport, getImport };
+  const normalizeIngredients = async (
+    ingredients: Array<{ rawText: string }>,
+    idempotencyKey: string,
+  ): Promise<IngredientNormalizationResponse> => {
+    const response = await client.request("/v1/ingredient-normalizations", {
+      service: "ingestion",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({ ingredients }),
+    });
+    return (await response.json()) as IngredientNormalizationResponse;
+  };
+
+  return { createUrlImport, createTextImport, getImport, normalizeIngredients };
 }

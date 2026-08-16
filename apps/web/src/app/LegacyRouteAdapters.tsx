@@ -71,7 +71,7 @@ export function RecipesRouteAdapter() {
 }
 
 export function NewRecipeRouteAdapter() {
-  const { catalog } = useLegacyApis();
+  const { catalog, ingestion } = useLegacyApis();
   const router = useRouter();
   const onUnauthorized = useUnauthorizedHandler();
   const { width } = useWindowDimensions();
@@ -79,6 +79,7 @@ export function NewRecipeRouteAdapter() {
     <AuthGate>
       <CreateRecipeScreen
         catalog={catalog}
+        ingestion={ingestion}
         onCreated={(recipeId) =>
           router.replace({ pathname: "/recipes/[recipeId]", params: { recipeId } })
         }
