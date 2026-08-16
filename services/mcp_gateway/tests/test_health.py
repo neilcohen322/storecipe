@@ -55,22 +55,26 @@ def test_readiness_returns_service_unavailable_for_failed_probe() -> None:
 
 
 def test_default_readiness_allows_all_auth_unset_local_infrastructure() -> None:
+    def readiness_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "service": "dependency",
+                "dependencies": {"postgres": "ok"},
+            },
+            request=request,
+        )
+
+    transport = httpx.MockTransport(readiness_handler)
     app = create_app(
         settings=Settings(
             service_name="test-mcp-gateway",
             catalog_api_url="http://catalog.test:8000",
+            ingestion_api_url="http://ingestion.test:8001",
         ),
-        catalog_transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200,
-                json={
-                    "status": "ok",
-                    "service": "catalog",
-                    "dependencies": {"postgres": "ok"},
-                },
-                request=request,
-            )
-        ),
+        catalog_transport=transport,
+        ingestion_transport=transport,
     )
 
     with TestClient(app) as client:
@@ -80,7 +84,7 @@ def test_default_readiness_allows_all_auth_unset_local_infrastructure() -> None:
     assert response.json() == {
         "status": "ok",
         "service": "test-mcp-gateway",
-        "dependencies": {"catalog": "ok", "obo_config": "not_required"},
+        "dependencies": {"catalog": "ok", "ingestion": "ok", "obo_config": "not_required"},
     }
 
 
@@ -114,6 +118,7 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     monkeypatch.setattr(main_module.httpx, "AsyncClient", build_client)
     settings = Settings(
         catalog_api_url="http://catalog.test:8000",
+        ingestion_api_url="http://ingestion.test:8001",
         auth0_issuer="https://tenant.example/",
         auth0_audience="https://api.storecipe.example",
         obo_client_id="obo-client",
@@ -132,13 +137,18 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     assert response.json() == {
         "status": "ok",
         "service": "mcp-gateway",
-        "dependencies": {"catalog": "ok", "obo_config": "ok"},
+        "dependencies": {"catalog": "ok", "ingestion": "ok", "obo_config": "ok"},
     }
-    assert len(clients) == 2
+    assert len(clients) == 3
     assert all(client.is_closed for client in clients)
-    catalog_kwargs = next(item for item in constructed if "base_url" in item)
-    assert catalog_kwargs["base_url"] == "http://catalog.test:8000"
+    catalog_kwargs = next(
+        item for item in constructed if item.get("base_url") == "http://catalog.test:8000"
+    )
+    ingestion_kwargs = next(
+        item for item in constructed if item.get("base_url") == "http://ingestion.test:8001"
+    )
     assert catalog_kwargs["follow_redirects"] is False
+    assert ingestion_kwargs["follow_redirects"] is False
     timeout = catalog_kwargs["timeout"]
     assert isinstance(timeout, httpx.Timeout)
     assert timeout.connect == 1.5
@@ -151,10 +161,11 @@ def test_default_readiness_uses_one_pooled_catalog_client_and_closes_it(
     assert limits.max_connections > 0
     assert limits.max_keepalive_connections is not None
     assert limits.max_keepalive_connections > 0
-    assert len(requests) == 1
-    assert requests[0].method == "GET"
-    assert requests[0].url == "http://catalog.test:8000/health/ready"
-    assert "Authorization" not in requests[0].headers
+    assert len(requests) == 2
+    assert {request.url.host for request in requests} == {"catalog.test", "ingestion.test"}
+    assert all(request.method == "GET" for request in requests)
+    assert all(request.url.path == "/health/ready" for request in requests)
+    assert all("Authorization" not in request.headers for request in requests)
 
 
 @pytest.mark.asyncio
@@ -206,7 +217,7 @@ def test_gateway_imports_do_not_reach_catalog_or_persistence_modules() -> None:
     import storecipe_mcp
 
     package_dir = Path(storecipe_mcp.__file__).parent
-    forbidden = {"catalog", "sqlalchemy", "asyncpg", "redis"}
+    forbidden = {"catalog", "ingestion", "sqlalchemy", "asyncpg", "redis"}
     offenders: dict[str, set[str]] = {}
     for source_path in package_dir.rglob("*.py"):
         tree = ast.parse(source_path.read_text(encoding="utf-8"))

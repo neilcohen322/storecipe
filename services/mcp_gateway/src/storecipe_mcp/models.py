@@ -55,9 +55,14 @@ SourceUrl = Annotated[
 ]
 
 
+class IngredientDraft(ApiModel):
+    raw_text: NonEmptyText
+
+
 class IngredientCreate(ApiModel):
     raw_text: NonEmptyText
     name: Annotated[str, Field(min_length=1, max_length=200)]
+    canonical_name: Annotated[str, Field(min_length=1, max_length=200)]
     quantity: Annotated[Decimal | None, Field(ge=0)] = None
     unit: Annotated[str | None, Field(min_length=1, max_length=64)] = None
 
@@ -70,6 +75,18 @@ class IngredientView(ApiModel):
 
 
 class RecipeCreate(ApiModel):
+    title: Title
+    source_url: SourceUrl = None
+    servings: Annotated[int | None, Field(ge=1)] = None
+    prep_minutes: Annotated[int | None, Field(ge=0)] = None
+    cook_minutes: Annotated[int | None, Field(ge=0)] = None
+    total_minutes: Annotated[int | None, Field(ge=0)] = None
+    ingredients: Annotated[list[IngredientDraft], Field(min_length=1)]
+    instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
+    tags: list[TagName] = Field(default_factory=list)
+
+
+class CatalogRecipeCreate(ApiModel):
     title: Title
     source_url: SourceUrl = None
     servings: Annotated[int | None, Field(ge=1)] = None
@@ -276,6 +293,14 @@ class RecipeFacetSelectionItem(ApiModel):
 class RecipeFacetSelectionsResponse(ApiModel):
     ingredients: list[RecipeFacetSelectionItem]
     tags: list[RecipeFacetSelectionItem]
+
+
+class IngredientNormalizationRequest(ApiModel):
+    ingredients: Annotated[list[IngredientDraft], Field(min_length=1)]
+
+
+class IngredientNormalizationResponse(ApiModel):
+    ingredients: Annotated[list[IngredientCreate], Field(min_length=1)]
 
 
 # The Catalog contract names the nested ingredient schema simply Ingredient.

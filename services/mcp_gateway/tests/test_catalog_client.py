@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from storecipe_mcp.catalog_client import CatalogClient
 from storecipe_mcp.errors import CatalogClientError
 from storecipe_mcp.models import (
-    RecipeCreate,
+    CatalogRecipeCreate,
     RecipeFacetBrowseRequest,
     RecipeFacetSelectionsRequest,
     RecipeQueryRequest,
@@ -24,8 +24,8 @@ SECRET_VALUES = (TOKEN, "idem-secret-key", "subject-secret", "https://secret.exa
 Handler = Callable[[httpx.Request], Awaitable[httpx.Response]]
 
 
-def _recipe_create() -> RecipeCreate:
-    return RecipeCreate.model_validate(
+def _recipe_create() -> CatalogRecipeCreate:
+    return CatalogRecipeCreate.model_validate(
         {
             "title": "Tomato soup",
             "sourceUrl": "https://example.com/tomato-soup",
@@ -34,7 +34,13 @@ def _recipe_create() -> RecipeCreate:
             "cookMinutes": 20,
             "totalMinutes": 30,
             "ingredients": [
-                {"rawText": "2 tomatoes", "name": "tomato", "quantity": 2, "unit": "piece"}
+                {
+                    "rawText": "2 tomatoes",
+                    "name": "tomato",
+                    "canonicalName": "tomato",
+                    "quantity": 2,
+                    "unit": "piece",
+                }
             ],
             "instructions": ["Chop the tomatoes", "Simmer until soft"],
             "tags": ["soup"],
@@ -366,7 +372,13 @@ async def test_create_recipe_sends_exact_json_and_idempotency_key() -> None:
         "cookMinutes": 20,
         "totalMinutes": 30,
         "ingredients": [
-            {"rawText": "2 tomatoes", "name": "tomato", "quantity": "2", "unit": "piece"}
+            {
+                "rawText": "2 tomatoes",
+                "name": "tomato",
+                "canonicalName": "tomato",
+                "quantity": "2",
+                "unit": "piece",
+            }
         ],
         "instructions": ["Chop the tomatoes", "Simmer until soft"],
         "tags": ["soup"],

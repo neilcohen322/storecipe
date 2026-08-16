@@ -1,3 +1,4 @@
+import json
 from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
@@ -58,7 +59,7 @@ def _recipe_create_payload() -> dict[str, Any]:
         "prepMinutes": 10,
         "cookMinutes": 20,
         "totalMinutes": 30,
-        "ingredients": [{"rawText": "2 tomatoes", "name": "tomato", "quantity": 2, "unit": None}],
+        "ingredients": [{"rawText": "2 tomatoes"}],
         "instructions": ["Cook the tomatoes."],
         "tags": ["soup"],
     }
@@ -105,10 +106,27 @@ def _rpc_request(request_id: int, method: str, params: dict[str, Any]) -> dict[s
     return {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
 
 
-def _catalog_handler(calls: list[httpx.Request], request: httpx.Request) -> httpx.Response:
+def _upstream_handler(calls: list[httpx.Request], request: httpx.Request) -> httpx.Response:
     calls.append(request)
     assert request.headers["authorization"] == f"Bearer {API_TOKEN}"
     assert MCP_TOKEN not in request.headers["authorization"]
+    if request.method == "POST" and request.url.path == "/v1/ingredient-normalizations":
+        assert request.headers["idempotency-key"] == "idem-key-1"
+        return httpx.Response(
+            200,
+            json={
+                "ingredients": [
+                    {
+                        "rawText": "2 tomatoes",
+                        "name": "tomato",
+                        "canonicalName": "tomato",
+                        "quantity": 2,
+                        "unit": None,
+                    }
+                ]
+            },
+            request=request,
+        )
     if request.method == "GET" and request.url.path == "/v1/recipes":
         return httpx.Response(
             200,
@@ -119,6 +137,8 @@ def _catalog_handler(calls: list[httpx.Request], request: httpx.Request) -> http
         return httpx.Response(200, json=_recipe_view_payload(), request=request)
     if request.method == "POST" and request.url.path == "/v1/recipes":
         assert request.headers["idempotency-key"] == "idem-key-1"
+        body = json.loads(request.content)
+        assert body["ingredients"][0]["canonicalName"] == "tomato"
         return httpx.Response(201, json=_recipe_view_payload(), request=request)
     if request.method == "PUT" and request.url.path == f"/v1/recipes/{RECIPE_ID}/rating":
         assert request.read() == b'{"value":4}'
@@ -131,7 +151,11 @@ def _catalog_handler(calls: list[httpx.Request], request: httpx.Request) -> http
             json={"ingredients": [], "tags": []},
             request=request,
         )
-    raise AssertionError(f"unexpected Catalog request: {request.method} {request.url}")
+    raise AssertionError(f"unexpected upstream request: {request.method} {request.url}")
+
+
+def _transport(calls: list[httpx.Request]) -> httpx.MockTransport:
+    return httpx.MockTransport(lambda request: _upstream_handler(calls, request))
 
 
 def _install_verified_principal(
@@ -159,7 +183,8 @@ def _install_verified_principal(
 def test_mcp_streamable_http_requires_bearer_token(settings: Settings) -> None:
     app = create_app(
         settings=settings,
-        catalog_transport=httpx.MockTransport(_catalog_handler),
+        catalog_transport=_transport([]),
+        ingestion_transport=_transport([]),
         obo_provider=FakeOboProvider(),
     )
 
@@ -180,10 +205,12 @@ def test_raw_streamable_http_initialize_list_and_all_six_calls(
     monkeypatch: Any,
 ) -> None:
     calls: list[httpx.Request] = []
+    transport = _transport(calls)
     obo_provider = FakeOboProvider()
     app = create_app(
         settings=settings,
-        catalog_transport=httpx.MockTransport(lambda request: _catalog_handler(calls, request)),
+        catalog_transport=transport,
+        ingestion_transport=transport,
         obo_provider=obo_provider,
     )
 
@@ -242,10 +269,11 @@ def test_raw_streamable_http_initialize_list_and_all_six_calls(
             assert result["isError"] is False
             assert isinstance(result["structuredContent"], dict)
 
-    assert len(calls) == 6
+    assert len(calls) == 7
     assert [(request.method, request.url.path) for request in calls] == [
         ("GET", "/v1/recipes"),
         ("GET", f"/v1/recipes/{RECIPE_ID}"),
+        ("POST", "/v1/ingredient-normalizations"),
         ("POST", "/v1/recipes"),
         ("PUT", f"/v1/recipes/{RECIPE_ID}/rating"),
         ("GET", "/v1/recipe-facets"),
@@ -271,7 +299,8 @@ def test_read_only_token_cannot_trigger_create_or_catalog_request(
     obo_provider = FakeOboProvider()
     app = create_app(
         settings=settings,
-        catalog_transport=httpx.MockTransport(lambda request: _catalog_handler(calls, request)),
+        catalog_transport=_transport(calls),
+        ingestion_transport=_transport(calls),
         obo_provider=obo_provider,
     )
 

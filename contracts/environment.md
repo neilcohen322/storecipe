@@ -27,6 +27,7 @@
 | `EXPO_PUBLIC_AUTH0_AUDIENCE` | Web (Expo) | Auth0 login | Storecipe API resource for access tokens; use `AUTH0_AUDIENCE`, not `MCP_RESOURCE_URL` |
 | `MCP_PORT` | Compose | no | Optional host port mapped to the gateway's internal port `8002` |
 | `MCP_CATALOG_API_URL` | MCP gateway | yes | Trusted Catalog REST base URL; defaults to `http://catalog-api:8000` |
+| `MCP_INGESTION_API_URL` | MCP gateway | yes | Trusted Ingestion REST base URL; defaults to `http://ingestion-api:8001` |
 | `MCP_CATALOG_MAX_RESPONSE_BYTES` | MCP gateway | no | Maximum Catalog response size; defaults to 2,097,152 bytes |
 | `MCP_CONNECT_TIMEOUT_SECONDS` | MCP gateway | no | Catalog connection timeout; defaults to 5 seconds and is bounded from 0.1 to 30 |
 | `MCP_POOL_TIMEOUT_SECONDS` | MCP gateway | no | Catalog connection-pool acquisition timeout; defaults to 5 seconds and is bounded from 0.1 to 30 |
