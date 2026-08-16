@@ -63,9 +63,7 @@ def test_candidate_enforces_catalog_title_limit() -> None:
             title="x" * 201,
             source_url="https://example.com/recipe",
             ingredients=[
-                IngredientNormalizationItem(
-                    raw_text="salt", name="salt", canonical_name="salt"
-                )
+                IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
             ],
             instructions=["Mix"],
         )
@@ -90,9 +88,7 @@ def test_candidate_rejects_integers_beyond_postgres_int4() -> None:
             source_url="https://example.com/recipe",
             servings=9_999_999_999,
             ingredients=[
-                IngredientNormalizationItem(
-                    raw_text="salt", name="salt", canonical_name="salt"
-                )
+                IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
             ],
             instructions=["Mix"],
         )
@@ -105,9 +101,7 @@ def test_candidate_rejects_source_url_beyond_column_width() -> None:
             title="Long URL",
             source_url=long_url,
             ingredients=[
-                IngredientNormalizationItem(
-                    raw_text="salt", name="salt", canonical_name="salt"
-                )
+                IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
             ],
             instructions=["Mix"],
         )
