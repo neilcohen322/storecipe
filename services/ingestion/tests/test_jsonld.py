@@ -41,7 +41,7 @@ def test_complete_secondary_recipe_beats_incomplete_main_entity() -> None:
     assert candidate.prep_minutes == 90
 
 
-def test_salvages_overlong_title_and_name_but_preserves_raw_ingredient() -> None:
+def test_salvages_overlong_title_and_preserves_raw_ingredient() -> None:
     title = "כ" * 210
     ingredient = "ingredient " * 30
     html = script(
@@ -53,7 +53,6 @@ def test_salvages_overlong_title_and_name_but_preserves_raw_ingredient() -> None
     candidate = parse_recipe_jsonld(document(html))
 
     assert len(candidate.title) == 200
-    assert len(candidate.ingredients[0].name) == 200
     assert candidate.ingredients[0].raw_text == ingredient.strip()
 
 

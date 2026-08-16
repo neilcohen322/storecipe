@@ -12,8 +12,8 @@
         "source_url": "https://evaluation.storecipe.invalid/clean-he-01",
         "servings": 2,
         "ingredients": [
-          {"raw_text": "2 עגבניות", "name": "עגבניות", "quantity": 2},
-          {"raw_text": "1 כף שמן זית", "name": "שמן זית", "quantity": 1, "unit": "כף"}
+          {"raw_text": "2 עגבניות", "name": "עגבניות", "canonical_name": "tomato", "quantity": 2},
+          {"raw_text": "1 כף שמן זית", "name": "שמן זית", "canonical_name": "olive oil", "quantity": 1, "unit": "כף"}
         ],
         "instructions": ["חותכים עגבניות.", "מערבבים עם שמן."]
       }
@@ -29,8 +29,8 @@
         "source_url": "https://evaluation.storecipe.invalid/clean-en-01",
         "servings": 2,
         "ingredients": [
-          {"raw_text": "1 cup couscous", "name": "couscous", "quantity": 1, "unit": "cup"},
-          {"raw_text": "1 lemon", "name": "lemon", "quantity": 1}
+          {"raw_text": "1 cup couscous", "name": "couscous", "canonical_name": "couscous", "quantity": 1, "unit": "cup"},
+          {"raw_text": "1 lemon", "name": "lemon", "canonical_name": "lemon", "quantity": 1}
         ],
         "instructions": ["Cover couscous with hot water.", "Stir in lemon juice."]
       }
@@ -55,12 +55,14 @@
           {
             "raw_text": "200 גרם פסטה",
             "name": "פסטה",
+            "canonical_name": "pasta",
             "quantity": 200,
             "unit": "גרם"
           },
           {
             "raw_text": "2 עגבניות",
             "name": "עגבניות",
+            "canonical_name": "tomato",
             "quantity": 2
           }
         ],
@@ -81,8 +83,8 @@
         "source_url": "https://evaluation.storecipe.invalid/messy-he-01",
         "servings": 4,
         "ingredients": [
-          {"raw_text": "כוס עדשים", "name": "עדשים", "quantity": 1, "unit": "כוס"},
-          {"raw_text": "2 גזרים", "name": "גזרים", "quantity": 2}
+          {"raw_text": "כוס עדשים", "name": "עדשים", "canonical_name": "lentil", "quantity": 1, "unit": "כוס"},
+          {"raw_text": "2 גזרים", "name": "גזרים", "canonical_name": "carrot", "quantity": 2}
         ],
         "instructions": ["שוטפים עדשים.", "מבשלים עם הגזר 30 דקות."]
       }
@@ -98,8 +100,8 @@
         "source_url": "https://evaluation.storecipe.invalid/messy-he-02",
         "servings": 1,
         "ingredients": [
-          {"raw_text": "ביצים x2", "name": "ביצים", "quantity": 2},
-          {"raw_text": "חופן תרד", "name": "תרד", "quantity": 1, "unit": "חופן"}
+          {"raw_text": "ביצים x2", "name": "ביצים", "canonical_name": "egg", "quantity": 2},
+          {"raw_text": "חופן תרד", "name": "תרד", "canonical_name": "spinach", "quantity": 1, "unit": "חופן"}
         ],
         "instructions": ["טורפים את הביצים.", "מוסיפים תרד ומטגנים."]
       }
@@ -115,8 +117,8 @@
         "source_url": "https://evaluation.storecipe.invalid/messy-en-01",
         "servings": 2,
         "ingredients": [
-          {"raw_text": "1 cup oats", "name": "oats", "quantity": 1, "unit": "cup"},
-          {"raw_text": "1 apple", "name": "apple", "quantity": 1}
+          {"raw_text": "1 cup oats", "name": "oats", "canonical_name": "oat", "quantity": 1, "unit": "cup"},
+          {"raw_text": "1 apple", "name": "apple", "canonical_name": "apple", "quantity": 1}
         ],
         "instructions": ["Mix oats with water.", "Fold in the chopped apple."]
       }
@@ -132,8 +134,8 @@
         "source_url": "https://evaluation.storecipe.invalid/messy-en-02",
         "servings": 1,
         "ingredients": [
-          {"raw_text": "bread, two slices", "name": "bread", "quantity": 2, "unit": "slices"},
-          {"raw_text": "beans, half cup", "name": "beans", "quantity": 0.5, "unit": "cup"}
+          {"raw_text": "bread, two slices", "name": "bread", "canonical_name": "bread", "quantity": 2, "unit": "slices"},
+          {"raw_text": "beans, half cup", "name": "beans", "canonical_name": "bean", "quantity": 0.5, "unit": "cup"}
         ],
         "instructions": ["Toast bread.", "Spoon beans over it."]
       }
@@ -158,12 +160,14 @@
           {
             "raw_text": "1 cup quinoa",
             "name": "quinoa",
+            "canonical_name": "quinoa",
             "quantity": 1,
             "unit": "cup"
           },
           {
             "raw_text": "one cucumber",
             "name": "cucumber",
+            "canonical_name": "cucumber",
             "quantity": 1
           }
         ],
@@ -184,8 +188,8 @@
         "source_url": "https://evaluation.storecipe.invalid/web-he-01",
         "servings": 2,
         "ingredients": [
-          {"raw_text": "חצי כוס טחינה", "name": "טחינה", "quantity": 0.5, "unit": "כוס"},
-          {"raw_text": "חופן פטרוזיליה", "name": "פטרוזיליה", "quantity": 1, "unit": "חופן"}
+          {"raw_text": "חצי כוס טחינה", "name": "טחינה", "canonical_name": "tahini", "quantity": 0.5, "unit": "כוס"},
+          {"raw_text": "חופן פטרוזיליה", "name": "פטרוזיליה", "canonical_name": "parsley", "quantity": 1, "unit": "חופן"}
         ],
         "instructions": ["טוחנים פטרוזיליה.", "מערבבים עם טחינה."]
       }
@@ -201,8 +205,8 @@
         "source_url": "https://evaluation.storecipe.invalid/web-en-01",
         "servings": 2,
         "ingredients": [
-          {"raw_text": "2 cups peas", "name": "peas", "quantity": 2, "unit": "cups"},
-          {"raw_text": "1 tbsp mint", "name": "mint", "quantity": 1, "unit": "tbsp"}
+          {"raw_text": "2 cups peas", "name": "peas", "canonical_name": "pea", "quantity": 2, "unit": "cups"},
+          {"raw_text": "1 tbsp mint", "name": "mint", "canonical_name": "mint", "quantity": 1, "unit": "tbsp"}
         ],
         "instructions": ["Warm the peas.", "Stir in mint."]
       }
