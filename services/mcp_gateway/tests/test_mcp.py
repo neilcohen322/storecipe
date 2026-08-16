@@ -45,7 +45,15 @@ def _recipe_view() -> RecipeView:
         prep_minutes=10,
         cook_minutes=20,
         total_minutes=30,
-        ingredients=[IngredientView(raw_text="2 tomatoes", name="tomato", quantity=2, unit=None)],
+        ingredients=[
+            IngredientView(
+                raw_text="2 tomatoes",
+                name="tomato",
+                canonical_name="tomato",
+                quantity=2,
+                unit=None,
+            )
+        ],
         instructions=["Cook the tomatoes."],
         tags=["soup"],
         rating=None,

@@ -141,6 +141,7 @@ class Ingredient(Base):
         CheckConstraint("position >= 0", name="nonnegative_position"),
         CheckConstraint("quantity IS NULL OR quantity >= 0", name="nonnegative_quantity"),
         Index("ix_ingredients_normalized_name_recipe", "normalized_name", "recipe_id"),
+        Index("ix_ingredients_canonical_name_recipe", "canonical_name", "recipe_id"),
         {"schema": CATALOG_SCHEMA},
     )
 
@@ -152,6 +153,7 @@ class Ingredient(Base):
     raw_text: Mapped[str] = mapped_column(Text)
     name: Mapped[str] = mapped_column(String(200))
     normalized_name: Mapped[str] = mapped_column(String(200))
+    canonical_name: Mapped[str] = mapped_column(String(200))
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
     unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
 

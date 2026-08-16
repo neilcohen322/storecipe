@@ -47,7 +47,13 @@ def _recipe_view_payload() -> dict[str, object]:
         "cookMinutes": 20,
         "totalMinutes": 30,
         "ingredients": [
-            {"rawText": "2 tomatoes", "name": "tomato", "quantity": 2, "unit": "piece"}
+            {
+                "rawText": "2 tomatoes",
+                "name": "tomato",
+                "canonicalName": "tomato",
+                "quantity": 2,
+                "unit": "piece",
+            }
         ],
         "instructions": ["Chop the tomatoes", "Simmer until soft"],
         "tags": ["soup"],
@@ -125,7 +131,7 @@ def test_public_recipe_create_ingredients_differ_from_catalog_openapi_ingredient
     catalog_ingredient_schema = contract["components"]["schemas"]["Ingredient"]
     public_ingredient_schema = IngredientDraft.model_json_schema(by_alias=True)
 
-    assert catalog_ingredient_schema["required"] == ["rawText", "name"]
+    assert catalog_ingredient_schema["required"] == ["rawText", "name", "canonicalName"]
     assert public_ingredient_schema["required"] == ["rawText"]
     assert "name" not in public_ingredient_schema["properties"]
     assert "canonicalName" not in public_ingredient_schema["properties"]
@@ -286,8 +292,9 @@ def test_recipe_view_and_query_page_match_camel_case_response_contract() -> None
         ("sourceUrl", "ftp://example.com/recipe"),
         ("servings", 0),
         ("prepMinutes", -1),
-        ("ingredients", [{"rawText": "", "name": "tomato"}]),
-        ("ingredients", [{"rawText": "tomato", "name": "x" * 201}]),
+        ("ingredients", [{"rawText": "", "name": "tomato", "canonicalName": "tomato"}]),
+        ("ingredients", [{"rawText": "tomato", "name": "x" * 201, "canonicalName": "tomato"}]),
+        ("ingredients", [{"rawText": "tomato", "name": "tomato", "canonicalName": ""}]),
         ("instructions", [""]),
         ("rating", 6),
     ],

@@ -44,7 +44,15 @@ def _recipe_view_payload() -> dict[str, Any]:
         "prepMinutes": 10,
         "cookMinutes": 20,
         "totalMinutes": 30,
-        "ingredients": [{"rawText": "2 tomatoes", "name": "tomato", "quantity": 2.0, "unit": None}],
+        "ingredients": [
+            {
+                "rawText": "2 tomatoes",
+                "name": "tomato",
+                "canonicalName": "tomato",
+                "quantity": 2.0,
+                "unit": None,
+            }
+        ],
         "instructions": ["Cook the tomatoes."],
         "tags": ["soup"],
         "rating": None,

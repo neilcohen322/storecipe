@@ -533,10 +533,11 @@ components:
         rating: {type: [integer, "null"], minimum: 1, maximum: 5}
     Ingredient:
       type: object
-      required: [rawText, name]
+      required: [rawText, name, canonicalName]
       properties:
         rawText: {type: string, minLength: 1}
         name: {type: string, minLength: 1, maxLength: 200}
+        canonicalName: {type: string, minLength: 1, maxLength: 200}
         quantity: {type: [number, "null"], minimum: 0}
         unit: {type: [string, "null"], minLength: 1, maxLength: 64}
     RecipeQueryPage:

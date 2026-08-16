@@ -57,9 +57,9 @@ def _payload(**overrides: object) -> dict[str, object]:
     body: dict[str, object] = {
         "title": "Soup",
         "ingredients": [
-            {"rawText": "tomato", "name": "tomato"},
-            {"rawText": "basil", "name": "basil"},
-            {"rawText": "zucchini", "name": "zucchini"},
+            {"rawText": "tomato", "name": "tomato", "canonicalName": "tomato"},
+            {"rawText": "basil", "name": "basil", "canonicalName": "basil"},
+            {"rawText": "zucchini", "name": "zucchini", "canonicalName": "zucchini"},
         ],
         "instructions": ["Cook."],
         "tags": ["family", "weeknight"],
@@ -141,9 +141,9 @@ async def test_search_hash_mismatch_is_422(api_client: AsyncClient) -> None:
         headers={"Idempotency-Key": "facets-h"},
         json=_payload(
             ingredients=[
-                {"rawText": "tomato", "name": "tomato"},
-                {"rawText": "tomatillo", "name": "tomatillo"},
-                {"rawText": "basil", "name": "basil"},
+                {"rawText": "tomato", "name": "tomato", "canonicalName": "tomato"},
+                {"rawText": "tomatillo", "name": "tomatillo", "canonicalName": "tomatillo"},
+                {"rawText": "basil", "name": "basil", "canonicalName": "basil"},
             ]
         ),
     )
@@ -167,7 +167,10 @@ async def test_stale_facet_cursor_after_mutation_is_409(api_client: AsyncClient)
     await api_client.post(
         "/v1/recipes",
         headers={"Idempotency-Key": "facets-s2"},
-        json=_payload(title="Other", ingredients=[{"rawText": "onion", "name": "onion"}]),
+        json=_payload(
+            title="Other",
+            ingredients=[{"rawText": "onion", "name": "onion", "canonicalName": "onion"}],
+        ),
     )
     stale = await api_client.get(
         "/v1/recipe-facets", params={"ingredientLimit": 1, "ingredientCursor": cursor}
@@ -292,7 +295,10 @@ async def test_omitting_min_rating_includes_unrated_recipes(api_client: AsyncCli
     rated = await api_client.post(
         "/v1/recipes",
         headers={"Idempotency-Key": "facets-rated"},
-        json=_payload(title="Rated", ingredients=[{"rawText": "onion", "name": "onion"}]),
+        json=_payload(
+            title="Rated",
+            ingredients=[{"rawText": "onion", "name": "onion", "canonicalName": "onion"}],
+        ),
     )
     await api_client.put(f"/v1/recipes/{rated.json()['id']}/rating", json={"value": 1})
     omitted = await api_client.get("/v1/recipes")
@@ -314,8 +320,8 @@ async def test_facet_selections_map_requested_names_with_catalog_casefold(
         headers={"Idempotency-Key": "facets-strasse"},
         json=_payload(
             ingredients=[
-                {"rawText": "Straße", "name": "Straße"},
-                {"rawText": "tomato", "name": "tomato"},
+                {"rawText": "Straße", "name": "Straße", "canonicalName": "Straße"},
+                {"rawText": "tomato", "name": "tomato", "canonicalName": "tomato"},
             ],
             tags=["Weeknight"],
         ),
@@ -433,7 +439,9 @@ async def test_facet_selections_membership_is_owner_scoped(
     await api_client.post(
         "/v1/recipes",
         headers={"Idempotency-Key": "facets-saffron"},
-        json=_payload(ingredients=[{"rawText": "saffron", "name": "saffron"}]),
+        json=_payload(
+            ingredients=[{"rawText": "saffron", "name": "saffron", "canonicalName": "saffron"}],
+        ),
     )
     current_subject = "auth0|owner-a"
     response = await api_client.post(

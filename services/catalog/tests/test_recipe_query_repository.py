@@ -59,6 +59,7 @@ async def seeded_catalog() -> AsyncIterator[tuple[async_sessionmaker[AsyncSessio
                     raw_text=f"1 cup {name}",
                     name=name,
                     normalized_name=name,
+                    canonical_name=name,
                 )
                 for position, name in enumerate(ingredient_names)
             ],
@@ -213,18 +214,21 @@ async def test_duplicate_normalized_ingredients_count_once_for_and_match(
                 raw_text="1 cup chickpeas",
                 name="Chickpeas",
                 normalized_name="chickpeas",
+                canonical_name="chickpeas",
             ),
             Ingredient(
                 position=1,
                 raw_text="2 cups chickpeas",
                 name="chickpeas",
                 normalized_name="chickpeas",
+                canonical_name="chickpeas",
             ),
             Ingredient(
                 position=2,
                 raw_text="1 lime",
                 name="lime",
                 normalized_name="lime",
+                canonical_name="lime",
             ),
         ],
     )

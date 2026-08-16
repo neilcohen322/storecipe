@@ -106,7 +106,7 @@ def _recipe_create(title: str = "Concurrent soup") -> RecipeCreate:
     return RecipeCreate.model_validate(
         {
             "title": title,
-            "ingredients": [{"rawText": "1 cup water", "name": "water"}],
+            "ingredients": [{"rawText": "1 cup water", "name": "water", "canonicalName": "water"}],
             "instructions": ["Boil the water."],
             "tags": [],
         }

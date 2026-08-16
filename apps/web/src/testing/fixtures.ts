@@ -10,8 +10,8 @@ export const fixtureRecipe: Recipe = {
   cookMinutes: 20,
   totalMinutes: 30,
   ingredients: [
-    { rawText: "2 cups tomatoes", name: "tomatoes", quantity: 2, unit: "cups" },
-    { rawText: "300 g pasta", name: "pasta", quantity: 300, unit: "g" },
+    { rawText: "2 cups tomatoes", name: "tomatoes", canonicalName: "tomatoes", quantity: 2, unit: "cups" },
+    { rawText: "300 g pasta", name: "pasta", canonicalName: "pasta", quantity: 300, unit: "g" },
   ],
   instructions: ["Boil the pasta.", "Simmer the tomatoes and combine."],
   tags: ["weeknight", "vegetarian"],

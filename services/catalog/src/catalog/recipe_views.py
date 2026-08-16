@@ -18,6 +18,7 @@ def to_recipe_view(recipe: Recipe, *, rating: int | None) -> RecipeView:
             {
                 "raw_text": ingredient.raw_text,
                 "name": ingredient.name,
+                "canonical_name": ingredient.canonical_name,
                 "quantity": (
                     float(ingredient.quantity) if ingredient.quantity is not None else None
                 ),

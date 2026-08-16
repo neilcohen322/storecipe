@@ -38,6 +38,7 @@ def _recipe(
                 raw_text=name,
                 name=name,
                 normalized_name=name,
+                canonical_name=name,
             )
             for position, name in enumerate(ingredient_names)
         ],

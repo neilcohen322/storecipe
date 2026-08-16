@@ -130,6 +130,7 @@ async def postgres_catalog(postgres_engine: AsyncEngine) -> AsyncIterator[Postgr
                     raw_text=f"1 cup {name}",
                     name=name,
                     normalized_name=normalize_query_text(name),
+                    canonical_name=normalize_query_text(name),
                 )
                 for position, name in enumerate(ingredient_names)
             ],

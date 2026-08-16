@@ -3,7 +3,7 @@ import type { createApiClient } from "./client";
 export type Ingredient = {
   rawText: string;
   name: string;
-  canonicalName?: string;
+  canonicalName: string;
   quantity?: number | null;
   unit?: string | null;
 };

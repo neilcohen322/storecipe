@@ -50,7 +50,8 @@ def _build_ingredients(ingredients: list[IngredientInput]) -> list[Ingredient]:
         Ingredient(
             position=position,
             normalized_name=normalize_query_text(ingredient.name),
-            **ingredient.model_dump(),
+            canonical_name=normalize_query_text(ingredient.canonical_name),
+            **ingredient.model_dump(exclude={"canonical_name"}),
         )
         for position, ingredient in enumerate(ingredients)
     ]
