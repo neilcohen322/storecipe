@@ -3,7 +3,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 
 from ingestion.auth import Principal, require_scopes
 from ingestion.crypto import PayloadCipher
@@ -113,11 +113,14 @@ async def normalize_ingredients(
     service = _service(request, session)
     try:
         result = await service.normalize(principal.subject, idempotency_key, raw_lines)
-    except IdempotencyKeyConflict as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+    except IdempotencyKeyConflict:
+        return problem_response(
+            request,
+            status.HTTP_409_CONFLICT,
             detail="Idempotency key is already used for a different request.",
-        ) from exc
+            problem_type=f"{PROBLEM_TYPE_BASE}/idempotency_conflict",
+            extra={"errorCategory": "idempotency_conflict"},
+        )
     except BudgetExceeded as exc:
         return _budget_exceeded_response(request, exc)
     except NormalizationProviderRejected:

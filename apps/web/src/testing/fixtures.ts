@@ -52,5 +52,6 @@ export function fixtureImportJob(status: ImportJob["status"]): ImportJob {
     createdRecipeId: status === "completed" ? fixtureRecipe.id : null,
     errorCategory: null,
     cancellationRequested: false,
+    hasCandidate: false,
   };
 }

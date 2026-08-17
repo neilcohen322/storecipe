@@ -145,7 +145,8 @@ provider output violates the strict schema or invariants, `429 Too Many Requests
 for burst, provider, or daily-budget exhaustion, and `503 Service Unavailable`
 when configuration is unavailable or a provider attempt is unresolved.
 
-Safe problem categories include `ingredient_normalization_burst_exceeded`,
+Safe problem categories include `idempotency_conflict`,
+`ingredient_normalization_burst_exceeded`,
 `ingredient_normalization_rate_limited`, `daily_ai_budget_exceeded`,
 `ingredient_normalization_invalid_output`, `ingredient_normalization_unavailable`,
 and `ingredient_normalization_unresolved`. Responses never echo raw ingredient

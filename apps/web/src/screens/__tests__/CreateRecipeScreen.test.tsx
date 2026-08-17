@@ -24,19 +24,21 @@ const normalizedIngredients = {
 };
 
 const catalogWith = (createRecipe: jest.Mock) => ({ createRecipe }) as unknown as React.ComponentProps<typeof CreateRecipeScreen>["catalog"];
-const ingestionWith = (normalizeIngredients: jest.Mock) => ({ normalizeIngredients }) as unknown as React.ComponentProps<typeof CreateRecipeScreen>["ingestion"];
+const ingestionWith = (normalizeIngredients: jest.Mock, getImportDraft = jest.fn()) => ({ normalizeIngredients, getImportDraft }) as unknown as React.ComponentProps<typeof CreateRecipeScreen>["ingestion"];
 
 async function renderScreen(
   createRecipe = jest.fn().mockResolvedValue(recipe),
   normalizeIngredients = jest.fn().mockResolvedValue(normalizedIngredients),
   layoutMode: "compact" | "medium" | "expanded" = "medium",
+  extras: { importJobId?: string; getImportDraft?: jest.Mock } = {},
 ) {
   return await render(
     <CreateRecipeScreen
       catalog={catalogWith(createRecipe)}
-      ingestion={ingestionWith(normalizeIngredients)}
+      ingestion={ingestionWith(normalizeIngredients, extras.getImportDraft)}
       {...actions}
       layoutMode={layoutMode}
+      importJobId={extras.importJobId}
     />,
   );
 }
@@ -210,4 +212,210 @@ test("maps review failures to safe copy without provider details", async () => {
   await fireEvent.press(screen.getByRole("button", { name: "Review recipe" }));
   await waitFor(() => expect(screen.getByText("The service is temporarily unavailable. Please try again later.")).toBeTruthy());
   expect(screen.queryByText("private provider details")).toBeNull();
+});
+
+test("discards a stale review when ingredients change during normalization", async () => {
+  const pendingReview = deferred<typeof normalizedIngredients>();
+  const normalizeIngredients = jest.fn(() => pendingReview.promise);
+  const createRecipe = jest.fn().mockResolvedValue(recipe);
+  const screen = await renderScreen(createRecipe, normalizeIngredients);
+  await fillValidRecipe(screen);
+  await fireEvent.press(screen.getByRole("button", { name: "Review recipe" }));
+  await fireEvent.changeText(screen.getByLabelText("Ingredients"), "water\npepper");
+  await act(async () => { pendingReview.resolve(normalizedIngredients); await pendingReview.promise; });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Review recipe" })).toBeTruthy());
+  expect(screen.queryByRole("button", { name: "Save recipe" })).toBeNull();
+  expect(createRecipe).not.toHaveBeenCalled();
+});
+
+test("installs the current title after an in-flight review instead of the captured one", async () => {
+  const pendingReview = deferred<typeof normalizedIngredients>();
+  const normalizeIngredients = jest.fn(() => pendingReview.promise);
+  const createRecipe = jest.fn().mockResolvedValue(recipe);
+  const screen = await renderScreen(createRecipe, normalizeIngredients);
+  await fillValidRecipe(screen);
+  await fireEvent.press(screen.getByRole("button", { name: "Review recipe" }));
+  await fireEvent.changeText(screen.getByLabelText("Title"), "Stew");
+  await act(async () => { pendingReview.resolve(normalizedIngredients); await pendingReview.promise; });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save recipe" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(createRecipe).toHaveBeenCalledTimes(1));
+  expect(createRecipe.mock.calls[0]?.[0]).toMatchObject({ title: "Stew" });
+});
+
+test("keeps incomplete decimal quantity drafts instead of collapsing them", async () => {
+  const createRecipe = jest.fn().mockResolvedValue(recipe);
+  const screen = await renderScreen(createRecipe, jest.fn().mockResolvedValue({
+    ingredients: [
+      { rawText: "water", name: "water", canonicalName: "water", quantity: null, unit: null },
+      { rawText: "salt", name: "salt", canonicalName: "salt", quantity: null, unit: null },
+    ],
+  }));
+  await fillValidRecipe(screen);
+  await reviewRecipe(screen);
+  const quantity = screen.getAllByLabelText("Quantity")[0];
+  await fireEvent.changeText(quantity, "1.");
+  expect(quantity.props.value).toBe("1.");
+  await fireEvent.changeText(quantity, "1.5");
+  expect(quantity.props.value).toBe("1.5");
+  await fireEvent.press(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(createRecipe).toHaveBeenCalledTimes(1));
+  expect(createRecipe.mock.calls[0]?.[0].ingredients[0]).toMatchObject({ quantity: 1.5 });
+});
+
+test("prefills create fields from an extracted import draft", async () => {
+  const getImportDraft = jest.fn().mockResolvedValue({
+    title: "Thai pomelo salad",
+    sourceUrl: "https://edeneat.com/salad",
+    servings: 4,
+    prepMinutes: 20,
+    cookMinutes: null,
+    totalMinutes: 20,
+    ingredients: ["500g pomelo", "1 cucumber"],
+    instructions: ["Peel the pomelo.", "Toss with dressing."],
+    tags: ["thai"],
+  });
+  const screen = await renderScreen(jest.fn().mockResolvedValue(recipe), jest.fn(), "medium", {
+    importJobId: "job-1",
+    getImportDraft,
+  });
+
+  await waitFor(() => expect(screen.getByDisplayValue("Thai pomelo salad")).toBeTruthy());
+  expect(getImportDraft).toHaveBeenCalledWith("job-1");
+  expect(screen.getByDisplayValue("500g pomelo\n1 cucumber")).toBeTruthy();
+  expect(screen.getByDisplayValue("Peel the pomelo.\nToss with dressing.")).toBeTruthy();
+  expect(screen.getByText("We loaded the extracted recipe. Check it, then review and save.")).toBeTruthy();
+});
+
+test("saves extracted import metadata with the reviewed recipe", async () => {
+  const createRecipe = jest.fn().mockResolvedValue(recipe);
+  const normalizeIngredients = jest.fn().mockResolvedValue({
+    ingredients: [
+      { rawText: "500g pomelo", name: "pomelo", canonicalName: "pomelo", quantity: 500, unit: "g" },
+      { rawText: "1 cucumber", name: "cucumber", canonicalName: "cucumber", quantity: 1, unit: null },
+    ],
+  });
+  const getImportDraft = jest.fn().mockResolvedValue({
+    title: "Thai pomelo salad",
+    sourceUrl: "https://edeneat.com/salad",
+    servings: 4,
+    prepMinutes: 20,
+    cookMinutes: null,
+    totalMinutes: 20,
+    ingredients: ["500g pomelo", "1 cucumber"],
+    instructions: ["Peel the pomelo.", "Toss with dressing."],
+    tags: ["thai"],
+  });
+  const screen = await renderScreen(createRecipe, normalizeIngredients, "medium", {
+    importJobId: "job-1",
+    getImportDraft,
+  });
+  await waitFor(() => expect(screen.getByDisplayValue("Thai pomelo salad")).toBeTruthy());
+  await reviewRecipe(screen);
+  await fireEvent.press(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(createRecipe).toHaveBeenCalledWith({
+    title: "Thai pomelo salad",
+    sourceUrl: "https://edeneat.com/salad",
+    servings: 4,
+    prepMinutes: 20,
+    cookMinutes: null,
+    totalMinutes: 20,
+    ingredients: [
+      { rawText: "500g pomelo", name: "pomelo", canonicalName: "pomelo", quantity: 500, unit: "g" },
+      { rawText: "1 cucumber", name: "cucumber", canonicalName: "cucumber", quantity: 1, unit: null },
+    ],
+    instructions: ["Peel the pomelo.", "Toss with dressing."],
+    tags: ["thai"],
+  }, expect.any(String)));
+});
+
+test("disables review while an import draft is loading", async () => {
+  const pendingDraft = deferred<{
+    title: string;
+    sourceUrl: string;
+    servings: number;
+    prepMinutes: number;
+    cookMinutes: null;
+    totalMinutes: number;
+    ingredients: string[];
+    instructions: string[];
+    tags: string[];
+  }>();
+  const getImportDraft = jest.fn(() => pendingDraft.promise);
+  const screen = await renderScreen(jest.fn().mockResolvedValue(recipe), jest.fn(), "medium", {
+    importJobId: "job-1",
+    getImportDraft,
+  });
+  expect(screen.getByText("Loading the extracted recipe…")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Review recipe" }).props.accessibilityState).toMatchObject({
+    disabled: true,
+  });
+  await act(async () => {
+    pendingDraft.resolve({
+      title: "Thai pomelo salad",
+      sourceUrl: "https://edeneat.com/salad",
+      servings: 4,
+      prepMinutes: 20,
+      cookMinutes: null,
+      totalMinutes: 20,
+      ingredients: ["500g pomelo"],
+      instructions: ["Peel the pomelo."],
+      tags: ["thai"],
+    });
+    await pendingDraft.promise;
+  });
+  await waitFor(() => expect(screen.getByDisplayValue("Thai pomelo salad")).toBeTruthy());
+  expect(screen.getByRole("button", { name: "Review recipe" }).props.accessibilityState).toMatchObject({
+    disabled: false,
+  });
+});
+
+test("does not overwrite user edits with a late import draft", async () => {
+  const pendingDraft = deferred<{
+    title: string;
+    sourceUrl: string;
+    servings: number;
+    prepMinutes: number;
+    cookMinutes: null;
+    totalMinutes: number;
+    ingredients: string[];
+    instructions: string[];
+    tags: string[];
+  }>();
+  const getImportDraft = jest.fn(() => pendingDraft.promise);
+  const createRecipe = jest.fn().mockResolvedValue(recipe);
+  const screen = await renderScreen(createRecipe, jest.fn().mockResolvedValue(normalizedIngredients), "medium", {
+    importJobId: "job-1",
+    getImportDraft,
+  });
+  await fireEvent.changeText(screen.getByLabelText("Title"), "My soup");
+  await fireEvent.changeText(screen.getByLabelText("Ingredients"), "water\nsalt");
+  await fireEvent.changeText(screen.getByLabelText("Instructions"), "boil\nserve");
+  await act(async () => {
+    pendingDraft.resolve({
+      title: "Thai pomelo salad",
+      sourceUrl: "https://edeneat.com/salad",
+      servings: 4,
+      prepMinutes: 20,
+      cookMinutes: null,
+      totalMinutes: 20,
+      ingredients: ["500g pomelo", "1 cucumber"],
+      instructions: ["Peel the pomelo.", "Toss with dressing."],
+      tags: ["thai"],
+    });
+    await pendingDraft.promise;
+  });
+  await waitFor(() => expect(screen.getByText("We didn't replace your edits with the extracted recipe.")).toBeTruthy());
+  expect(screen.getByDisplayValue("My soup")).toBeTruthy();
+  expect(screen.getByDisplayValue("water\nsalt")).toBeTruthy();
+  expect(screen.queryByDisplayValue("Thai pomelo salad")).toBeNull();
+  await reviewRecipe(screen);
+  await fireEvent.press(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(createRecipe).toHaveBeenCalledTimes(1));
+  expect(createRecipe.mock.calls[0]?.[0]).toEqual({
+    title: "My soup",
+    ingredients: normalizedIngredients.ingredients,
+    instructions: ["boil", "serve"],
+    tags: [],
+  });
 });

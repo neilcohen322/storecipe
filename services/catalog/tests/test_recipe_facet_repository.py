@@ -191,10 +191,14 @@ async def test_ingredient_facets_group_by_canonical_name_and_search_source_alias
             session, OWNER_A, kind=FacetKind.INGREDIENT, search="ביצה", after=None, limit=20
         )
         identities = await fetch_owner_ingredient_identities(session, OWNER_A)
+        empty = await fetch_owner_ingredient_identities(session, OWNER_A, names=[])
+        filtered = await fetch_owner_ingredient_identities(session, OWNER_A, names=["eggs"])
     assert names == ["egg"]
     assert alias_search == ["egg"]
     assert hebrew_search == ["egg"]
     assert set(identities) == {("egg", "eggs"), ("egg", "ביצה")}
+    assert empty == []
+    assert filtered == [("egg", "eggs")]
 
 
 @pytest.mark.asyncio

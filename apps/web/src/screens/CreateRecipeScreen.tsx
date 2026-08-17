@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   TextInput,
   StyleSheet,
@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ApiError, ApiUnauthorizedError } from "../api/client";
 import type { RecipeCreate, RecipeCreateIngredient } from "../api/catalog";
 import type { createCatalogApi } from "../api/catalog";
-import type { createIngestionApi } from "../api/ingestion";
+import type { createIngestionApi, ImportReviewDraft } from "../api/ingestion";
 import { Button, Field, InlineNotice, PageHeader, Screen, TextArea } from "../components";
 import type { LayoutMode } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
@@ -32,9 +32,27 @@ export type CreateRecipeScreenProps = {
   onBack(): void;
   onUnauthorized(): void;
   layoutMode?: LayoutMode;
+  importJobId?: string | null;
 };
 
-type FormErrors = Partial<Record<"title" | "ingredients" | "instructions", string>>;
+type FormErrors = Partial<Record<"title" | "ingredients" | "instructions" | "quantity", string>>;
+
+type ExtractedRecipeMetadata = Pick<
+  ImportReviewDraft,
+  "sourceUrl" | "servings" | "prepMinutes" | "cookMinutes" | "totalMinutes" | "tags"
+>;
+
+function completeQuantity(value: string): number | null | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function quantityDraftFromIngredient(ingredient: RecipeCreateIngredient): string {
+  return ingredient.quantity === null || ingredient.quantity === undefined ? "" : String(ingredient.quantity);
+}
 
 function mapRequestError(error: unknown, phase: "review" | "save"): string | null {
   if (error instanceof ApiUnauthorizedError) {
@@ -63,12 +81,37 @@ function buildReviewedPayload(
   title: string,
   instructions: string[],
   ingredients: RecipeCreateIngredient[],
+  metadata: ExtractedRecipeMetadata | null,
 ): RecipeCreate {
+  if (!metadata) {
+    return {
+      title,
+      ingredients,
+      instructions,
+      tags: [],
+    };
+  }
   return {
     title,
     ingredients,
     instructions,
-    tags: [],
+    sourceUrl: metadata.sourceUrl,
+    servings: metadata.servings,
+    prepMinutes: metadata.prepMinutes,
+    cookMinutes: metadata.cookMinutes,
+    totalMinutes: metadata.totalMinutes,
+    tags: metadata.tags,
+  };
+}
+
+function metadataFromDraft(draft: ImportReviewDraft): ExtractedRecipeMetadata {
+  return {
+    sourceUrl: draft.sourceUrl,
+    servings: draft.servings,
+    prepMinutes: draft.prepMinutes,
+    cookMinutes: draft.cookMinutes,
+    totalMinutes: draft.totalMinutes,
+    tags: draft.tags,
   };
 }
 
@@ -90,6 +133,7 @@ export function CreateRecipeScreen({
   onBack,
   onUnauthorized,
   layoutMode = "medium",
+  importJobId = null,
 }: CreateRecipeScreenProps) {
   const [title, setTitle] = useState("");
   const [ingredientsText, setIngredientsText] = useState("");
@@ -97,11 +141,65 @@ export function CreateRecipeScreen({
   const [submitting, setSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const [draftLoading, setDraftLoading] = useState(Boolean(importJobId));
+  const [extractedMetadata, setExtractedMetadata] = useState<ExtractedRecipeMetadata | null>(null);
   const [reviewedAttempt, setReviewedAttempt] = useState<ReviewedCreateAttempt | null>(null);
+  const [quantityDrafts, setQuantityDrafts] = useState<string[]>([]);
   const normalizationSessionRef = useRef<IdempotencySession | null>(null);
   const submissionInFlightRef = useRef(false);
+  const formDirtyRef = useRef(false);
+  const titleRef = useRef(title);
+  const ingredientsTextRef = useRef(ingredientsText);
+  const instructionsTextRef = useRef(instructionsText);
+  titleRef.current = title;
+  ingredientsTextRef.current = ingredientsText;
+  instructionsTextRef.current = instructionsText;
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+
+  useEffect(() => {
+    if (!importJobId) {
+      setDraftLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDraftLoading(true);
+    void ingestion.getImportDraft(importJobId).then(
+      (draft) => {
+        if (cancelled) {
+          return;
+        }
+        if (formDirtyRef.current) {
+          setDraftNotice("We didn't replace your edits with the extracted recipe.");
+          setDraftLoading(false);
+          return;
+        }
+        setTitle(draft.title ?? "");
+        setIngredientsText(draft.ingredients.join("\n"));
+        setInstructionsText(draft.instructions.join("\n"));
+        setExtractedMetadata(metadataFromDraft(draft));
+        setDraftNotice("We loaded the extracted recipe. Check it, then review and save.");
+        setRequestError(null);
+        setDraftLoading(false);
+      },
+      (error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setDraftLoading(false);
+        if (error instanceof ApiUnauthorizedError) {
+          onUnauthorized();
+          return;
+        }
+        setDraftNotice(null);
+        setRequestError("We couldn't load the extracted recipe. You can still enter it here.");
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [importJobId, ingestion, onUnauthorized]);
 
   const isReviewed = reviewedAttempt !== null;
   const primaryLabel = isReviewed ? "Save recipe" : "Review recipe";
@@ -134,16 +232,19 @@ export function CreateRecipeScreen({
     const nextFingerprint = fingerprintIngredientNormalization(parseRecipeLines(nextIngredientsText));
     if (nextFingerprint !== reviewedAttempt.rawFingerprint) {
       setReviewedAttempt(null);
+      setQuantityDrafts([]);
     }
   };
 
   const handleIngredientsChange = (value: string) => {
+    formDirtyRef.current = true;
     setIngredientsText(value);
     setFormErrors((previous) => ({ ...previous, ingredients: undefined }));
     discardReviewIfRawLinesChanged(value);
   };
 
   const handleTitleChange = (value: string) => {
+    formDirtyRef.current = true;
     setTitle(value);
     setFormErrors((previous) => ({ ...previous, title: undefined }));
     if (!reviewedAttempt) {
@@ -155,11 +256,13 @@ export function CreateRecipeScreen({
       trimmedTitle,
       normalizedInstructions,
       reviewedAttempt.reviewedPayload.ingredients,
+      extractedMetadata,
     );
     setReviewedAttempt(withCatalogSession(reviewedAttempt, nextPayload));
   };
 
   const handleInstructionsChange = (value: string) => {
+    formDirtyRef.current = true;
     setInstructionsText(value);
     setFormErrors((previous) => ({ ...previous, instructions: undefined }));
     if (!reviewedAttempt) {
@@ -170,6 +273,7 @@ export function CreateRecipeScreen({
       reviewedAttempt.reviewedPayload.title,
       normalizedInstructions,
       reviewedAttempt.reviewedPayload.ingredients,
+      extractedMetadata,
     );
     setReviewedAttempt(withCatalogSession(reviewedAttempt, nextPayload));
   };
@@ -187,10 +291,19 @@ export function CreateRecipeScreen({
         return ingredient;
       }
       if (field === "quantity") {
-        const trimmed = value.trim();
+        setQuantityDrafts((previous) => {
+          const next = [...previous];
+          next[index] = value;
+          return next;
+        });
+        setFormErrors((previous) => ({ ...previous, quantity: undefined }));
+        const parsed = completeQuantity(value);
+        if (parsed === undefined) {
+          return ingredient;
+        }
         return {
           ...ingredient,
-          quantity: trimmed.length === 0 ? null : Number(trimmed),
+          quantity: parsed,
         };
       }
       if (field === "unit") {
@@ -209,12 +322,13 @@ export function CreateRecipeScreen({
       reviewedAttempt.reviewedPayload.title,
       reviewedAttempt.reviewedPayload.instructions,
       ingredients,
+      extractedMetadata,
     );
     setReviewedAttempt(withCatalogSession(reviewedAttempt, nextPayload));
   };
 
   const reviewRecipe = async () => {
-    if (submissionInFlightRef.current) {
+    if (submissionInFlightRef.current || draftLoading) {
       return;
     }
     const validated = validateForm();
@@ -222,7 +336,7 @@ export function CreateRecipeScreen({
       return;
     }
 
-    const { trimmedTitle, normalizedIngredients, normalizedInstructions } = validated;
+    const { normalizedIngredients } = validated;
     const rawFingerprint = fingerprintIngredientNormalization(normalizedIngredients);
     const normalizationSession = resolveIdempotencySession(
       normalizationSessionRef.current,
@@ -238,21 +352,35 @@ export function CreateRecipeScreen({
         normalizedIngredients.map((rawText) => ({ rawText })),
         normalizationSession.key,
       );
+      const currentRawFingerprint = fingerprintIngredientNormalization(
+        parseRecipeLines(ingredientsTextRef.current),
+      );
+      if (currentRawFingerprint !== rawFingerprint) {
+        return;
+      }
+      const currentTitle = titleRef.current.trim();
+      const currentInstructions = parseRecipeLines(instructionsTextRef.current);
+      if (!currentTitle || currentInstructions.length === 0) {
+        return;
+      }
+      const reviewedIngredients = normalized.ingredients.map((ingredient) => ({
+        rawText: ingredient.rawText,
+        name: ingredient.name,
+        canonicalName: ingredient.canonicalName,
+        quantity: ingredient.quantity,
+        unit: ingredient.unit,
+      }));
       const reviewedPayload = buildReviewedPayload(
-        trimmedTitle,
-        normalizedInstructions,
-        normalized.ingredients.map((ingredient) => ({
-          rawText: ingredient.rawText,
-          name: ingredient.name,
-          canonicalName: ingredient.canonicalName,
-          quantity: ingredient.quantity,
-          unit: ingredient.unit,
-        })),
+        currentTitle,
+        currentInstructions,
+        reviewedIngredients,
+        extractedMetadata,
       );
       const catalogSession = resolveIdempotencySession(
         reviewedAttempt?.rawFingerprint === rawFingerprint ? reviewedAttempt.catalogSession : null,
         fingerprintRecipeCreate(reviewedPayload),
       );
+      setQuantityDrafts(reviewedIngredients.map(quantityDraftFromIngredient));
       setReviewedAttempt({
         rawFingerprint,
         normalizationSession,
@@ -272,24 +400,44 @@ export function CreateRecipeScreen({
   };
 
   const saveRecipe = async () => {
-    if (submissionInFlightRef.current || !reviewedAttempt) {
+    if (submissionInFlightRef.current || !reviewedAttempt || draftLoading) {
       return;
     }
     const validated = validateForm();
     if (!validated) {
       return;
     }
+    if (quantityDrafts.some((draft) => completeQuantity(draft) === undefined)) {
+      setFormErrors((previous) => ({ ...previous, quantity: "Quantity is invalid." }));
+      return;
+    }
+    const ingredients = reviewedAttempt.reviewedPayload.ingredients.map((ingredient, index) => {
+      const parsed = completeQuantity(quantityDrafts[index] ?? quantityDraftFromIngredient(ingredient));
+      return { ...ingredient, quantity: parsed === undefined ? ingredient.quantity : parsed };
+    });
+    const payload = {
+      ...reviewedAttempt.reviewedPayload,
+      title: validated.trimmedTitle,
+      instructions: validated.normalizedInstructions,
+      ingredients,
+    };
+    const catalogSession = resolveIdempotencySession(
+      reviewedAttempt.catalogSession,
+      fingerprintRecipeCreate(payload),
+    );
+    setReviewedAttempt(withCatalogSession({ ...reviewedAttempt, catalogSession }, payload));
 
     submissionInFlightRef.current = true;
     setSubmitting(true);
     setRequestError(null);
     try {
       const recipe = await catalog.createRecipe(
-        reviewedAttempt.reviewedPayload,
-        reviewedAttempt.catalogSession.key,
+        payload,
+        catalogSession.key,
       );
       normalizationSessionRef.current = null;
       setReviewedAttempt(null);
+      setQuantityDrafts([]);
       onCreated(recipe.id);
     } catch (err) {
       if (err instanceof ApiUnauthorizedError) {
@@ -304,6 +452,9 @@ export function CreateRecipeScreen({
   };
 
   const handlePrimaryAction = () => {
+    if (draftLoading) {
+      return;
+    }
     if (isReviewed) {
       void saveRecipe();
       return;
@@ -316,7 +467,7 @@ export function CreateRecipeScreen({
       testID={testID}
       label={primaryLabel}
       loading={submitting}
-      disabled={submitting}
+      disabled={submitting || draftLoading}
       onPress={handlePrimaryAction}
     />
   );
@@ -331,6 +482,11 @@ export function CreateRecipeScreen({
           actions={compact ? undefined : submitButton("create-recipe-header-submit")}
         />
         <Button label="Back to recipes" variant="secondary" onPress={onBack} />
+        {draftLoading ? (
+          <InlineNotice tone="info" message="Loading the extracted recipe…" />
+        ) : draftNotice ? (
+          <InlineNotice tone="info" message={draftNotice} />
+        ) : null}
         <View style={styles.form}>
           <Field
             label="Title"
@@ -377,9 +533,10 @@ export function CreateRecipeScreen({
                   />
                   <Field
                     label="Quantity"
+                    error={formErrors.quantity}
                     control={
                       <TextInput
-                        value={ingredient.quantity === null || ingredient.quantity === undefined ? "" : String(ingredient.quantity)}
+                        value={quantityDrafts[index] ?? quantityDraftFromIngredient(ingredient)}
                         onChangeText={(value) => handleIngredientFieldChange(index, "quantity", value)}
                         placeholderTextColor={theme.colors.mutedText}
                         keyboardType="decimal-pad"

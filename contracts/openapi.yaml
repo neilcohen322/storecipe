@@ -292,6 +292,24 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
+  /v1/imports/{jobId}/draft:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getImportDraft
+      description: >-
+        Requires `recipes:read`. Returns the extracted recipe retained for a
+        `review_required` job owned by the caller. Missing jobs, other owners,
+        and jobs without a retained extract are reported as not found.
+      responses:
+        "200":
+          description: Extracted recipe draft
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportReviewDraft"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
   /v1/ingredient-normalizations:
     post:
       operationId: normalizeIngredients
@@ -314,7 +332,7 @@ paths:
               schema: {$ref: "#/components/schemas/IngredientNormalizationResponse"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
-        "409": {$ref: "#/components/responses/Conflict"}
+        "409": {$ref: "#/components/responses/IdempotencyConflict"}
         "422": {$ref: "#/components/responses/ValidationError"}
         "429": {$ref: "#/components/responses/IngredientNormalizationRateLimited"}
         "502":
@@ -641,7 +659,7 @@ components:
         text: {type: string, minLength: 1, maxLength: 262144}
     ImportJob:
       type: object
-      required: [id, status, attemptCount, createdRecipeId, errorCategory, cancellationRequested]
+      required: [id, status, attemptCount, createdRecipeId, errorCategory, cancellationRequested, hasCandidate]
       properties:
         id: {type: string, format: uuid}
         status: {enum: [queued, processing, completed, review_required, failed, cancelled, timed_out]}
@@ -649,6 +667,26 @@ components:
         createdRecipeId: {type: [string, "null"], format: uuid}
         errorCategory: {type: [string, "null"]}
         cancellationRequested: {type: boolean}
+        hasCandidate: {type: boolean}
+    ImportReviewDraft:
+      type: object
+      required: [ingredients, instructions]
+      properties:
+        title: {type: [string, "null"]}
+        sourceUrl: {type: [string, "null"]}
+        servings: {type: [integer, "null"]}
+        prepMinutes: {type: [integer, "null"]}
+        cookMinutes: {type: [integer, "null"]}
+        totalMinutes: {type: [integer, "null"]}
+        ingredients:
+          type: array
+          items: {type: string}
+        instructions:
+          type: array
+          items: {type: string}
+        tags:
+          type: array
+          items: {type: string}
     IngredientNormalizationRequest:
       type: object
       required: [ingredients]

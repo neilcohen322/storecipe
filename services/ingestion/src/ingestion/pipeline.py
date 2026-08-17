@@ -25,6 +25,7 @@ from ingestion.ai_extractor import (
     OpenRouterUsage,
     build_extraction_messages,
     build_response_format,
+    prepare_extraction_source,
     serialize_openrouter_request,
 )
 from ingestion.catalog_client import CatalogError
@@ -39,6 +40,7 @@ from ingestion.import_models import (
     ParseFailureCode,
     RecipeImportCandidate,
     ReviewRecipeCandidate,
+    review_draft_from_deterministic,
 )
 from ingestion.ingredient_normalizer import (
     IngredientNormalizationError,
@@ -485,22 +487,14 @@ class ImportPipeline:
         job = await self._repository.get_job_for_lease(token)
         normalizer = adapters.normalizer
         if normalizer is None:
-            await self._repository.finish_terminal(
-                token,
-                ImportStatus.REVIEW_REQUIRED,
-                error_category="ingredient_normalization_disabled",
-                diagnostic_reference=None,
+            await self._finish_review_required_with_draft(
+                token, deterministic, "ingredient_normalization_disabled"
             )
-            await self._commit()
             return
         if self._budgets is None or self._normalization_budget_policy is None:
-            await self._repository.finish_terminal(
-                token,
-                ImportStatus.REVIEW_REQUIRED,
-                error_category="budget_not_configured",
-                diagnostic_reference=None,
+            await self._finish_review_required_with_draft(
+                token, deterministic, "budget_not_configured"
             )
-            await self._commit()
             return
         if await self._finish_terminal_on_access_challenge(job_id, token) is not None:
             return
@@ -552,14 +546,10 @@ class ImportPipeline:
             )
         except BudgetExceeded:
             await self._repository.session.rollback()
-            job = await self._repository.get_job_for_lease(token)
-            await self._repository.finish_terminal(
-                token,
-                ImportStatus.REVIEW_REQUIRED,
-                error_category="daily_ai_budget_exceeded",
-                diagnostic_reference=None,
+            await self._repository.get_job_for_lease(token)
+            await self._finish_review_required_with_draft(
+                token, deterministic, "daily_ai_budget_exceeded"
             )
-            await self._commit()
             emit_import_event(
                 logger,
                 ImportEvent(
@@ -627,7 +617,7 @@ class ImportPipeline:
             outcome = await normalizer.normalize(raw_lines)
         except (TimeoutError, IngredientNormalizationError, aiohttp.ClientError) as error:
             await self._handle_normalization_failure(
-                token, provider_attempt, reservation.invocation_id, error
+                token, provider_attempt, reservation.invocation_id, error, deterministic
             )
             return
         normalized_items = outcome.items
@@ -701,7 +691,12 @@ class ImportPipeline:
         )
 
     async def _handle_normalization_failure(
-        self, token: LeaseToken, attempt: object, invocation_id: UUID, error: Exception
+        self,
+        token: LeaseToken,
+        attempt: object,
+        invocation_id: UUID,
+        error: Exception,
+        deterministic: DeterministicRecipeCandidate,
     ) -> None:
         from ingestion.models import ProviderAttempt
 
@@ -738,14 +733,17 @@ class ImportPipeline:
                 datetime.now(UTC) + timedelta(seconds=RETRY_DELAY_SECONDS),
                 error_category=category,
             )
+            await self._commit()
+        elif review_required:
+            await self._finish_review_required_with_draft(token, deterministic, category)
         else:
             await self._repository.finish_terminal(
                 token,
-                ImportStatus.REVIEW_REQUIRED if review_required else ImportStatus.FAILED,
+                ImportStatus.FAILED,
                 error_category=category,
                 diagnostic_reference=None,
             )
-        await self._commit()
+            await self._commit()
         emit_import_event(
             logger,
             ImportEvent(
@@ -1041,7 +1039,9 @@ class ImportPipeline:
             return
         try:
             result = await extractor.extract(
-                source_text=self._capped_model_source(document.html),
+                source_text=self._capped_model_source(
+                    prepare_extraction_source(document.html, content_type=document.content_type)
+                ),
                 trusted_source_url=document.final_url,
             )
         except (TimeoutError, AiExtractionError, aiohttp.ClientError) as error:
@@ -1454,6 +1454,35 @@ class ImportPipeline:
 
     async def _commit(self) -> None:
         await self._repository.session.commit()
+
+    async def _finish_review_required_with_draft(
+        self,
+        token: LeaseToken,
+        deterministic: DeterministicRecipeCandidate,
+        error_category: str,
+    ) -> None:
+        try:
+            payload = self._serialize_candidate(review_draft_from_deterministic(deterministic))
+            checkpoint_hash = await self._repository.store_pipeline_payload(
+                token, "candidate", payload, self._payload_cipher
+            )
+            await self._repository.record_candidate_checkpoint(token, checkpoint_hash)
+        except ValueError:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category="candidate_payload_too_large",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            return
+        await self._repository.finish_terminal(
+            token,
+            ImportStatus.REVIEW_REQUIRED,
+            error_category=error_category,
+            diagnostic_reference=None,
+        )
+        await self._commit()
 
     @staticmethod
     def _serialize_document(document: FetchedDocument) -> bytes:

@@ -2169,6 +2169,35 @@ async def test_model_input_is_capped_by_utf8_bytes_before_provider_io(
 
 
 @pytest.mark.asyncio
+async def test_model_source_omits_comment_widgets(session: AsyncSession) -> None:
+    html = """
+    <html><body>
+      <h1>Chili</h1>
+      <p>1 onion</p>
+      <section id="comments"><p>UNIQUE_COMMENT_MARKER</p></section>
+    </body></html>
+    """
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=b"https://recipes.example/chili"
+    )
+    model = RecordingModelExtractor([model_result()])
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(html),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            model,
+        ),
+    )
+
+    assert model.calls
+    source = model.calls[0][0]
+    assert "1 onion" in source
+    assert "UNIQUE_COMMENT_MARKER" not in source
+
+
+@pytest.mark.asyncio
 async def test_provider_reservation_cannot_outlive_the_job_deadline(session: AsyncSession) -> None:
     """A nearer job deadline must cap an unresolved provider operation."""
 
@@ -2944,6 +2973,12 @@ async def test_malformed_normalization_output_finishes_review_without_catalog(
     assert stored.status is ImportStatus.REVIEW_REQUIRED
     assert stored.safe_error_category == "provider_invalid_output"
     assert catalog.calls == 0
+    assert stored.candidate_content_hash is not None
+    payload = await repository.load_payload(job_id, "candidate", cipher())
+    assert payload is not None
+    draft = json.loads(payload)
+    assert draft["title"] == "Lentil soup"
+    assert draft["ingredients"][0]["raw_text"] == "1 cup lentils"
 
 
 @pytest.mark.asyncio

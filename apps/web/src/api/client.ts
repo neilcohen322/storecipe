@@ -2,6 +2,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly errorCategory: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -81,16 +82,19 @@ function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
-async function errorDetail(response: Response): Promise<string | undefined> {
+async function errorProblem(response: Response): Promise<{ detail?: string; errorCategory: string | null }> {
   if (!response.headers.get("Content-Type")?.includes("application/problem+json")) {
-    return undefined;
+    return { errorCategory: null };
   }
 
   try {
-    const problem = (await response.json()) as { detail?: unknown };
-    return typeof problem.detail === "string" ? problem.detail : undefined;
+    const problem = (await response.json()) as { detail?: unknown; errorCategory?: unknown };
+    return {
+      detail: typeof problem.detail === "string" ? problem.detail : undefined,
+      errorCategory: typeof problem.errorCategory === "string" ? problem.errorCategory : null,
+    };
   } catch {
-    return undefined;
+    return { errorCategory: null };
   }
 }
 
@@ -127,11 +131,15 @@ export function createApiClient(
     }
 
     if (!response.ok) {
-      const detail = await errorDetail(response);
+      const problem = await errorProblem(response);
       if (response.status === 401) {
-        throw new ApiUnauthorizedError(detail);
+        throw new ApiUnauthorizedError(problem.detail);
       }
-      throw new ApiError(detail ?? `API request failed with status ${response.status}`, response.status);
+      throw new ApiError(
+        problem.detail ?? `API request failed with status ${response.status}`,
+        response.status,
+        problem.errorCategory,
+      );
     }
 
     return response;

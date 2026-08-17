@@ -72,13 +72,21 @@ async def fetch_total_minutes_bounds(
 async def fetch_owner_ingredient_identities(
     session: AsyncSession,
     user_id: UUID,
+    *,
+    names: Sequence[str] | None = None,
 ) -> list[tuple[str, str]]:
+    if names is not None and not names:
+        return []
     statement = (
         select(Ingredient.canonical_name, Ingredient.normalized_name)
         .join(Recipe)
         .where(Recipe.user_id == user_id)
         .distinct()
     )
+    if names:
+        statement = statement.where(
+            or_(Ingredient.canonical_name.in_(names), Ingredient.normalized_name.in_(names))
+        )
     rows = (await session.execute(statement)).all()
     return [(row[0], row[1]) for row in rows]
 

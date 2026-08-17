@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -10,6 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, mod
 MAX_PG_INT = 2_147_483_647
 # Match the catalog recipes.source_url column width (String(2048)).
 MAX_SOURCE_URL_LENGTH = 2048
+MAX_INGREDIENT_LINES = 256
+MAX_INGREDIENT_LINE_CHARS = 4_096
+MAX_INGREDIENT_TOTAL_BYTES = 65_536
 
 
 class FetchFailureCode(StrEnum):
@@ -85,15 +88,25 @@ class IngredientCandidate(ImportModel):
 
 
 class RawIngredientLine(ImportModel):
-    raw_text: NonEmptyText
+    raw_text: Annotated[str, Field(min_length=1, max_length=MAX_INGREDIENT_LINE_CHARS)]
 
 
-class IngredientNormalizationItem(ImportModel):
-    raw_text: NonEmptyText
+class IngredientNormalizationItem(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=False)
+
+    raw_text: Annotated[str, Field(min_length=1)]
     name: Annotated[str, Field(min_length=1, max_length=200)]
     canonical_name: Annotated[str, Field(min_length=1, max_length=200)]
     quantity: Annotated[Decimal | None, Field(ge=0)] = None
     unit: Annotated[str | None, Field(min_length=1, max_length=64)] = None
+
+    @field_validator("name", "canonical_name", "unit", mode="before")
+    @classmethod
+    def _strip_identity_fields(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
 
 class IngredientNormalizer(Protocol):
@@ -107,7 +120,9 @@ class DeterministicRecipeCandidate(ImportModel):
     prep_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     cook_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     total_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
-    ingredients: Annotated[list[RawIngredientLine], Field(min_length=1)]
+    ingredients: Annotated[
+        list[RawIngredientLine], Field(min_length=1, max_length=MAX_INGREDIENT_LINES)
+    ]
     instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
     tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(default_factory=list)
 
@@ -117,6 +132,13 @@ class DeterministicRecipeCandidate(ImportModel):
         if value is not None and len(str(value)) > MAX_SOURCE_URL_LENGTH:
             raise ValueError("source_url exceeds the maximum stored length")
         return value
+
+    @model_validator(mode="after")
+    def _ingredient_total_bytes_within_cap(self) -> Self:
+        total_bytes = sum(len(item.raw_text.encode("utf-8")) for item in self.ingredients)
+        if total_bytes > MAX_INGREDIENT_TOTAL_BYTES:
+            raise ValueError("total ingredient bytes exceed maximum")
+        return self
 
 
 class RecipeImportCandidate(ImportModel):
@@ -171,3 +193,30 @@ class ReviewRecipeCandidate(ImportModel):
         if self.title is None and not self.ingredients and not self.instructions:
             raise ValueError("review candidate must contain meaningful recipe data")
         return self
+
+
+def review_draft_from_deterministic(
+    candidate: DeterministicRecipeCandidate,
+) -> ReviewRecipeCandidate:
+    """Keep the extracted recipe when later canonicalization cannot finish."""
+
+    ingredients: list[IngredientCandidate] = []
+    for item in candidate.ingredients:
+        name = item.raw_text.strip()[:200]
+        ingredients.append(
+            IngredientCandidate(
+                raw_text=item.raw_text,
+                name=name if name else "ingredient",
+            )
+        )
+    return ReviewRecipeCandidate(
+        title=candidate.title,
+        source_url=candidate.source_url,
+        servings=candidate.servings,
+        prep_minutes=candidate.prep_minutes,
+        cook_minutes=candidate.cook_minutes,
+        total_minutes=candidate.total_minutes,
+        ingredients=ingredients,
+        instructions=[step[:4096] for step in candidate.instructions],
+        tags=candidate.tags[:64],
+    )

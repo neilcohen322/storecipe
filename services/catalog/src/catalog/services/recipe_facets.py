@@ -164,8 +164,10 @@ async def _resolve_ingredients(
     user_id: UUID,
     requested: list[str],
 ) -> list[RecipeFacetSelectionItem]:
+    if not requested:
+        return []
     normalized_names = [normalize_query_text(name) for name in requested]
-    identities = await fetch_owner_ingredient_identities(session, user_id)
+    identities = await fetch_owner_ingredient_identities(session, user_id, names=normalized_names)
     canonical_names = {canonical for canonical, _ in identities}
     alias_to_canonicals: dict[str, set[str]] = {}
     for canonical, normalized in identities:

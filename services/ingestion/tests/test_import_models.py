@@ -4,6 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from ingestion.import_models import (
+    MAX_INGREDIENT_LINE_CHARS,
+    MAX_INGREDIENT_LINES,
+    MAX_INGREDIENT_TOTAL_BYTES,
+    DeterministicRecipeCandidate,
     FetchError,
     FetchFailureCode,
     IngredientNormalizationItem,
@@ -118,3 +122,36 @@ def test_fetch_error_exposes_stable_code_and_safe_context() -> None:
     assert error.url == "https://example.com/private"
     assert error.status == 403
     assert str(error) == "access_denied"
+
+
+def test_deterministic_candidate_rejects_too_many_ingredient_lines() -> None:
+    with pytest.raises(ValidationError):
+        DeterministicRecipeCandidate(
+            title="Overflow",
+            ingredients=[{"raw_text": "salt"} for _ in range(MAX_INGREDIENT_LINES + 1)],
+            instructions=["Mix"],
+        )
+
+
+def test_deterministic_candidate_rejects_overlong_ingredient_line() -> None:
+    with pytest.raises(ValidationError):
+        DeterministicRecipeCandidate(
+            title="Overflow",
+            ingredients=[{"raw_text": "x" * (MAX_INGREDIENT_LINE_CHARS + 1)}],
+            instructions=["Mix"],
+        )
+
+
+def test_deterministic_candidate_rejects_total_utf8_byte_cap() -> None:
+    line = "א" * MAX_INGREDIENT_LINE_CHARS
+    line_bytes = len(line.encode("utf-8"))
+    overflow_count = MAX_INGREDIENT_TOTAL_BYTES // line_bytes + 1
+    assert len(line) <= MAX_INGREDIENT_LINE_CHARS
+    assert line_bytes * (overflow_count - 1) <= MAX_INGREDIENT_TOTAL_BYTES
+    assert line_bytes * overflow_count > MAX_INGREDIENT_TOTAL_BYTES
+    with pytest.raises(ValidationError):
+        DeterministicRecipeCandidate(
+            title="Overflow",
+            ingredients=[{"raw_text": line} for _ in range(overflow_count)],
+            instructions=["Mix"],
+        )

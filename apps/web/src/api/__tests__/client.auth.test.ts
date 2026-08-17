@@ -48,6 +48,7 @@ test("ingestion request includes bearer from getAccessToken", async () => {
       createdRecipeId: null,
       errorCategory: null,
       cancellationRequested: false,
+      hasCandidate: false,
     });
   }) as typeof fetch;
 

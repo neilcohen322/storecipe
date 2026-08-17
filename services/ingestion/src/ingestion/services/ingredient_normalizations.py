@@ -25,6 +25,8 @@ from ingestion.models import (
     IngredientNormalizationAttempt,
     IngredientNormalizationOperation,
     IngredientNormalizationOperationState,
+    LlmInvocation,
+    LlmInvocationState,
     LlmOperationKind,
 )
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
@@ -176,6 +178,8 @@ class IngredientNormalizationService:
             items = _deserialize_items(self._operations.decrypt_result(operation, self._cipher))
             return NormalizationSubmission(_response_from_items(items), replayed=True)
 
+        expired = await self._expire_overdue_attempts(operation)
+
         active = await self._operations.get_active_attempt(operation.id)
         if active is not None:
             raise NormalizationInProgress
@@ -183,9 +187,13 @@ class IngredientNormalizationService:
         attempt_count = await self._operations.count_attempts(operation.id)
         if attempt_count >= _MAX_ATTEMPTS:
             category = await self._last_outcome_category(operation.id)
+            if expired:
+                await self._session.commit()
             raise _map_terminal_failure(category)
 
         if not self._ai_enabled or self._normalizer is None:
+            if expired:
+                await self._session.commit()
             raise NormalizationUnavailable
 
         attempt = await self._operations.create_attempt(
@@ -217,6 +225,7 @@ class IngredientNormalizationService:
             await self._session.commit()
             raise NormalizationInProgress
         attempt = adopted
+        await self._session.commit()
 
         try:
             result = await self._normalizer.normalize(raw_lines)
@@ -320,6 +329,26 @@ class IngredientNormalizationService:
             operation.updated_at = datetime.now(UTC)
         await self._budgets.mark_ambiguous(invocation_id)
         await self._session.commit()
+
+    async def _expire_overdue_attempts(self, operation: IngredientNormalizationOperation) -> bool:
+        active = await self._operations.get_active_attempt(operation.id)
+        if active is None:
+            return False
+        deadline = active.request_deadline_at
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=UTC)
+        if deadline > datetime.now(UTC):
+            return False
+        await self._operations.mark_attempt_ambiguous(
+            active,
+            outcome_category="provider_attempt_unresolved",
+        )
+        invocation = await self._session.scalar(
+            select(LlmInvocation).where(LlmInvocation.provider_operation_id == active.operation_id)
+        )
+        if invocation is not None and invocation.state is LlmInvocationState.RESERVED:
+            await self._budgets.mark_ambiguous(invocation.id)
+        return True
 
     async def _last_outcome_category(self, operation_id: UUID) -> str:
         attempt = await self._session.scalar(

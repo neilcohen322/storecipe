@@ -45,7 +45,12 @@ class FakeTransport:
 
 
 def _response(*items: dict[str, object]) -> str:
-    return json.dumps({"ingredients": list(items)}, ensure_ascii=False)
+    numbered = []
+    for index, item in enumerate(items):
+        payload = dict(item)
+        payload.setdefault("source_index", index)
+        numbered.append(payload)
+    return json.dumps({"ingredients": numbered}, ensure_ascii=False)
 
 
 def test_singular_english_canonical_name_for_plural_and_singular_lines() -> None:
@@ -231,6 +236,19 @@ def test_prompt_injection_line_is_treated_as_data() -> None:
                 "unit": None,
             }
         ),
+        json.dumps(
+            {
+                "ingredients": [
+                    {
+                        "raw_text": "salt",
+                        "name": "salt",
+                        "canonical_name": "salt",
+                        "quantity": None,
+                        "unit": None,
+                    }
+                ]
+            }
+        ),
     ],
 )
 def test_schema_rejects_invalid_model_output(payload: str) -> None:
@@ -254,7 +272,55 @@ def test_count_mismatch_is_invariant_failure() -> None:
     assert captured.value.code is IngredientNormalizationFailureCode.INVARIANT_VIOLATION
 
 
-def test_altered_raw_text_is_invariant_failure() -> None:
+def test_reordered_source_indexes_are_invariant_failure() -> None:
+    content = _response(
+        {
+            "source_index": 1,
+            "raw_text": "2 eggs",
+            "name": "eggs",
+            "canonical_name": "egg",
+            "quantity": 2,
+            "unit": None,
+        },
+        {
+            "source_index": 0,
+            "raw_text": "1 egg",
+            "name": "egg",
+            "canonical_name": "egg",
+            "quantity": 1,
+            "unit": None,
+        },
+    )
+    with pytest.raises(IngredientNormalizationError) as captured:
+        items_from_model_content(content, expected_raw_lines=["1 egg", "2 eggs"])
+    assert captured.value.code is IngredientNormalizationFailureCode.INVARIANT_VIOLATION
+
+
+def test_duplicate_source_index_is_invariant_failure() -> None:
+    content = _response(
+        {
+            "source_index": 0,
+            "raw_text": "1 egg",
+            "name": "egg",
+            "canonical_name": "egg",
+            "quantity": 1,
+            "unit": None,
+        },
+        {
+            "source_index": 0,
+            "raw_text": "2 eggs",
+            "name": "eggs",
+            "canonical_name": "egg",
+            "quantity": 2,
+            "unit": None,
+        },
+    )
+    with pytest.raises(IngredientNormalizationError) as captured:
+        items_from_model_content(content, expected_raw_lines=["1 egg", "2 eggs"])
+    assert captured.value.code is IngredientNormalizationFailureCode.INVARIANT_VIOLATION
+
+
+def test_altered_raw_text_keeps_the_source_line() -> None:
     content = _response(
         {
             "raw_text": "salt",
@@ -264,9 +330,52 @@ def test_altered_raw_text_is_invariant_failure() -> None:
             "unit": None,
         }
     )
-    with pytest.raises(IngredientNormalizationError) as captured:
-        items_from_model_content(content, expected_raw_lines=["pepper"])
-    assert captured.value.code is IngredientNormalizationFailureCode.INVARIANT_VIOLATION
+    items = items_from_model_content(content, expected_raw_lines=["pepper"])
+    assert items[0].raw_text == "pepper"
+    assert items[0].name == "salt"
+
+
+def test_padded_raw_text_is_preserved_when_echoed_exactly() -> None:
+    raw = "  salt  "
+    content = _response(
+        {
+            "raw_text": raw,
+            "name": "salt",
+            "canonical_name": "salt",
+            "quantity": None,
+            "unit": None,
+        }
+    )
+    items = items_from_model_content(content, expected_raw_lines=[raw])
+    assert items[0].raw_text == raw
+
+
+def test_stripped_raw_text_echo_keeps_source_padding() -> None:
+    content = _response(
+        {
+            "raw_text": "salt",
+            "name": "salt",
+            "canonical_name": "salt",
+            "quantity": None,
+            "unit": None,
+        }
+    )
+    items = items_from_model_content(content, expected_raw_lines=["  salt  "])
+    assert items[0].raw_text == "  salt  "
+
+
+def test_unparsable_quantity_becomes_null() -> None:
+    content = _response(
+        {
+            "raw_text": "20-25 mint leaves",
+            "name": "mint leaves",
+            "canonical_name": "mint",
+            "quantity": "20-25",
+            "unit": None,
+        }
+    )
+    items = items_from_model_content(content, expected_raw_lines=["20-25 mint leaves"])
+    assert items[0].quantity is None
 
 
 @pytest.mark.asyncio
@@ -291,6 +400,39 @@ def test_response_format_is_strict_without_extra_properties() -> None:
     schema = json_schema["schema"]
     assert isinstance(schema, dict)
     assert schema["additionalProperties"] is False
+    defs = schema.get("$defs") or schema.get("definitions")
+    assert isinstance(defs, dict)
+    item_schema = defs["LlmIngredientNormalizationFields"]
+    assert isinstance(item_schema, dict)
+    assert item_schema["additionalProperties"] is False
+    assert set(item_schema["required"]) == set(item_schema["properties"])
+    assert set(item_schema["required"]) == {
+        "source_index",
+        "raw_text",
+        "name",
+        "canonical_name",
+        "quantity",
+        "unit",
+    }
+
+
+def test_omitted_unit_is_schema_validation_failure() -> None:
+    content = json.dumps(
+        {
+            "ingredients": [
+                {
+                    "source_index": 0,
+                    "raw_text": "salt",
+                    "name": "salt",
+                    "canonical_name": "salt",
+                    "quantity": None,
+                }
+            ]
+        }
+    )
+    with pytest.raises(IngredientNormalizationError) as captured:
+        items_from_model_content(content, expected_raw_lines=["salt"])
+    assert captured.value.code is IngredientNormalizationFailureCode.SCHEMA_VALIDATION_FAILED
 
 
 def test_normalization_messages_mark_lines_untrusted() -> None:
@@ -299,8 +441,11 @@ def test_normalization_messages_mark_lines_untrusted() -> None:
 
     assert "untrusted" in system
     assert "canonical_name" in system
+    assert "source_index" in system
     assert "same order" in system
     assert messages[1]["content"].startswith("<ingredient_lines>")
+    assert '"source_index": 0' in messages[1]["content"]
+    assert '"source_index": 1' in messages[1]["content"]
 
 
 def test_serialize_normalization_request_uses_temperature_zero_and_output_cap() -> None:
@@ -322,20 +467,25 @@ def test_serialize_normalization_request_uses_temperature_zero_and_output_cap() 
 async def test_normalizer_returns_items_with_prompt_version_metadata_on_failure() -> None:
     normalizer = OpenRouterIngredientNormalizer(
         FakeTransport(
-            _response(
+            json.dumps(
                 {
-                    "raw_text": "wrong",
-                    "name": "salt",
-                    "canonical_name": "salt",
-                    "quantity": None,
-                    "unit": None,
+                    "ingredients": [
+                        {
+                            "source_index": 0,
+                            "raw_text": "salt",
+                            "name": "salt",
+                            "canonical_name": "salt",
+                            "quantity": None,
+                            "unit": None,
+                        }
+                    ]
                 }
             )
         )
     )
 
     with pytest.raises(IngredientNormalizationError) as captured:
-        await normalizer.normalize(["salt"])
+        await normalizer.normalize(["salt", "pepper"])
 
     error = captured.value
     assert error.code is IngredientNormalizationFailureCode.INVARIANT_VIOLATION

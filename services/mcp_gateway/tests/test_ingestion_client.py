@@ -184,6 +184,41 @@ async def test_idempotency_conflict_is_preserved_without_body_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ingestion_problem_document_409_maps_to_idempotency_conflict() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            headers={"content-type": "application/problem+json"},
+            json={
+                "type": "https://docs.storecipe.example/problems/idempotency_conflict",
+                "title": "Conflict",
+                "status": 409,
+                "detail": "Idempotency key is already used for a different request.",
+                "errorCategory": "idempotency_conflict",
+            },
+        )
+
+    async with _ingestion_client(handler) as client:
+        with pytest.raises(IngestionClientError) as captured:
+            await client.normalize_ingredients(_normalization_request(), "idem-secret-key", TOKEN)
+
+    assert captured.value.category == "idempotency_conflict"
+    assert captured.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_409_without_error_category_is_temporary_failure() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "Conflict"})
+
+    async with _ingestion_client(handler) as client:
+        with pytest.raises(IngestionClientError) as captured:
+            await client.normalize_ingredients(_normalization_request(), "idem-secret-key", TOKEN)
+
+    assert captured.value.category == "temporary_ingestion_failure"
+
+
+@pytest.mark.asyncio
 async def test_validation_error_is_safe() -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(

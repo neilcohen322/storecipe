@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -23,8 +24,11 @@ from ingestion.models import (
     ImportJob,
     ImportStage,
     ImportStatus,
+    IngredientNormalizationAttempt,
     IngredientNormalizationOperation,
     IngredientNormalizationOperationState,
+    LlmInvocation,
+    LlmInvocationState,
     LlmOperationKind,
     ProviderAttempt,
 )
@@ -97,7 +101,7 @@ def _items(*lines: str) -> list[IngredientNormalizationItem]:
     ]
 
 
-def _install_normalizer(normalizer: FakeNormalizer | None) -> None:
+def _install_normalizer(normalizer: object) -> None:
     app.state.ingredient_normalizer = normalizer
 
 
@@ -159,6 +163,8 @@ async def test_normalization_requires_idempotency_key(api_client: AsyncClient) -
             {"ingredients": [{"rawText": "x" * (MAX_INGREDIENT_LINE_CHARS + 1)}]},
             "maximum length",
         ),
+        ({"ingredients": [{"rawText": ""}]}, "empty"),
+        ({"ingredients": [{"rawText": "   "}]}, "whitespace"),
     ],
 )
 async def test_normalization_rejects_invalid_bounds(
@@ -175,10 +181,11 @@ async def test_normalization_rejects_invalid_bounds(
 
 @pytest.mark.asyncio
 async def test_normalization_rejects_total_utf8_byte_cap(api_client: AsyncClient) -> None:
-    line = "א" * (MAX_INGREDIENT_TOTAL_BYTES // 2 + 1)
+    line = "א" * MAX_INGREDIENT_LINE_CHARS
+    overflow_count = MAX_INGREDIENT_TOTAL_BYTES // len(line.encode("utf-8")) + 1
     response = await api_client.post(
         "/v1/ingredient-normalizations",
-        json={"ingredients": [{"rawText": line}, {"rawText": line}]},
+        json={"ingredients": [{"rawText": line} for _ in range(overflow_count)]},
         headers={"Idempotency-Key": "bytes-cap"},
     )
 
@@ -224,6 +231,7 @@ async def test_idempotency_key_conflict_returns_409_without_extra_provider_call(
 
     assert first.status_code == 200
     assert second.status_code == 409
+    assert second.json()["errorCategory"] == "idempotency_conflict"
     assert normalizer.calls == 1
 
 
@@ -498,6 +506,120 @@ async def test_safe_errors_never_echo_secret_marker(api_client: AsyncClient) -> 
     assert response.status_code == 502
     assert SECRET_MARKER not in body
     assert SECRET_MARKER not in str(response.json())
+
+
+@pytest.mark.asyncio
+async def test_padded_raw_text_is_preserved_on_success(api_client: AsyncClient) -> None:
+    raw = "  salt  "
+    items = [
+        IngredientNormalizationItem(
+            raw_text=raw,
+            name="salt",
+            canonical_name="salt",
+            quantity=None,
+            unit=None,
+        )
+    ]
+    _install_normalizer(FakeNormalizer(items=items))
+
+    response = await api_client.post(
+        "/v1/ingredient-normalizations",
+        json=_payload(raw),
+        headers={"Idempotency-Key": "padded-raw"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ingredients"][0]["rawText"] == raw
+
+
+@pytest.mark.asyncio
+async def test_attempt_is_committed_before_provider_returns(api_client: AsyncClient) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingNormalizer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def normalize(self, raw_lines: list[str]) -> IngredientNormalizationResult:
+            self.calls += 1
+            started.set()
+            await release.wait()
+            return IngredientNormalizationResult(
+                items=_items("1 egg"),
+                model="fake-model",
+                prompt_version="ingredient-normalization-v1",
+                usage=OpenRouterUsage(
+                    prompt_tokens=100,
+                    completion_tokens=50,
+                    total_tokens=150,
+                    cost=Decimal("0.00001"),
+                ),
+                latency_ms=12,
+            )
+
+    normalizer = BlockingNormalizer()
+    _install_normalizer(normalizer)
+    task = asyncio.create_task(
+        api_client.post(
+            "/v1/ingredient-normalizations",
+            json=_payload("1 egg"),
+            headers={"Idempotency-Key": "durable-key"},
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    async with app.state.session_factory() as session:
+        attempt = await session.scalar(select(IngredientNormalizationAttempt))
+        invocation = await session.scalar(select(LlmInvocation))
+        assert attempt is not None
+        assert attempt.state is AttemptState.IN_FLIGHT
+        assert invocation is not None
+        assert invocation.state is LlmInvocationState.RESERVED
+
+    second = await api_client.post(
+        "/v1/ingredient-normalizations",
+        json=_payload("1 egg"),
+        headers={"Idempotency-Key": "durable-key"},
+    )
+    assert second.status_code == 503
+    assert normalizer.calls == 1
+
+    release.set()
+    first = await task
+    assert first.status_code == 200
+    assert normalizer.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_overdue_in_flight_attempt_allows_retry(api_client: AsyncClient) -> None:
+    normalizer = FakeNormalizer(items=_items("1 egg"))
+    _install_normalizer(normalizer)
+    async with app.state.session_factory() as session:
+        from ingestion.repositories.ingredient_normalizations import (
+            IngredientNormalizationRepository,
+        )
+
+        repository = IngredientNormalizationRepository(session)
+        operation, _ = await repository.get_or_create_operation(
+            owner_subject="auth0|owner-a",
+            idempotency_key="overdue-key",
+            request_hash=compute_request_hash(["1 egg"]),
+        )
+        await repository.create_attempt(
+            operation=operation,
+            request_deadline_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+        await session.commit()
+
+    response = await api_client.post(
+        "/v1/ingredient-normalizations",
+        json=_payload("1 egg"),
+        headers={"Idempotency-Key": "overdue-key"},
+    )
+
+    assert response.status_code == 200
+    assert normalizer.calls == 1
 
 
 def test_openapi_documents_ingredient_normalization_contract() -> None:

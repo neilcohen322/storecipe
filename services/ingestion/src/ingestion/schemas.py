@@ -4,7 +4,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
-from ingestion.import_models import MAX_SOURCE_URL_LENGTH
+from ingestion.import_models import (
+    MAX_INGREDIENT_LINE_CHARS,
+    MAX_INGREDIENT_LINES,
+    MAX_INGREDIENT_TOTAL_BYTES,
+    MAX_SOURCE_URL_LENGTH,
+)
 from ingestion.models import ImportStatus
 
 MAX_TEXT_BYTES = 256 * 1024
@@ -61,15 +66,18 @@ class ImportJobView(ApiModel):
     created_recipe_id: UUID | None
     error_category: str | None
     cancellation_requested: bool = False
-
-
-MAX_INGREDIENT_LINES = 256
-MAX_INGREDIENT_LINE_CHARS = 4_096
-MAX_INGREDIENT_TOTAL_BYTES = 65_536
+    has_candidate: bool = False
 
 
 class RawIngredientInput(ApiModel):
-    raw_text: str
+    raw_text: Annotated[str, Field(min_length=1, max_length=MAX_INGREDIENT_LINE_CHARS)]
+
+    @field_validator("raw_text")
+    @classmethod
+    def _raw_text_has_non_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("ingredient line cannot be empty")
+        return value
 
 
 class IngredientNormalizationRequest(ApiModel):
@@ -102,3 +110,15 @@ class IngredientView(ApiModel):
 
 class IngredientNormalizationResponse(ApiModel):
     ingredients: list[IngredientView]
+
+
+class ImportReviewDraft(ApiModel):
+    title: str | None = None
+    source_url: str | None = None
+    servings: int | None = None
+    prep_minutes: int | None = None
+    cook_minutes: int | None = None
+    total_minutes: int | None = None
+    ingredients: list[str]
+    instructions: list[str]
+    tags: list[str] = Field(default_factory=list)
