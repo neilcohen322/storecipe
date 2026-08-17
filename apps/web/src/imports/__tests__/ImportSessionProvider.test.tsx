@@ -1,6 +1,7 @@
 import { act, render, waitFor } from "@testing-library/react-native";
 import { Text } from "react-native";
 
+import { ApiError } from "../../api/client";
 import type { createIngestionApi } from "../../api/ingestion";
 import {
   ImportSessionProvider,
@@ -27,13 +28,13 @@ function ingestionWith(overrides: Partial<ReturnType<typeof createIngestionApi>>
   return {
     createUrlImport: jest.fn().mockResolvedValue({ jobId: "job-1" }),
     createTextImport: jest.fn().mockResolvedValue({ jobId: "job-1" }),
-    getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "queued", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false }),
+    getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "queued", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false, hasCandidate: false }),
     ...overrides,
   } as unknown as ReturnType<typeof createIngestionApi>;
 }
 
 test("keeps the accepted job and idempotency key when polling has a transient failure", async () => {
-  const getImport = jest.fn().mockRejectedValueOnce(new Error("transport details")).mockResolvedValue({ id: "job-1", status: "queued", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false });
+  const getImport = jest.fn().mockRejectedValueOnce(new Error("transport details")).mockResolvedValue({ id: "job-1", status: "queued", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false, hasCandidate: false });
   const ingestion = ingestionWith({ getImport });
   let session!: ReturnType<typeof useImportSession>;
   await render(<ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><SessionProbe onReady={(next) => { session = next; }} /></ImportSessionProvider>);
@@ -67,15 +68,28 @@ test("rotates to a new idempotency session when normalized payload changes", asy
 });
 
 test("clears the active job at terminal status but retains a safe retryable summary", async () => {
-  const ingestion = ingestionWith({ getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "failed", attemptCount: 1, createdRecipeId: null, errorCategory: "provider_timeout", cancellationRequested: false }) });
+  const ingestion = ingestionWith({ getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "failed", attemptCount: 1, createdRecipeId: null, errorCategory: "provider_timeout", cancellationRequested: false, hasCandidate: false }) });
   let session!: ReturnType<typeof useImportSession>;
   await render(<ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><SessionProbe onReady={(next) => { session = next; }} /></ImportSessionProvider>);
 
   await act(async () => { await session.startImport({ mode: "text", value: "  soup  " }); });
   await waitFor(() => expect(session.activeJob).toBeNull());
 
-  expect(session.terminalSummary).toEqual({ status: "failed", canRetry: true });
+  expect(session.terminalSummary).toEqual({ status: "failed", canRetry: true, jobId: "job-1", errorCategory: "provider_timeout", hasCandidate: false });
   await act(async () => { await session.retryImport(); });
   expect(ingestion.createTextImport).toHaveBeenCalledTimes(2);
   expect((ingestion.createTextImport as jest.Mock).mock.calls[1]?.[1]?.idempotencyKey).not.toBe((ingestion.createTextImport as jest.Mock).mock.calls[0]?.[1]?.idempotencyKey);
+});
+
+test("tells the user when the source URL is already a saved recipe", async () => {
+  const ingestion = ingestionWith({
+    createUrlImport: jest.fn().mockRejectedValue(new ApiError("The source URL is already associated with a saved recipe.", 409, "recipe_source_exists")),
+  });
+  let session!: ReturnType<typeof useImportSession>;
+  await render(<ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><SessionProbe onReady={(next) => { session = next; }} /></ImportSessionProvider>);
+
+  await act(async () => { await session.startImport({ mode: "url", value: "https://example.com/soup" }); });
+
+  expect(session.error).toBe("This URL is already saved in your library.");
+  expect(session.activeJob).toBeNull();
 });

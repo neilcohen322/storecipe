@@ -5,6 +5,8 @@ import pytest
 
 from ingestion.ai_extractor import (
     DEFAULT_OPENROUTER_MODEL,
+    MAX_OUTPUT_TOKENS,
+    PROMPT_VERSION,
     AiExtractionError,
     AiExtractionFailureCode,
     AiohttpOpenRouterTransport,
@@ -14,6 +16,8 @@ from ingestion.ai_extractor import (
     build_extraction_messages,
     build_response_format,
     candidate_from_model_content,
+    prepare_extraction_source,
+    serialize_openrouter_request,
 )
 
 VALID_MODEL_CONTENT = json.dumps(
@@ -27,6 +31,7 @@ VALID_MODEL_CONTENT = json.dumps(
             {
                 "raw_text": "1 כוס עדשים",
                 "name": "עדשים",
+                "canonical_name": "lentil",
                 "quantity": 1,
                 "unit": "כוס",
             }
@@ -118,6 +123,7 @@ def test_candidate_from_model_content_rejects_radware_shaped_recipe() -> None:
             {
                 "raw_text": "Radware Block Page",
                 "name": "Radware Block Page",
+                "canonical_name": "Radware Block Page",
                 "quantity": None,
                 "unit": None,
             }
@@ -147,6 +153,7 @@ def test_candidate_from_model_content_rejects_split_captcha_phrases() -> None:
             {
                 "raw_text": "2 eggs",
                 "name": "eggs",
+                "canonical_name": "egg",
                 "quantity": 2,
                 "unit": None,
             }
@@ -178,6 +185,10 @@ def test_prompt_marks_source_untrusted_and_preserves_source_language() -> None:
     assert "preserve" in instructions
     assert "language" in instructions
     assert "do not translate" in instructions
+    assert "canonical_name" in instructions
+    assert "singular english" in instructions
+    assert "comments" in instructions
+    assert "primary recipe" in instructions
     assert source not in system_content
     assert "<recipe_source>" not in system_content
     assert "</recipe_source>" not in system_content
@@ -198,6 +209,7 @@ def test_valid_content_becomes_candidate_with_trusted_source_url() -> None:
     assert candidate.total_minutes == 45
     assert candidate.ingredients[0].raw_text == "1 כוס עדשים"
     assert candidate.ingredients[0].name == "עדשים"
+    assert candidate.ingredients[0].canonical_name == "lentil"
     assert candidate.ingredients[0].quantity == Decimal("1")
     assert candidate.ingredients[0].unit == "כוס"
     assert candidate.instructions == ["שוטפים את העדשים.", "מבשלים עד לריכוך."]
@@ -254,7 +266,7 @@ async def test_extractor_composes_prompt_transport_validation_and_usage() -> Non
 
     assert result.candidate.title == "מרק עדשים"
     assert result.model == "openai/gpt-5-nano"
-    assert result.prompt_version == "week13-access-challenge-v1"
+    assert result.prompt_version == PROMPT_VERSION
     assert result.usage.total_tokens == 450
     assert result.usage.cost == Decimal("0.000075")
     assert result.latency_ms >= 0
@@ -279,7 +291,42 @@ async def test_paid_schema_failure_preserves_only_safe_accounting_metadata() -> 
     assert error.usage is not None
     assert error.usage.total_tokens == 450
     assert error.model_name == "openai/gpt-5-nano"
-    assert error.prompt_version == "week13-access-challenge-v1"
+    assert error.prompt_version == PROMPT_VERSION
     assert error.latency_ms is not None
     assert secret_marker not in str(error)
     assert "private source text" not in str(error)
+
+
+def test_prepare_extraction_source_drops_comment_widgets_and_keeps_the_recipe() -> None:
+    html = """
+    <html><body>
+      <h1>Chili</h1>
+      <p>1 onion</p>
+      <section id="comments"><p>UNIQUE_COMMENT_MARKER</p></section>
+    </body></html>
+    """
+    cleaned = prepare_extraction_source(html, content_type="text/html; charset=utf-8")
+    assert "1 onion" in cleaned
+    assert "UNIQUE_COMMENT_MARKER" not in cleaned
+
+
+def test_prepare_extraction_source_leaves_plain_text_unchanged() -> None:
+    source = "Chili\n1 onion\nCook."
+    assert prepare_extraction_source(source, content_type="text/plain") == source
+
+
+def test_prepare_extraction_source_preserves_html_without_comment_widgets() -> None:
+    source = "<!doctype html><html><body><h1>Chili</h1><p>1 onion</p></body></html>"
+    assert prepare_extraction_source(source, content_type="text/html") == source
+
+
+def test_serialize_extraction_request_uses_the_raised_output_cap() -> None:
+    payload = json.loads(
+        serialize_openrouter_request(
+            model="openai/gpt-5-nano",
+            messages=[{"role": "user", "content": "x"}],
+            response_format={"type": "json_schema"},
+        ).decode("utf-8")
+    )
+    assert payload["max_tokens"] == MAX_OUTPUT_TOKENS
+    assert payload["max_tokens"] == 16_000

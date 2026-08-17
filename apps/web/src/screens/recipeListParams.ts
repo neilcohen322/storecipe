@@ -107,8 +107,12 @@ export function sameStringList(left: string[], right: string[]): boolean {
 
 function canonicalizeBucket(values: string[] | undefined, items: RecipeFacetSelectionsResponse["ingredients"]): string[] | undefined {
   if (!values?.length) return undefined;
-  const byRequested = new Map(items.map((item) => [item.requestedName, item.normalizedName]));
-  const next = [...new Set(values.map((value) => byRequested.get(value) ?? value))];
+  const byRequested = new Map(items.map((item) => [item.requestedName, item]));
+  const next = [...new Set(values.map((value) => {
+    const item = byRequested.get(value);
+    if (item?.status === "observed" && item.resolvedName !== null) return item.resolvedName;
+    return value;
+  }))];
   return next.length ? next : undefined;
 }
 

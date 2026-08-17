@@ -11,13 +11,13 @@ function ingestionWith(overrides: Partial<ReturnType<typeof createIngestionApi>>
   return {
     createUrlImport: jest.fn().mockResolvedValue({ jobId: "job-1" }),
     createTextImport: jest.fn().mockResolvedValue({ jobId: "job-1" }),
-    getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "processing", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false }),
+    getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "processing", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false, hasCandidate: false }),
     ...overrides,
   } as unknown as ReturnType<typeof createIngestionApi>;
 }
 
-async function renderScreen(ingestion = ingestionWith()) {
-  return await render(<ThemeProvider systemSchemeOverride="light"><ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><ImportScreen onBack={jest.fn()} /></ImportSessionProvider></ThemeProvider>);
+async function renderScreen(ingestion = ingestionWith(), onContinueExtractedRecipe = jest.fn()) {
+  return await render(<ThemeProvider systemSchemeOverride="light"><ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><ImportScreen onBack={jest.fn()} onContinueExtractedRecipe={onContinueExtractedRecipe} /></ImportSessionProvider></ThemeProvider>);
 }
 
 test("switches source modes and validates the active normalized source", async () => {
@@ -45,7 +45,7 @@ test("submits one normalized text import and shows only coarse working status", 
 });
 
 test("uses distinct safe terminal copy and only exposes retry for safe failures", async () => {
-  const ingestion = ingestionWith({ getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "timed_out", attemptCount: 1, createdRecipeId: null, errorCategory: "import_deadline_exceeded", cancellationRequested: false }) });
+  const ingestion = ingestionWith({ getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "timed_out", attemptCount: 1, createdRecipeId: null, errorCategory: "import_deadline_exceeded", cancellationRequested: false, hasCandidate: false }) });
   const screen = await renderScreen(ingestion);
   await fireEvent.changeText(screen.getByLabelText("Recipe URL"), "https://example.com/soup");
   await fireEvent.press(screen.getByRole("button", { name: "Start import" }));
@@ -53,4 +53,32 @@ test("uses distinct safe terminal copy and only exposes retry for safe failures"
   await waitFor(() => expect(screen.getByText("This import took too long and stopped.")).toBeTruthy());
   expect(screen.getByRole("button", { name: "Retry import" })).toBeTruthy();
   expect(screen.queryByText("import_deadline_exceeded")).toBeNull();
+});
+
+test("offers the extracted recipe when automatic import cannot finish saving", async () => {
+  const onContinueExtractedRecipe = jest.fn();
+  const ingestion = ingestionWith({ getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "review_required", attemptCount: 1, createdRecipeId: null, errorCategory: "provider_invalid_output", cancellationRequested: false, hasCandidate: true }) });
+  const screen = await renderScreen(ingestion, onContinueExtractedRecipe);
+  await fireEvent.changeText(screen.getByLabelText("Recipe URL"), "https://example.com/soup");
+  await fireEvent.press(screen.getByRole("button", { name: "Start import" }));
+
+  await waitFor(() => expect(screen.getByText("The recipe was extracted but couldn't be saved automatically. Continue with the extracted recipe to check it and save.")).toBeTruthy());
+  expect(screen.queryByText(/needs your review/i)).toBeNull();
+  await fireEvent.press(screen.getByRole("button", { name: "Continue with extracted recipe" }));
+  expect(onContinueExtractedRecipe).toHaveBeenCalledWith("job-1");
+  expect(screen.getByRole("button", { name: "Retry import" })).toBeTruthy();
+  expect(screen.queryByText("provider_invalid_output")).toBeNull();
+});
+
+test("does not offer a missing extract when the daily AI budget is exhausted", async () => {
+  const onContinueExtractedRecipe = jest.fn();
+  const ingestion = ingestionWith({ getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "review_required", attemptCount: 1, createdRecipeId: null, errorCategory: "daily_ai_budget_exceeded", cancellationRequested: false, hasCandidate: false }) });
+  const screen = await renderScreen(ingestion, onContinueExtractedRecipe);
+  await fireEvent.changeText(screen.getByLabelText("Recipe URL"), "https://example.com/soup");
+  await fireEvent.press(screen.getByRole("button", { name: "Start import" }));
+
+  await waitFor(() => expect(screen.getByText("Today's AI budget is used up, so this recipe wasn't extracted. Try again later, or paste the recipe as text.")).toBeTruthy());
+  expect(screen.queryByRole("button", { name: "Continue with extracted recipe" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry import" })).toBeTruthy();
+  expect(screen.queryByText("daily_ai_budget_exceeded")).toBeNull();
 });

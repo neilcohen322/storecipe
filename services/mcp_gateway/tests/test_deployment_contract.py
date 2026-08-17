@@ -43,6 +43,7 @@ def test_compose_deploys_a_health_checked_standalone_gateway() -> None:
     assert any("MCP_PORT" in str(port) and str(port).endswith(":8002") for port in service["ports"])
     assert service["depends_on"] == {
         "catalog-api": {"condition": "service_healthy"},
+        "ingestion-api": {"condition": "service_healthy"},
     }
     healthcheck = service["healthcheck"]
     assert healthcheck["test"][:3] == ["CMD", "python", "-c"]
@@ -64,6 +65,7 @@ def test_gateway_compose_contract_forbids_database_and_redis_access() -> None:
     assert not any(re.search(r"(?:postgres|redis)", str(name), re.I) for name in dependencies)
     assert set(environment) == {
         "MCP_CATALOG_API_URL",
+        "MCP_INGESTION_API_URL",
         "MCP_CATALOG_MAX_RESPONSE_BYTES",
         "MCP_CONNECT_TIMEOUT_SECONDS",
         "MCP_POOL_TIMEOUT_SECONDS",
@@ -79,6 +81,7 @@ def test_gateway_compose_contract_forbids_database_and_redis_access() -> None:
         "MCP_OBO_EXPIRY_MARGIN_SECONDS",
     }
     assert environment["MCP_CATALOG_API_URL"].endswith("http://catalog-api:8000}")
+    assert environment["MCP_INGESTION_API_URL"].endswith("http://ingestion-api:8001}")
     assert environment["MCP_RESOURCE_URL"].endswith("http://localhost/mcp}")
 
 

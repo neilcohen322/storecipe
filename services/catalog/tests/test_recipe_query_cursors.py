@@ -173,6 +173,7 @@ async def cursor_catalog() -> AsyncIterator[CursorCatalog]:
                     raw_text=f"1 ingredient-{position}",
                     name=f"Ingredient {position}",
                     normalized_name=f"ingredient {position}",
+                    canonical_name=f"ingredient {position}",
                 )
             ],
         )
@@ -280,6 +281,7 @@ async def test_title_cursor_reconstructs_database_lower_value_for_unicode() -> N
                     raw_text="unicode",
                     name="unicode",
                     normalized_name="unicode",
+                    canonical_name="unicode",
                 )
             ],
         ),
@@ -293,6 +295,7 @@ async def test_title_cursor_reconstructs_database_lower_value_for_unicode() -> N
                     raw_text="unicode",
                     name="unicode",
                     normalized_name="unicode",
+                    canonical_name="unicode",
                 )
             ],
         ),

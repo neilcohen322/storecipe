@@ -66,8 +66,8 @@ function defaultFacetPage(overrides: Partial<RecipeFacetPage> = {}): RecipeFacet
 }
 function echoResolve(body: { ingredients?: string[]; tags?: string[] } = {}): RecipeFacetSelectionsResponse {
   return {
-    ingredients: (body.ingredients ?? []).map((requestedName) => ({ requestedName, normalizedName: requestedName, observed: true })),
-    tags: (body.tags ?? []).map((requestedName) => ({ requestedName, normalizedName: requestedName, observed: true })),
+    ingredients: (body.ingredients ?? []).map((requestedName) => ({ requestedName, resolvedName: requestedName, status: "observed" as const })),
+    tags: (body.tags ?? []).map((requestedName) => ({ requestedName, resolvedName: requestedName, status: "observed" as const })),
   };
 }
 function catalogWith(listRecipes: jest.Mock, extras: CatalogExtras = {}) {
@@ -551,7 +551,7 @@ test("hides unavailable labels while a same-selection refresh is in flight or fa
   const secondResolve = deferred<RecipeFacetSelectionsResponse>();
   const resolveRecipeFacetSelections = jest.fn()
     .mockResolvedValueOnce({
-      ingredients: [{ requestedName: "ghost pepper", normalizedName: "ghost pepper", observed: false }],
+      ingredients: [{ requestedName: "ghost pepper", resolvedName: null, status: "unavailable" }],
       tags: [],
     })
     .mockReturnValueOnce(secondResolve.promise);
@@ -586,7 +586,7 @@ test("shows an unavailable chip only after observed false", async () => {
   await waitFor(() => expect(screen.getByText("ghost pepper", hidden)).toBeTruthy());
   expect(screen.queryByText("unavailable", hidden)).toBeNull();
   await act(async () => pending.resolve({
-    ingredients: [{ requestedName: "ghost pepper", normalizedName: "ghost pepper", observed: false }],
+    ingredients: [{ requestedName: "ghost pepper", resolvedName: null, status: "unavailable" }],
     tags: [],
   }));
   await waitFor(() => expect(screen.getByText("unavailable", hidden)).toBeTruthy());
@@ -596,11 +596,11 @@ test("shows an unavailable chip only after observed false", async () => {
 test("rewrites canonical ingredient names with replace instead of push", async () => {
   const resolveRecipeFacetSelections = jest.fn()
     .mockResolvedValueOnce({
-      ingredients: [{ requestedName: "Straße", normalizedName: "strasse", observed: true }],
+      ingredients: [{ requestedName: "Straße", resolvedName: "strasse", status: "observed" }],
       tags: [],
     })
     .mockResolvedValue({
-      ingredients: [{ requestedName: "strasse", normalizedName: "strasse", observed: true }],
+      ingredients: [{ requestedName: "strasse", resolvedName: "strasse", status: "observed" }],
       tags: [],
     });
   mockRouteParams = { ingredient: "Straße" };
@@ -983,13 +983,13 @@ test("ignores a stale selection resolve after back-forward navigation", async ()
   const pending = deferred<RecipeFacetSelectionsResponse>();
   const resolveRecipeFacetSelections = jest.fn()
     .mockReturnValueOnce(pending.promise)
-    .mockResolvedValue({ ingredients: [{ requestedName: "onion", normalizedName: "onion", observed: true }], tags: [] });
+    .mockResolvedValue({ ingredients: [{ requestedName: "onion", resolvedName: "onion", status: "observed" }], tags: [] });
   mockRouteParams = { ingredient: "Straße" };
   const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections });
   mockRouteParams = { ingredient: "onion" };
   await screen.rerender(<RecipeListScreen catalog={catalogWith(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections })} {...actions} />);
   await act(async () => pending.resolve({
-    ingredients: [{ requestedName: "Straße", normalizedName: "strasse", observed: true }],
+    ingredients: [{ requestedName: "Straße", resolvedName: "strasse", status: "observed" }],
     tags: [],
   }));
   expect(mockReplaceRoute).not.toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ ingredient: ["strasse"] }) }));
@@ -1010,7 +1010,7 @@ test("applies canonical names to the latest params after an unrelated rating edi
   mockRouteParams = { ingredient: "Straße", minRating: "4" };
   await screen.rerender(<RecipeListScreen catalog={catalogWith(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { resolveRecipeFacetSelections })} {...actions} />);
   await act(async () => pending.resolve({
-    ingredients: [{ requestedName: "Straße", normalizedName: "strasse", observed: true }],
+    ingredients: [{ requestedName: "Straße", resolvedName: "strasse", status: "observed" }],
     tags: [],
   }));
   expect(mockReplaceRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { ingredient: ["strasse"], minRating: "4" } });

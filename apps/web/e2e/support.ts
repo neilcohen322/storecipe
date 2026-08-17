@@ -41,6 +41,21 @@ export async function installApiInterceptions(page: Page): Promise<void> {
       const body = (request.postDataJSON() ?? {}) as { ingredients?: string[]; tags?: string[] };
       return route.fulfill({ json: fixtureRecipeFacetSelections(body), headers: cors });
     }
+    if (url.pathname === "/v1/ingredient-normalizations" && request.method() === "POST") {
+      const body = (request.postDataJSON() ?? {}) as { ingredients?: Array<{ rawText?: string }> };
+      return route.fulfill({
+        json: {
+          ingredients: (body.ingredients ?? []).map((ingredient) => ({
+            rawText: ingredient.rawText ?? "",
+            name: ingredient.rawText ?? "",
+            canonicalName: ingredient.rawText ?? "",
+            quantity: null,
+            unit: null,
+          })),
+        },
+        headers: cors,
+      });
+    }
     return route.fulfill({ status: 404, json: { detail: "Unmatched E2E request" }, headers: cors });
   });
 }

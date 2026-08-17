@@ -14,7 +14,10 @@ jest.mock("../../theme/ThemeProvider", () => ({
 
 const recipe: Recipe = {
   id: "recipe-1", title: "Lemon pasta", sourceUrl: null, servings: 4, prepMinutes: 10, cookMinutes: 15, totalMinutes: 25,
-  ingredients: [{ rawText: "200g spaghetti", name: "spaghetti" }, { rawText: "1 lemon", name: "lemon" }],
+  ingredients: [
+    { rawText: "200g spaghetti", name: "spaghetti", canonicalName: "spaghetti" },
+    { rawText: "1 lemon", name: "lemon", canonicalName: "lemon" },
+  ],
   instructions: ["Boil the pasta.", "Toss with lemon."], tags: ["quick", "pasta"], rating: 3,
 };
 const secondRecipe: Recipe = { ...recipe, id: "recipe-2", title: "Tomato risotto", rating: 2 };

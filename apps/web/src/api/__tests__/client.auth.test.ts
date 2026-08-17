@@ -48,6 +48,7 @@ test("ingestion request includes bearer from getAccessToken", async () => {
       createdRecipeId: null,
       errorCategory: null,
       cancellationRequested: false,
+      hasCandidate: false,
     });
   }) as typeof fetch;
 
@@ -165,4 +166,45 @@ test("url import keeps an explicit idempotency key across calls", async () => {
   });
 
   expect(keys).toEqual(["import-key", "import-key"]);
+});
+
+test("normalizeIngredients posts reviewed raw lines with bearer and idempotency key", async () => {
+  const calls: {
+    url: string;
+    authorization: string | null;
+    idempotencyKey: string | null;
+    body: string | null;
+  }[] = [];
+  globalThis.fetch = (async (input: RequestInfo, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    calls.push({
+      url: String(input),
+      authorization: headers.get("Authorization"),
+      idempotencyKey: headers.get("Idempotency-Key"),
+      body: typeof init?.body === "string" ? init.body : null,
+    });
+    return mockOkJson({
+      ingredients: [
+        {
+          rawText: "2 cups flour",
+          name: "flour",
+          canonicalName: "flour",
+          quantity: 2,
+          unit: "cups",
+        },
+      ],
+    });
+  }) as typeof fetch;
+
+  const client = createApiClient(async () => "ingestion-token", {
+    catalog: "http://catalog.test",
+    ingestion: "http://ingestion.test",
+  });
+  const ingestion = createIngestionApi(client);
+  await ingestion.normalizeIngredients([{ rawText: "2 cups flour" }], "normalize-key");
+
+  expect(calls[0]?.url).toBe("http://ingestion.test/v1/ingredient-normalizations");
+  expect(calls[0]?.authorization).toBe("Bearer ingestion-token");
+  expect(calls[0]?.idempotencyKey).toBe("normalize-key");
+  expect(calls[0]?.body).toBe(JSON.stringify({ ingredients: [{ rawText: "2 cups flour" }] }));
 });

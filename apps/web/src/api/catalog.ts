@@ -3,6 +3,15 @@ import type { createApiClient } from "./client";
 export type Ingredient = {
   rawText: string;
   name: string;
+  canonicalName: string;
+  quantity?: number | null;
+  unit?: string | null;
+};
+
+export type RecipeCreateIngredient = {
+  rawText: string;
+  name: string;
+  canonicalName: string;
   quantity?: number | null;
   unit?: string | null;
 };
@@ -28,7 +37,7 @@ export type RecipeCreate = {
   prepMinutes?: number | null;
   cookMinutes?: number | null;
   totalMinutes?: number | null;
-  ingredients: Ingredient[];
+  ingredients: RecipeCreateIngredient[];
   instructions: string[];
   tags?: string[];
 };
@@ -97,8 +106,8 @@ export type RecipeFacetBrowseParams = {
 
 export type RecipeFacetSelection = {
   requestedName: string;
-  normalizedName: string;
-  observed: boolean;
+  resolvedName: string | null;
+  status: "observed" | "unavailable" | "ambiguous";
 };
 
 export type RecipeFacetSelectionsRequest = {

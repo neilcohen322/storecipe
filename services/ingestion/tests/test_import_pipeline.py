@@ -27,14 +27,25 @@ from ingestion.ai_extractor import (
 )
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import (
+    DeterministicRecipeCandidate,
     FetchedDocument,
     FetchError,
     FetchFailureCode,
     IngredientCandidate,
+    IngredientNormalizationItem,
     ParseError,
     ParseFailureCode,
+    RawIngredientLine,
     RecipeImportCandidate,
     ReviewRecipeCandidate,
+)
+from ingestion.ingredient_normalizer import (
+    PROMPT_VERSION as NORMALIZATION_PROMPT_VERSION,
+)
+from ingestion.ingredient_normalizer import (
+    IngredientNormalizationError,
+    IngredientNormalizationFailureCode,
+    IngredientNormalizationResult,
 )
 from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.models import (
@@ -48,6 +59,7 @@ from ingestion.models import (
     ImportStatus,
     LlmInvocation,
     LlmInvocationState,
+    LlmOperationKind,
     ProviderAttempt,
 )
 from ingestion.pipeline import AiBudgetPolicy, ImportAdapters
@@ -76,12 +88,23 @@ def cipher() -> PayloadCipher:
     return PayloadCipher.from_keyring(active_key_id="current", keyring=f"current={keyring}")
 
 
+def normalization_policy() -> AiBudgetPolicy:
+    return AiBudgetPolicy(
+        daily_limit=10_000_000,
+        reservation_tokens=64_000,
+        provider_name="openrouter",
+        model_name="fake-model",
+        prompt_version=NORMALIZATION_PROMPT_VERSION,
+    )
+
+
 def ImportPipeline(
     repository: ImportRepository,
     payload_cipher: PayloadCipher,
     *,
     budgets: AiBudgetRepository | None = None,
     budget_policy: AiBudgetPolicy | None = None,
+    normalization_budget_policy: AiBudgetPolicy | None = None,
 ) -> _ImportPipeline:
     return _ImportPipeline(
         repository,
@@ -95,6 +118,7 @@ def ImportPipeline(
             model_name="fake-model",
             prompt_version="test-v1",
         ),
+        normalization_budget_policy=normalization_budget_policy or normalization_policy(),
     )
 
 
@@ -102,9 +126,77 @@ def candidate(*, source_url: str | None) -> RecipeImportCandidate:
     return RecipeImportCandidate(
         title="Lentil soup",
         source_url=source_url,
-        ingredients=[IngredientCandidate(raw_text="1 cup lentils", name="lentils")],
+        ingredients=[
+            IngredientNormalizationItem(
+                raw_text="1 cup lentils", name="lentils", canonical_name="lentil"
+            )
+        ],
         instructions=["Cook until tender."],
     )
+
+
+def deterministic_candidate(*, source_url: str | None) -> DeterministicRecipeCandidate:
+    return DeterministicRecipeCandidate(
+        title="Lentil soup",
+        source_url=source_url,
+        ingredients=[RawIngredientLine(raw_text="1 cup lentils")],
+        instructions=["Cook until tender."],
+    )
+
+
+class FakeIngredientNormalizer:
+    def __init__(
+        self,
+        *,
+        items: list[IngredientNormalizationItem] | None = None,
+        items_for_lines: dict[str, IngredientNormalizationItem] | None = None,
+        error: IngredientNormalizationError | None = None,
+        canonical_name: str = "lentil",
+    ) -> None:
+        self.items = items
+        self.items_for_lines = items_for_lines or {}
+        self.error = error
+        self.canonical_name = canonical_name
+        self.calls = 0
+        self.last_raw_lines: list[str] | None = None
+
+    async def normalize(
+        self, raw_lines: list[str]
+    ) -> IngredientNormalizationResult | list[IngredientNormalizationItem]:
+        self.calls += 1
+        self.last_raw_lines = raw_lines
+        if self.error is not None:
+            raise self.error
+        if self.items is not None:
+            resolved = self.items
+        else:
+            resolved = [
+                self.items_for_lines.get(
+                    line,
+                    IngredientNormalizationItem(
+                        raw_text=line,
+                        name=line,
+                        canonical_name=self.canonical_name,
+                    ),
+                )
+                for line in raw_lines
+            ]
+        return IngredientNormalizationResult(
+            items=resolved,
+            model="fake-model",
+            prompt_version=NORMALIZATION_PROMPT_VERSION,
+            usage=OpenRouterUsage(
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+                cost=Decimal("0"),
+            ),
+            latency_ms=1,
+        )
+
+
+def default_normalizer() -> FakeIngredientNormalizer:
+    return FakeIngredientNormalizer()
 
 
 PRIMARY_URL = "https://www.publisher.test/recipe/a?x=1&x=2"
@@ -167,11 +259,11 @@ class SequencedFetcher:
 
 
 class RecordingDeterministicExtractor:
-    def __init__(self, outcome: RecipeImportCandidate | ParseError) -> None:
+    def __init__(self, outcome: DeterministicRecipeCandidate | ParseError) -> None:
         self.outcome = outcome
         self.calls: list[FetchedDocument] = []
 
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
         self.calls.append(document)
         if isinstance(self.outcome, ParseError):
             raise self.outcome
@@ -179,11 +271,11 @@ class RecordingDeterministicExtractor:
 
 
 class SequencedDeterministicExtractor:
-    def __init__(self, outcomes: list[RecipeImportCandidate | BaseException]) -> None:
+    def __init__(self, outcomes: list[DeterministicRecipeCandidate | BaseException]) -> None:
         self.outcomes = outcomes
         self.calls: list[FetchedDocument] = []
 
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
         self.calls.append(document)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
@@ -192,7 +284,7 @@ class SequencedDeterministicExtractor:
 
 
 class DeterministicJsonLdAdapter:
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
         return parse_recipe_jsonld(document)
 
 
@@ -202,7 +294,7 @@ class VisibilityCheckingDeterministicExtractor:
         self._job_id = job_id
         self.observed: tuple[ImportStage | None, str | None, bool] | None = None
 
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
         async with self._session_factory() as observer:
             visible_job = await observer.get(ImportJob, self._job_id)
             visible_payload = await observer.scalar(
@@ -223,7 +315,7 @@ class InterruptingDeterministicExtractor:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
         self.calls += 1
         raise RuntimeError("simulated worker death after fetched checkpoint")
 
@@ -402,8 +494,35 @@ def adapters(
     fetcher: RecordingFetcher,
     deterministic: RecordingDeterministicExtractor,
     model: RecordingModelExtractor,
+    *,
+    normalizer: FakeIngredientNormalizer | None = None,
 ) -> ImportAdapters:
-    return ImportAdapters(fetcher=fetcher, deterministic=deterministic, model=model, catalog=None)
+    return ImportAdapters(
+        fetcher=fetcher,
+        deterministic=deterministic,
+        model=model,
+        catalog=None,
+        normalizer=normalizer or default_normalizer(),
+    )
+
+
+def import_adapters(
+    fetcher: object,
+    deterministic: object,
+    model: object | None = None,
+    catalog: object | None = None,
+    *,
+    normalizer: FakeIngredientNormalizer | None = None,
+    variant_registry_obj: ServerRenderedVariantRegistry | None = None,
+) -> ImportAdapters:
+    return ImportAdapters(
+        fetcher=fetcher,  # type: ignore[arg-type]
+        deterministic=deterministic,  # type: ignore[arg-type]
+        model=model,  # type: ignore[arg-type]
+        catalog=catalog,  # type: ignore[arg-type]
+        normalizer=normalizer or default_normalizer(),
+        variant_registry=variant_registry_obj or ServerRenderedVariantRegistry.empty(),
+    )
 
 
 @pytest.mark.asyncio
@@ -427,12 +546,10 @@ async def test_successful_primary_jsonld_never_classifies_or_fetches_a_variant(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             fetcher,
             DeterministicJsonLdAdapter(),
-            None,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -456,12 +573,10 @@ async def test_shell_primary_fetches_one_variant_and_retains_primary_source_iden
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             fetcher,
             DeterministicJsonLdAdapter(),
-            None,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -547,12 +662,10 @@ async def test_variant_reservation_is_committed_before_alternate_fetch_io(
         await ImportPipeline(repository, cipher()).run(
             created.id,
             token,
-            ImportAdapters(
+            import_adapters(
                 fetcher,
                 DeterministicJsonLdAdapter(),
-                None,
-                None,
-                variant_registry(),
+                variant_registry_obj=variant_registry(),
             ),
         )
 
@@ -571,7 +684,7 @@ async def test_registry_miss_keeps_primary_no_recipe_outcome_without_variant_req
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None),
+        import_adapters(fetcher, DeterministicJsonLdAdapter()),
     )
 
     stored = await job(session, job_id)
@@ -649,12 +762,10 @@ async def test_ineligible_variant_paths_never_classify_the_document(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             fetcher,
             RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
-            None,
-            None,
-            registry,
+            variant_registry_obj=registry,
         ),
     )
 
@@ -676,7 +787,9 @@ async def test_non_shell_parse_failure_keeps_primary_outcome_without_variant_req
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+        import_adapters(
+            fetcher, DeterministicJsonLdAdapter(), variant_registry_obj=variant_registry()
+        ),
     )
 
     stored = await job(session, job_id)
@@ -700,12 +813,10 @@ async def test_each_variant_fetch_failure_is_recorded_once_without_normal_fetch_
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             fetcher,
             DeterministicJsonLdAdapter(),
-            None,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -751,7 +862,7 @@ async def test_alternate_shell_is_extracted_once_without_recursing_to_another_va
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(fetcher, deterministic, None, None, variant_registry()),
+        import_adapters(fetcher, deterministic, variant_registry_obj=variant_registry()),
     )
 
     stored = await job(session, job_id)
@@ -790,12 +901,11 @@ async def test_incomplete_alternate_candidate_stays_in_review_without_model_extr
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             SequencedFetcher([primary_shell_document(), alternate_recipe_document()]),
             deterministic,
             model,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -830,12 +940,11 @@ async def test_model_receives_variant_html_with_the_primary_trusted_url(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             SequencedFetcher([primary_shell_document(), alternate]),
             deterministic,
             model,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -887,7 +996,9 @@ async def test_redelivery_after_variant_reservation_without_checkpoint_fails_clo
         await ImportPipeline(repository, cipher()).run(
             created.id,
             token,
-            ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+            import_adapters(
+                fetcher, DeterministicJsonLdAdapter(), variant_registry_obj=variant_registry()
+            ),
         )
     await session.commit()
     reserved = await job(session, created.id)
@@ -898,7 +1009,9 @@ async def test_redelivery_after_variant_reservation_without_checkpoint_fails_clo
     await ImportPipeline(repository, cipher()).run(
         created.id,
         next_token,
-        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+        import_adapters(
+            fetcher, DeterministicJsonLdAdapter(), variant_registry_obj=variant_registry()
+        ),
     )
 
     assert fetcher.calls == [PRIMARY_URL]
@@ -921,7 +1034,7 @@ async def test_variant_checkpoint_is_reused_after_a_crash_before_alternate_extra
         await ImportPipeline(repository, cipher()).run(
             job_id,
             token,
-            ImportAdapters(fetcher, interrupted, None, None, variant_registry()),
+            import_adapters(fetcher, interrupted, variant_registry_obj=variant_registry()),
         )
     await session.commit()
     stored = await job(session, job_id)
@@ -933,12 +1046,10 @@ async def test_variant_checkpoint_is_reused_after_a_crash_before_alternate_extra
     await ImportPipeline(repository, cipher()).run(
         job_id,
         next_token,
-        ImportAdapters(
+        import_adapters(
             no_more_fetches,
             DeterministicJsonLdAdapter(),
-            None,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -1005,7 +1116,9 @@ async def test_cancellation_or_deadline_after_variant_reservation_prevents_alter
     await ImportPipeline(repository, cipher()).run(
         created.id,
         token,
-        ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+        import_adapters(
+            fetcher, DeterministicJsonLdAdapter(), variant_registry_obj=variant_registry()
+        ),
     )
 
     stored = await job(session, created.id)
@@ -1040,7 +1153,9 @@ async def test_missing_durable_variant_checkpoint_fails_closed_without_primary_r
         await ImportPipeline(repository, cipher()).run(
             job_id,
             token,
-            ImportAdapters(fetcher, DeterministicJsonLdAdapter(), None, None, variant_registry()),
+            import_adapters(
+                fetcher, DeterministicJsonLdAdapter(), variant_registry_obj=variant_registry()
+            ),
         )
 
     assert fetcher.calls == []
@@ -1094,7 +1209,7 @@ async def test_budget_exhaustion_never_calls_provider(session: AsyncSession) -> 
 
 
 @pytest.mark.asyncio
-async def test_deterministic_extraction_bypasses_exhausted_ai_budget(
+async def test_deterministic_normalization_respects_exhausted_ai_budget(
     session: AsyncSession,
 ) -> None:
     repository, job_id, token = await new_claimed_job(
@@ -1108,20 +1223,28 @@ async def test_deterministic_extraction_bypasses_exhausted_ai_budget(
         )
     )
     await session.commit()
+    normalizer = default_normalizer()
 
-    await ImportPipeline(repository, cipher()).run(
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
         job_id,
         token,
         adapters(
             RecordingFetcher(),
-            RecordingDeterministicExtractor(candidate(source_url=None)),
+            RecordingDeterministicExtractor(deterministic_candidate(source_url=None)),
             RecordingModelExtractor([]),
+            normalizer=normalizer,
         ),
     )
 
     stored = await job(session, job_id)
-    assert stored.stage is ImportStage.VALIDATING
-    assert await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id)) is None
+    assert stored.status is ImportStatus.REVIEW_REQUIRED
+    assert stored.safe_error_category == "daily_ai_budget_exceeded"
+    assert normalizer.calls == 0
 
 
 @pytest.mark.asyncio
@@ -1400,12 +1523,15 @@ async def test_deterministic_candidate_is_checkpointed_and_reused_after_redelive
     )
     fetcher = RecordingFetcher()
     deterministic = RecordingDeterministicExtractor(
-        candidate(source_url="https://recipes.example/lentils")
+        deterministic_candidate(source_url="https://recipes.example/lentils")
     )
     model = RecordingModelExtractor([])
+    normalizer = default_normalizer()
     pipeline = ImportPipeline(repository, cipher())
 
-    await pipeline.run(job_id, token, adapters(fetcher, deterministic, model))
+    await pipeline.run(
+        job_id, token, adapters(fetcher, deterministic, model, normalizer=normalizer)
+    )
     await session.commit()
     first = await job(session, job_id)
 
@@ -1420,10 +1546,13 @@ async def test_deterministic_candidate_is_checkpointed_and_reused_after_redelive
     assert all(event["elapsed_ms"] >= 0 for event in stage_events)
 
     next_token = await redeliver(session, repository, job_id)
-    await pipeline.run(job_id, next_token, adapters(fetcher, deterministic, model))
+    await pipeline.run(
+        job_id, next_token, adapters(fetcher, deterministic, model, normalizer=normalizer)
+    )
 
     assert len(fetcher.calls) == 1
     assert len(deterministic.calls) == 1
+    assert normalizer.calls == 1
     assert model.calls == []
 
 
@@ -1439,7 +1568,7 @@ async def test_disabled_model_extraction_finishes_without_reserving_provider_att
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(RecordingFetcher(), deterministic, None, None),  # type: ignore[arg-type]
+        import_adapters(RecordingFetcher(), deterministic),
     )
 
     failed = await job(session, job_id)
@@ -1469,7 +1598,7 @@ async def test_incomplete_safe_candidate_finishes_as_review_required(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(RecordingFetcher(), deterministic, model, None),
+        import_adapters(RecordingFetcher(), deterministic, model),
     )
 
     review = await job(session, job_id)
@@ -1503,7 +1632,7 @@ async def test_oversized_review_candidate_finishes_with_safe_failure(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(RecordingFetcher(), deterministic, None, None),
+        import_adapters(RecordingFetcher(), deterministic),
     )
 
     failed = await job(session, job_id)
@@ -2040,6 +2169,35 @@ async def test_model_input_is_capped_by_utf8_bytes_before_provider_io(
 
 
 @pytest.mark.asyncio
+async def test_model_source_omits_comment_widgets(session: AsyncSession) -> None:
+    html = """
+    <html><body>
+      <h1>Chili</h1>
+      <p>1 onion</p>
+      <section id="comments"><p>UNIQUE_COMMENT_MARKER</p></section>
+    </body></html>
+    """
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.URL, plaintext=b"https://recipes.example/chili"
+    )
+    model = RecordingModelExtractor([model_result()])
+    await ImportPipeline(repository, cipher()).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(html),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            model,
+        ),
+    )
+
+    assert model.calls
+    source = model.calls[0][0]
+    assert "1 onion" in source
+    assert "UNIQUE_COMMENT_MARKER" not in source
+
+
+@pytest.mark.asyncio
 async def test_provider_reservation_cannot_outlive_the_job_deadline(session: AsyncSession) -> None:
     """A nearer job deadline must cap an unresolved provider operation."""
 
@@ -2250,7 +2408,7 @@ async def test_text_deterministic_candidate_has_no_source_url(session: AsyncSess
     repository, job_id, token = await new_claimed_job(
         session, input_kind=ImportInputKind.TEXT, plaintext=b"Lentil soup\nCook lentils"
     )
-    deterministic = RecordingDeterministicExtractor(candidate(source_url=None))
+    deterministic = RecordingDeterministicExtractor(deterministic_candidate(source_url=None))
     pipeline = ImportPipeline(repository, cipher())
 
     await pipeline.run(
@@ -2404,12 +2562,10 @@ async def test_variant_challenge_html_is_not_used_for_extraction(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             fetcher,
             deterministic,
-            None,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -2448,12 +2604,11 @@ async def test_variant_perfdrive_final_url_is_not_used_for_extraction(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             fetcher,
             deterministic,
             model,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -2498,12 +2653,11 @@ async def test_legacy_challenge_extracting_never_fetches_variant(
     await ImportPipeline(repository, cipher()).run(
         job_id,
         token,
-        ImportAdapters(
+        import_adapters(
             fetcher,
             RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
             model,
-            None,
-            variant_registry(),
+            variant_registry_obj=variant_registry(),
         ),
     )
 
@@ -2513,3 +2667,356 @@ async def test_legacy_challenge_extracting_never_fetches_variant(
     assert stored.safe_error_category == "access_denied"
     assert stored.status is ImportStatus.FAILED
     assert model.calls == []
+
+
+class RecordingCatalog:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.candidates: list[RecipeImportCandidate] = []
+
+    async def create_imported(
+        self,
+        job_id: UUID,
+        owner_subject: str,
+        source_fingerprint: str,
+        candidate: RecipeImportCandidate,
+    ) -> UUID:
+        self.calls += 1
+        self.candidates.append(candidate)
+        return uuid4()
+
+
+def egg_items(*lines: str) -> list[IngredientNormalizationItem]:
+    return [
+        IngredientNormalizationItem(
+            raw_text=line,
+            name="egg" if line.endswith("egg") or line.endswith("eggs") else "ביצה",
+            canonical_name="egg",
+            quantity=Decimal("1"),
+            unit=None,
+        )
+        for line in lines
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_lines", "expected_names"),
+    [
+        (["1 egg", "2 eggs"], ["egg", "egg"]),
+        (["1 ביצה"], ["ביצה"]),
+    ],
+)
+async def test_deterministic_import_normalizes_ingredients_before_catalog(
+    session: AsyncSession,
+    raw_lines: list[str],
+    expected_names: list[str],
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"recipe"
+    )
+    deterministic = RecordingDeterministicExtractor(
+        DeterministicRecipeCandidate(
+            title="Eggs",
+            ingredients=[RawIngredientLine(raw_text=line) for line in raw_lines],
+            instructions=["Cook."],
+        )
+    )
+    normalizer = FakeIngredientNormalizer(items=egg_items(*raw_lines))
+    catalog = RecordingCatalog()
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
+        job_id,
+        token,
+        import_adapters(
+            RecordingFetcher(),
+            deterministic,
+            catalog=catalog,
+            normalizer=normalizer,
+        ),
+    )
+
+    assert normalizer.calls == 1
+    assert catalog.calls == 1
+    ingredient = catalog.candidates[0].ingredients[0]
+    assert ingredient.canonical_name == "egg"
+    assert ingredient.raw_text == raw_lines[0]
+    assert ingredient.name == expected_names[0]
+
+
+@pytest.mark.asyncio
+async def test_normalized_candidate_checkpoint_replay_skips_normalizer(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"recipe"
+    )
+    deterministic = RecordingDeterministicExtractor(deterministic_candidate(source_url=None))
+    normalizer = default_normalizer()
+    pipeline = ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    )
+
+    await pipeline.run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(), deterministic, RecordingModelExtractor([]), normalizer=normalizer
+        ),
+    )
+    next_token = await redeliver(session, repository, job_id)
+    await pipeline.run(
+        job_id,
+        next_token,
+        adapters(
+            RecordingFetcher(), deterministic, RecordingModelExtractor([]), normalizer=normalizer
+        ),
+    )
+
+    assert normalizer.calls == 1
+    assert len(deterministic.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_job_does_not_call_ingredient_normalizer(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"recipe"
+    )
+    await session.execute(
+        update(ImportJob)
+        .where(ImportJob.id == job_id)
+        .values(cancel_requested_at=datetime.now(UTC))
+    )
+    await session.commit()
+    normalizer = default_normalizer()
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(deterministic_candidate(source_url=None)),
+            RecordingModelExtractor([]),
+            normalizer=normalizer,
+        ),
+    )
+
+    assert normalizer.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_expired_deadline_prevents_ingredient_normalizer_call(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session,
+        input_kind=ImportInputKind.TEXT,
+        plaintext=b"recipe",
+        deadline_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    normalizer = default_normalizer()
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(deterministic_candidate(source_url=None)),
+            RecordingModelExtractor([]),
+            normalizer=normalizer,
+        ),
+    )
+
+    assert normalizer.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_temporary_normalization_failure_retries_once(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"recipe"
+    )
+    transport_error = IngredientNormalizationError(
+        IngredientNormalizationFailureCode.PROVIDER_REQUEST_FAILED,
+        status=503,
+        provider_request_started=True,
+    )
+    normalizer = FakeIngredientNormalizer(
+        error=transport_error,
+    )
+    deterministic = RecordingDeterministicExtractor(deterministic_candidate(source_url=None))
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(), deterministic, RecordingModelExtractor([]), normalizer=normalizer
+        ),
+    )
+    stored = await job(session, job_id)
+    assert stored.status is ImportStatus.QUEUED
+    assert stored.safe_error_category == "provider_temporary"
+    assert normalizer.calls == 1
+
+    retry_token = await redeliver(session, repository, job_id)
+    normalizer.error = None
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
+        job_id,
+        retry_token,
+        adapters(
+            RecordingFetcher(), deterministic, RecordingModelExtractor([]), normalizer=normalizer
+        ),
+    )
+    retried = await job(session, job_id)
+    assert retried.stage is ImportStage.VALIDATING
+    assert normalizer.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_normalization_budget_exhaustion_skips_catalog(session: AsyncSession) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"recipe"
+    )
+    session.add(
+        AiDailyUsage(
+            owner_subject="auth0|owner",
+            budget_date_utc=datetime.now(UTC).date(),
+            consumed_tokens=10_000_000,
+        )
+    )
+    await session.commit()
+    catalog = RecordingCatalog()
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=AiBudgetPolicy(
+            daily_limit=10_000_000,
+            reservation_tokens=64_000,
+            provider_name="openrouter",
+            model_name="fake-model",
+            prompt_version=NORMALIZATION_PROMPT_VERSION,
+        ),
+    ).run(
+        job_id,
+        token,
+        import_adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(deterministic_candidate(source_url=None)),
+            catalog=catalog,
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert stored.status is ImportStatus.REVIEW_REQUIRED
+    assert stored.safe_error_category == "daily_ai_budget_exceeded"
+    assert catalog.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_malformed_normalization_output_finishes_review_without_catalog(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"recipe"
+    )
+    normalizer = FakeIngredientNormalizer(
+        error=IngredientNormalizationError(
+            IngredientNormalizationFailureCode.SCHEMA_VALIDATION_FAILED
+        )
+    )
+    catalog = RecordingCatalog()
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
+        job_id,
+        token,
+        import_adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(deterministic_candidate(source_url=None)),
+            catalog=catalog,
+            normalizer=normalizer,
+        ),
+    )
+
+    stored = await job(session, job_id)
+    assert stored.status is ImportStatus.REVIEW_REQUIRED
+    assert stored.safe_error_category == "provider_invalid_output"
+    assert catalog.calls == 0
+    assert stored.candidate_content_hash is not None
+    payload = await repository.load_payload(job_id, "candidate", cipher())
+    assert payload is not None
+    draft = json.loads(payload)
+    assert draft["title"] == "Lentil soup"
+    assert draft["ingredients"][0]["raw_text"] == "1 cup lentils"
+
+
+@pytest.mark.asyncio
+async def test_full_ai_extraction_does_not_call_ingredient_normalizer(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    normalizer = default_normalizer()
+
+    await ImportPipeline(
+        repository,
+        cipher(),
+        budgets=AiBudgetRepository(session),
+        budget_policy=AiBudgetPolicy(
+            daily_limit=10_000_000,
+            reservation_tokens=275_000,
+            provider_name="openrouter",
+            model_name="fake-model",
+            prompt_version=PROMPT_VERSION,
+        ),
+        normalization_budget_policy=normalization_policy(),
+    ).run(
+        job_id,
+        token,
+        adapters(
+            RecordingFetcher(),
+            RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+            RecordingModelExtractor([model_result()]),
+            normalizer=normalizer,
+        ),
+    )
+
+    assert normalizer.calls == 0
+    invocation = await session.scalar(
+        select(LlmInvocation).where(
+            LlmInvocation.operation_kind == LlmOperationKind.IMPORT_EXTRACTION
+        )
+    )
+    assert invocation is not None

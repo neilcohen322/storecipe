@@ -14,3 +14,16 @@ class CatalogClientError(Exception):
         # Keep the exception string to the allowlisted category.  In particular,
         # never inherit an HTTPX or Pydantic message containing request data.
         Exception.__init__(self, self.category)
+
+
+@dataclass(slots=True)
+class IngestionClientError(Exception):
+    """Safe, typed failure at the Ingestion REST boundary."""
+
+    category: str
+    retryable: bool
+    required_scope: str | None = None
+    retry_after: int | None = None
+
+    def __post_init__(self) -> None:
+        Exception.__init__(self, self.category)

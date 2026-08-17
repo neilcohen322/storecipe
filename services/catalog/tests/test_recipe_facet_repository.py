@@ -11,6 +11,7 @@ from catalog.recipe_facets import FacetKind
 from catalog.repositories.recipe_facets import (
     fetch_distinct_facet_names,
     fetch_observed_names,
+    fetch_owner_ingredient_identities,
     fetch_total_minutes_bounds,
 )
 
@@ -25,7 +26,10 @@ def _recipe(
     ingredient_names: list[str],
     tag_names: list[str],
     tags: dict[str, Tag],
+    *,
+    ingredient_identities: list[tuple[str, str]] | None = None,
 ) -> Recipe:
+    identities = ingredient_identities or [(name, name) for name in ingredient_names]
     return Recipe(
         id=uuid4(),
         user_id=user_id,
@@ -35,11 +39,12 @@ def _recipe(
         ingredients=[
             Ingredient(
                 position=position,
-                raw_text=name,
-                name=name,
-                normalized_name=name,
+                raw_text=normalized,
+                name=normalized,
+                normalized_name=normalized,
+                canonical_name=canonical,
             )
-            for position, name in enumerate(ingredient_names)
+            for position, (canonical, normalized) in enumerate(identities)
         ],
         recipe_tags=[RecipeTag(tag=tags[name]) for name in tag_names],
     )
@@ -155,6 +160,45 @@ async def test_like_wildcards_in_search_are_escaped(
         )
     assert underscore == ["a_b"]
     assert percent == ["100% juice"]
+
+
+@pytest.mark.asyncio
+async def test_ingredient_facets_group_by_canonical_name_and_search_source_aliases(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    tags = {"family": Tag(name="family")}
+    async with session_factory() as session:
+        session.add_all([User(id=OWNER_A, auth_subject="auth0|owner-a"), *tags.values()])
+        session.add(
+            _recipe(
+                OWNER_A,
+                "Eggs",
+                10,
+                [],
+                ["family"],
+                tags,
+                ingredient_identities=[("egg", "eggs"), ("egg", "ביצה")],
+            )
+        )
+        await session.commit()
+        names, _ = await fetch_distinct_facet_names(
+            session, OWNER_A, kind=FacetKind.INGREDIENT, search="", after=None, limit=20
+        )
+        alias_search, _ = await fetch_distinct_facet_names(
+            session, OWNER_A, kind=FacetKind.INGREDIENT, search="eggs", after=None, limit=20
+        )
+        hebrew_search, _ = await fetch_distinct_facet_names(
+            session, OWNER_A, kind=FacetKind.INGREDIENT, search="ביצה", after=None, limit=20
+        )
+        identities = await fetch_owner_ingredient_identities(session, OWNER_A)
+        empty = await fetch_owner_ingredient_identities(session, OWNER_A, names=[])
+        filtered = await fetch_owner_ingredient_identities(session, OWNER_A, names=["eggs"])
+    assert names == ["egg"]
+    assert alias_search == ["egg"]
+    assert hebrew_search == ["egg"]
+    assert set(identities) == {("egg", "eggs"), ("egg", "ביצה")}
+    assert empty == []
+    assert filtered == [("egg", "eggs")]
 
 
 @pytest.mark.asyncio

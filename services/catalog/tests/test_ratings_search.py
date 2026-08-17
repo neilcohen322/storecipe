@@ -59,7 +59,9 @@ def recipe_payload(
     return {
         "title": title,
         "totalMinutes": total_minutes,
-        "ingredients": [{"rawText": f"1 cup {ingredient}", "name": ingredient}],
+        "ingredients": [
+            {"rawText": f"1 cup {ingredient}", "name": ingredient, "canonicalName": ingredient}
+        ],
         "instructions": ["Combine everything."],
         "tags": tags,
     }

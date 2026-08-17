@@ -4,7 +4,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
-from ingestion.import_models import MAX_SOURCE_URL_LENGTH
+from ingestion.import_models import (
+    MAX_INGREDIENT_LINE_CHARS,
+    MAX_INGREDIENT_LINES,
+    MAX_INGREDIENT_TOTAL_BYTES,
+    MAX_SOURCE_URL_LENGTH,
+)
 from ingestion.models import ImportStatus
 
 MAX_TEXT_BYTES = 256 * 1024
@@ -61,3 +66,59 @@ class ImportJobView(ApiModel):
     created_recipe_id: UUID | None
     error_category: str | None
     cancellation_requested: bool = False
+    has_candidate: bool = False
+
+
+class RawIngredientInput(ApiModel):
+    raw_text: Annotated[str, Field(min_length=1, max_length=MAX_INGREDIENT_LINE_CHARS)]
+
+    @field_validator("raw_text")
+    @classmethod
+    def _raw_text_has_non_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("ingredient line cannot be empty")
+        return value
+
+
+class IngredientNormalizationRequest(ApiModel):
+    ingredients: list[RawIngredientInput]
+
+    @field_validator("ingredients")
+    @classmethod
+    def _validate_bounds(cls, ingredients: list[RawIngredientInput]) -> list[RawIngredientInput]:
+        if not ingredients:
+            raise ValueError("at least one ingredient line is required")
+        if len(ingredients) > MAX_INGREDIENT_LINES:
+            raise ValueError("too many ingredient lines")
+        total_bytes = 0
+        for item in ingredients:
+            if len(item.raw_text) > MAX_INGREDIENT_LINE_CHARS:
+                raise ValueError("ingredient line exceeds maximum length")
+            total_bytes += len(item.raw_text.encode("utf-8"))
+        if total_bytes > MAX_INGREDIENT_TOTAL_BYTES:
+            raise ValueError("total ingredient bytes exceed maximum")
+        return ingredients
+
+
+class IngredientView(ApiModel):
+    raw_text: str
+    name: str
+    canonical_name: str
+    quantity: float | None
+    unit: str | None
+
+
+class IngredientNormalizationResponse(ApiModel):
+    ingredients: list[IngredientView]
+
+
+class ImportReviewDraft(ApiModel):
+    title: str | None = None
+    source_url: str | None = None
+    servings: int | None = None
+    prep_minutes: int | None = None
+    cook_minutes: int | None = None
+    total_minutes: int | None = None
+    ingredients: list[str]
+    instructions: list[str]
+    tags: list[str] = Field(default_factory=list)

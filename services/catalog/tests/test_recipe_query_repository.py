@@ -59,6 +59,7 @@ async def seeded_catalog() -> AsyncIterator[tuple[async_sessionmaker[AsyncSessio
                     raw_text=f"1 cup {name}",
                     name=name,
                     normalized_name=name,
+                    canonical_name=name,
                 )
                 for position, name in enumerate(ingredient_names)
             ],
@@ -213,18 +214,21 @@ async def test_duplicate_normalized_ingredients_count_once_for_and_match(
                 raw_text="1 cup chickpeas",
                 name="Chickpeas",
                 normalized_name="chickpeas",
+                canonical_name="chickpeas",
             ),
             Ingredient(
                 position=1,
                 raw_text="2 cups chickpeas",
                 name="chickpeas",
                 normalized_name="chickpeas",
+                canonical_name="chickpeas",
             ),
             Ingredient(
                 position=2,
                 raw_text="1 lime",
                 name="lime",
                 normalized_name="lime",
+                canonical_name="lime",
             ),
         ],
     )
@@ -248,6 +252,45 @@ async def test_duplicate_normalized_ingredients_count_once_for_and_match(
         duplicate.id,
     }
     assert all(candidate.recipe.id != duplicate.id for candidate in missing)
+
+
+@pytest.mark.asyncio
+async def test_ingredient_filter_matches_canonical_name_not_source_alias(
+    seeded_catalog: tuple[async_sessionmaker[AsyncSession], SeededCatalog],
+) -> None:
+    session_factory, catalog = seeded_catalog
+    alias_recipe = Recipe(
+        id=UUID("30000000-0000-0000-0000-000000000014"),
+        user_id=catalog.owner_a_id,
+        title="Plural eggs",
+        total_minutes=10,
+        ingredients=[
+            Ingredient(
+                position=0,
+                raw_text="2 eggs",
+                name="eggs",
+                normalized_name="eggs",
+                canonical_name="egg",
+            )
+        ],
+    )
+    async with session_factory() as session:
+        session.add(alias_recipe)
+        await session.commit()
+
+    canonical_match = await _query(
+        session_factory,
+        catalog.owner_a_id,
+        RecipeQueryRequest(ingredients=["egg"]),
+    )
+    alias_miss = await _query(
+        session_factory,
+        catalog.owner_a_id,
+        RecipeQueryRequest(ingredients=["eggs"]),
+    )
+
+    assert {candidate.recipe.id for candidate in canonical_match} == {alias_recipe.id}
+    assert alias_miss == []
 
 
 @pytest.mark.asyncio

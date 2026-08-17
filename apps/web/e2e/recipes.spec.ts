@@ -21,18 +21,21 @@ test("searches, opens a recipe, and saves a rating", async ({ page }) => {
   await assertStablePageQuality(page, errors);
 });
 
-test("validates and creates a recipe", async ({ page }, testInfo) => {
+test("validates, reviews, and creates a recipe", async ({ page }, testInfo) => {
   const errors = captureConsoleErrors(page);
   await page.goto("/recipes/new");
-  const submit = page.getByRole("button", { name: "Create recipe" });
-  await submit.click();
+  const review = page.getByRole("button", { name: "Review recipe" });
+  await review.click();
   await expect(page.getByText("Title is required.")).toBeVisible();
   await expect(page.getByText("Add at least one ingredient.")).toBeVisible();
   await expect(page.getByText("Add at least one instruction.")).toBeVisible();
   await page.getByLabel("Title").fill("Browser baked pasta");
   await page.getByLabel("Ingredients").fill("300 g pasta\n2 cups tomatoes");
   await page.getByLabel("Instructions").fill("Boil pasta\nBake with tomatoes");
-  await submit.click();
+  await review.click();
+  const save = page.getByRole("button", { name: "Save recipe" });
+  await expect(save).toBeVisible();
+  await save.click();
   await expect(page).toHaveURL(/\/recipes\/created-e2e-recipe$/);
   await expect(page.getByRole("heading", { name: "Browser baked pasta" })).toBeVisible();
   if (testInfo.project.name.startsWith("compact")) await expect(page.getByTestId("create-recipe-sticky-submit")).toHaveCount(0);

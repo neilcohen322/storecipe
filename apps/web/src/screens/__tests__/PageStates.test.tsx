@@ -95,9 +95,9 @@ test("renders import validation and terminal status with live semantics and safe
   const ingestion = {
     createUrlImport: jest.fn().mockResolvedValue({ jobId: "job-1" }),
     createTextImport: jest.fn(),
-    getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "timed_out", attemptCount: 1, createdRecipeId: null, errorCategory: "import_deadline_exceeded", cancellationRequested: false }),
+    getImport: jest.fn().mockResolvedValue({ id: "job-1", status: "timed_out", attemptCount: 1, createdRecipeId: null, errorCategory: "import_deadline_exceeded", cancellationRequested: false, hasCandidate: false }),
   } as unknown as ReturnType<typeof createIngestionApi>;
-  const screen = await render(<ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><ImportScreen onBack={jest.fn()} /></ImportSessionProvider>);
+  const screen = await render(<ImportSessionProvider ingestion={ingestion} onUnauthorized={jest.fn()}><ImportScreen onBack={jest.fn()} onContinueExtractedRecipe={jest.fn()} /></ImportSessionProvider>);
 
   await fireEvent.press(screen.getByRole("button", { name: "Start import" }));
   const validation = screen.getByTestId("inline-notice");

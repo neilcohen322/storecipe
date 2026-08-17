@@ -382,6 +382,7 @@ def _candidate(
                 raw_text=name,
                 name=name,
                 normalized_name=name,
+                canonical_name=name,
             )
             for index, name in enumerate(ingredients)
         ],

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from json import JSONDecodeError, loads
 from typing import Protocol
 from unicodedata import normalize
 from uuid import UUID
@@ -14,7 +15,7 @@ from ingestion.catalog_client import CatalogError, CatalogFailureCode
 from ingestion.crypto import PayloadCipher
 from ingestion.models import ImportInputKind, ImportJob, ImportStatus
 from ingestion.repositories.imports import ImportRepository
-from ingestion.schemas import DuplicatePolicy
+from ingestion.schemas import DuplicatePolicy, ImportReviewDraft
 
 _ACTIVE_URL_INDEX = "uq_import_jobs_owner_active_url_fingerprint"
 _IDEMPOTENCY_KEY_INDEX = "uq_import_jobs_owner_idempotency_key"
@@ -59,6 +60,10 @@ class SourceLookupUnavailable(Exception):
 
 
 class ImportNotCancellable(Exception):
+    pass
+
+
+class ImportDraftUnavailable(Exception):
     pass
 
 
@@ -232,6 +237,15 @@ class ImportService:
             raise ImportNotFound
         return job
 
+    async def get_review_draft(self, owner_subject: str, job_id: UUID) -> ImportReviewDraft:
+        job = await self.get(owner_subject, job_id)
+        if job.status is not ImportStatus.REVIEW_REQUIRED:
+            raise ImportDraftUnavailable
+        payload = await self._repository.load_payload(job_id, "candidate", self._payload_cipher)
+        if payload is None:
+            raise ImportDraftUnavailable
+        return _draft_from_candidate_payload(payload)
+
     async def cancel(self, owner_subject: str, job_id: UUID) -> tuple[ImportJob, bool]:
         async with self._repository.transaction():
             if await self._repository.cancel_owned_queued_job(job_id, owner_subject):
@@ -247,3 +261,45 @@ class ImportService:
             if active is not None:
                 return active, True
             raise ImportNotCancellable
+
+
+def _draft_from_candidate_payload(payload: bytes) -> ImportReviewDraft:
+    try:
+        data = loads(payload)
+    except (JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ImportDraftUnavailable from exc
+    if not isinstance(data, dict):
+        raise ImportDraftUnavailable
+    ingredients: list[str] = []
+    for item in data.get("ingredients") or []:
+        if isinstance(item, dict) and isinstance(item.get("raw_text"), str):
+            line = item["raw_text"]
+            if line.strip():
+                ingredients.append(line)
+    instructions = [
+        step for step in (data.get("instructions") or []) if isinstance(step, str) and step.strip()
+    ]
+    title = data.get("title")
+    if not isinstance(title, str) or not title.strip():
+        title = None
+    source_url = data.get("source_url")
+    if not isinstance(source_url, str) or not source_url.strip():
+        source_url = None
+    tags = [tag for tag in (data.get("tags") or []) if isinstance(tag, str) and tag.strip()]
+    if title is None and not ingredients and not instructions:
+        raise ImportDraftUnavailable
+    return ImportReviewDraft(
+        title=title,
+        source_url=source_url,
+        servings=_optional_int(data.get("servings")),
+        prep_minutes=_optional_int(data.get("prep_minutes")),
+        cook_minutes=_optional_int(data.get("cook_minutes")),
+        total_minutes=_optional_int(data.get("total_minutes")),
+        ingredients=ingredients,
+        instructions=instructions,
+        tags=tags,
+    )
+
+
+def _optional_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None

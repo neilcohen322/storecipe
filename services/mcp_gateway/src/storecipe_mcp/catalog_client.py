@@ -10,8 +10,8 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from storecipe_mcp.errors import CatalogClientError
 from storecipe_mcp.models import (
+    CatalogRecipeCreate,
     RatingView,
-    RecipeCreate,
     RecipeCreateIdempotencyKey,
     RecipeFacetBrowseRequest,
     RecipeFacetPage,
@@ -125,7 +125,7 @@ class CatalogClient:
         return _decode_model(response, RecipeView)
 
     async def create_recipe(
-        self, payload: RecipeCreate, idempotency_key: str, token: str
+        self, payload: CatalogRecipeCreate, idempotency_key: str, token: str
     ) -> RecipeView:
         token = _require_bearer_token(token)
         idempotency_key = _validate_idempotency_key(idempotency_key)

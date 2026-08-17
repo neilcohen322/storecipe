@@ -16,6 +16,7 @@
 | `INGESTION_IMPORT_BURST_WINDOW_SECONDS` | Ingestion API | no | Import submission burst-window duration; defaults to 60 seconds |
 | `INGESTION_AI_DAILY_TOKEN_LIMIT` | Ingestion worker | no | Per-user daily AI extraction token budget; defaults to 1,100,000 |
 | `INGESTION_AI_INVOCATION_RESERVATION_TOKENS` | Ingestion worker | no | Tokens reserved before one AI invocation; defaults to 275,000 and cannot exceed the daily budget |
+| `INGESTION_INGREDIENT_NORMALIZATION_RESERVATION_TOKENS` | Ingestion API/worker | no | Tokens reserved before one ingredient-normalization invocation; defaults to 64,000 and cannot exceed the daily budget |
 | `INGESTION_PAYLOAD_ACTIVE_KEY_ID` | Ingestion/worker | yes | Key ID used for new encrypted payload writes |
 | `INGESTION_PAYLOAD_KEYRING` | Ingestion/worker | yes | Secret `key-id=base64-key` mapping for retained payloads |
 | `AUTH0_ISSUER` | APIs/MCP | protected routes / complete gateway auth | Expected JWT issuer; required in the gateway auth all-or-none bundle (cannot be replaced by `MCP_OBO_TOKEN_URL`) |
@@ -26,6 +27,7 @@
 | `EXPO_PUBLIC_AUTH0_AUDIENCE` | Web (Expo) | Auth0 login | Storecipe API resource for access tokens; use `AUTH0_AUDIENCE`, not `MCP_RESOURCE_URL` |
 | `MCP_PORT` | Compose | no | Optional host port mapped to the gateway's internal port `8002` |
 | `MCP_CATALOG_API_URL` | MCP gateway | yes | Trusted Catalog REST base URL; defaults to `http://catalog-api:8000` |
+| `MCP_INGESTION_API_URL` | MCP gateway | yes | Trusted Ingestion REST base URL; defaults to `http://ingestion-api:8001` |
 | `MCP_CATALOG_MAX_RESPONSE_BYTES` | MCP gateway | no | Maximum Catalog response size; defaults to 2,097,152 bytes |
 | `MCP_CONNECT_TIMEOUT_SECONDS` | MCP gateway | no | Catalog connection timeout; defaults to 5 seconds and is bounded from 0.1 to 30 |
 | `MCP_POOL_TIMEOUT_SECONDS` | MCP gateway | no | Catalog connection-pool acquisition timeout; defaults to 5 seconds and is bounded from 0.1 to 30 |

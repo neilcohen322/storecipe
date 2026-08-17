@@ -12,7 +12,7 @@ from celery import Celery
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ingestion.config import Settings
-from ingestion.import_models import FetchedDocument, RecipeImportCandidate
+from ingestion.import_models import DeterministicRecipeCandidate, FetchedDocument
 from ingestion.jsonld import parse_recipe_jsonld
 from ingestion.orchestration import LeaseToken
 from ingestion.pipeline import AiBudgetPolicy, ImportAdapters
@@ -60,6 +60,32 @@ def _ai_budget_policy(settings: Settings) -> AiBudgetPolicy:
     )
 
 
+def _normalization_budget_policy(settings: Settings) -> AiBudgetPolicy:
+    from ingestion.ingredient_normalizer import PROMPT_VERSION
+
+    return AiBudgetPolicy(
+        daily_limit=settings.ai_daily_token_limit,
+        reservation_tokens=settings.ingredient_normalization_reservation_tokens,
+        provider_name="openrouter",
+        model_name=settings.openrouter_model,
+        prompt_version=PROMPT_VERSION,
+    )
+
+
+def _build_normalizer(settings: Settings) -> object | None:
+    api_key = settings.openrouter_api_key.get_secret_value()
+    if not api_key:
+        return None
+    from ingestion.ingredient_normalizer import (
+        OpenRouterIngredientNormalizer,
+        build_normalization_transport,
+    )
+
+    return OpenRouterIngredientNormalizer(
+        build_normalization_transport(api_key=api_key, model=settings.openrouter_model)
+    )
+
+
 def _build_import_adapters(settings: Settings, model: object, catalog: object) -> ImportAdapters:
     from ingestion.fetcher import SafeFetcher
 
@@ -68,6 +94,7 @@ def _build_import_adapters(settings: Settings, model: object, catalog: object) -
         deterministic=_JsonLdAdapter(),
         model=_model_if_enabled(settings.ai_extraction_enabled, model),  # type: ignore[arg-type]
         catalog=catalog,  # type: ignore[arg-type]
+        normalizer=_build_normalizer(settings),  # type: ignore[arg-type]
         variant_registry=settings.server_rendered_variant_registry,
     )
 
@@ -184,6 +211,7 @@ def build_import_runner() -> ImportRunner:
                         cipher,
                         budgets=AiBudgetRepository(session),
                         budget_policy=_ai_budget_policy(settings),
+                        normalization_budget_policy=_normalization_budget_policy(settings),
                     ).run(
                         job_id,
                         token,
@@ -213,7 +241,7 @@ def build_import_runner() -> ImportRunner:
 
 
 class _JsonLdAdapter:
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate:
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate:
         return parse_recipe_jsonld(document)
 
 

@@ -45,7 +45,9 @@ export function getImportPresentation(job: ImportPollJob): ImportPresentation {
 
 export function canRetryImport(job: ImportPollJob): boolean {
   return (job.status === "failed" && job.errorCategory !== null && RETRYABLE_FAILED_CATEGORIES.has(job.errorCategory))
-    || (job.status === "timed_out" && job.errorCategory === "import_deadline_exceeded");
+    || (job.status === "timed_out" && job.errorCategory === "import_deadline_exceeded")
+    || (job.status === "review_required" && job.errorCategory === "provider_invalid_output")
+    || (job.status === "review_required" && job.errorCategory === "daily_ai_budget_exceeded");
 }
 
 /** @deprecated Screens should render getImportPresentation(job), never raw status details. */

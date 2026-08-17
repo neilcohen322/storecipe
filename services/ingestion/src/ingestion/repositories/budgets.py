@@ -14,10 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ingestion.models import (
     AiDailyUsage,
-    ImportJob,
     LlmInvocation,
     LlmInvocationState,
-    ProviderAttempt,
+    LlmOperationKind,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,66 +42,66 @@ class AiBudgetRepository:
     async def reserve(
         self,
         *,
-        job: ImportJob,
-        provider_attempt: ProviderAttempt,
+        owner_subject: str,
+        provider_operation_id: UUID,
+        operation_kind: LlmOperationKind,
+        request_deadline_at: datetime,
         provider_name: str,
         model_name: str,
         prompt_version: str,
         reservation_tokens: int,
         daily_limit: int,
+        job_id: UUID | None = None,
         budget_date: date | None = None,
     ) -> BudgetReservation:
-        attempt = await self.session.scalar(
-            select(ProviderAttempt)
-            .where(ProviderAttempt.operation_id == provider_attempt.operation_id)
-            .with_for_update()
-        )
-        assert attempt is not None
+        if operation_kind is LlmOperationKind.IMPORT_EXTRACTION:
+            if job_id is None:
+                raise ValueError("import extraction requires job_id")
+        elif job_id is not None:
+            raise ValueError("ingredient normalization must not reference an import job")
+
         existing = await self.session.scalar(
             select(LlmInvocation)
-            .where(LlmInvocation.provider_operation_id == attempt.operation_id)
+            .where(LlmInvocation.provider_operation_id == provider_operation_id)
             .with_for_update()
         )
         if existing:
             return BudgetReservation(
                 existing.id,
-                attempt.operation_id,
+                provider_operation_id,
                 existing.budget_date_utc,
                 existing.reserved_tokens,
             )
         day = budget_date or datetime.now(UTC).date()
-        usage = await self.session.get(AiDailyUsage, (job.owner_subject, day), with_for_update=True)
+        usage = await self.session.get(AiDailyUsage, (owner_subject, day), with_for_update=True)
         if usage is None:
             try:
                 async with self.session.begin_nested():
-                    self.session.add(
-                        AiDailyUsage(owner_subject=job.owner_subject, budget_date_utc=day)
-                    )
+                    self.session.add(AiDailyUsage(owner_subject=owner_subject, budget_date_utc=day))
                     await self.session.flush()
             except IntegrityError:
                 pass
-            usage = await self.session.get(
-                AiDailyUsage, (job.owner_subject, day), with_for_update=True
-            )
+            usage = await self.session.get(AiDailyUsage, (owner_subject, day), with_for_update=True)
         assert usage is not None
         if usage.reserved_tokens + usage.consumed_tokens + reservation_tokens > daily_limit:
             raise BudgetExceeded(datetime.combine(day + timedelta(days=1), time.min, UTC))
         usage.reserved_tokens += reservation_tokens
         invocation = LlmInvocation(
-            job_id=job.id,
-            provider_operation_id=attempt.operation_id,
-            owner_subject=job.owner_subject,
+            job_id=job_id,
+            provider_operation_id=provider_operation_id,
+            operation_kind=operation_kind,
+            owner_subject=owner_subject,
             budget_date_utc=day,
             state=LlmInvocationState.RESERVED,
             provider_name=provider_name,
             model_name=model_name,
             prompt_version=prompt_version,
             reserved_tokens=reservation_tokens,
-            request_deadline_at=attempt.request_deadline_at,
+            request_deadline_at=request_deadline_at,
         )
         self.session.add(invocation)
         await self.session.flush()
-        return BudgetReservation(invocation.id, attempt.operation_id, day, reservation_tokens)
+        return BudgetReservation(invocation.id, provider_operation_id, day, reservation_tokens)
 
     async def succeed(
         self,

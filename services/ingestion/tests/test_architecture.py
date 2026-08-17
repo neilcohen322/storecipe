@@ -117,6 +117,7 @@ def test_usage_governance_environment_and_rate_limit_contracts_are_explicit() ->
         "INGESTION_IMPORT_BURST_WINDOW_SECONDS",
         "INGESTION_AI_DAILY_TOKEN_LIMIT",
         "INGESTION_AI_INVOCATION_RESERVATION_TOKENS",
+        "INGESTION_INGREDIENT_NORMALIZATION_RESERVATION_TOKENS",
         "STORECIPE_TEST_REDIS_URL",
     ):
         assert variable in environment
@@ -136,6 +137,7 @@ def test_ai_budget_models_have_durable_keys() -> None:
         constraint.name == "uq_llm_invocations_provider_operation"
         for constraint in LlmInvocation.__table__.constraints
     )
+    assert not LlmInvocation.__table__.c.provider_operation_id.foreign_keys
     constraint_sql = {
         str(constraint.sqltext)
         for constraint in (
@@ -151,3 +153,7 @@ def test_ai_budget_models_have_durable_keys() -> None:
     assert "total_tokens >= 0" in constraint_sql
     assert "cost_microunits >= 0" in constraint_sql
     assert "latency_ms >= 0" in constraint_sql
+    assert (
+        "(operation_kind = 'import_extraction' AND job_id IS NOT NULL) "
+        "OR (operation_kind = 'ingredient_normalization' AND job_id IS NULL)"
+    ) in constraint_sql

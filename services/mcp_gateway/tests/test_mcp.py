@@ -9,10 +9,14 @@ from mcp.types import CallToolResult
 import storecipe_mcp.auth as mcp_auth
 from storecipe_mcp.auth import McpInboundTokenVerifier
 from storecipe_mcp.config import Settings
-from storecipe_mcp.errors import CatalogClientError
+from storecipe_mcp.errors import CatalogClientError, IngestionClientError
 from storecipe_mcp.mcp_server import create_mcp_server
 from storecipe_mcp.models import (
+    CatalogRecipeCreate,
     IngredientCreate,
+    IngredientDraft,
+    IngredientNormalizationRequest,
+    IngredientNormalizationResponse,
     IngredientView,
     RatingView,
     RecipeCreate,
@@ -29,6 +33,7 @@ from storecipe_mcp.models import (
 RECIPE_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 MCP_TOKEN = "verified-mcp-token"
 API_TOKEN = "exchanged-api-token"
+SECRET_INGREDIENT = "secret-ingredient-marker"
 
 
 def _recipe_view() -> RecipeView:
@@ -40,7 +45,15 @@ def _recipe_view() -> RecipeView:
         prep_minutes=10,
         cook_minutes=20,
         total_minutes=30,
-        ingredients=[IngredientView(raw_text="2 tomatoes", name="tomato", quantity=2, unit=None)],
+        ingredients=[
+            IngredientView(
+                raw_text="2 tomatoes",
+                name="tomato",
+                canonical_name="tomato",
+                quantity=2,
+                unit=None,
+            )
+        ],
         instructions=["Cook the tomatoes."],
         tags=["soup"],
         rating=None,
@@ -55,10 +68,22 @@ def _recipe_create() -> RecipeCreate:
         prep_minutes=10,
         cook_minutes=20,
         total_minutes=30,
-        ingredients=[IngredientCreate(raw_text="2 tomatoes", name="tomato", quantity=2, unit=None)],
+        ingredients=[IngredientDraft(raw_text=SECRET_INGREDIENT)],
         instructions=["Cook the tomatoes."],
         tags=["soup"],
     )
+
+
+def _normalized_ingredients() -> list[IngredientCreate]:
+    return [
+        IngredientCreate(
+            raw_text=SECRET_INGREDIENT,
+            name="tomato",
+            canonical_name="tomato",
+            quantity=2,
+            unit=None,
+        )
+    ]
 
 
 def _facet_page() -> RecipeFacetPage:
@@ -98,7 +123,7 @@ class RecordingCatalog:
         return _recipe_view()
 
     async def create_recipe(
-        self, payload: RecipeCreate, idempotency_key: str, token: str
+        self, payload: CatalogRecipeCreate, idempotency_key: str, token: str
     ) -> RecipeView:
         self.calls.append(("create_recipe", (payload, idempotency_key, token)))
         return _recipe_view()
@@ -120,6 +145,31 @@ class RecordingCatalog:
         return RecipeFacetSelectionsResponse(ingredients=[], tags=[])
 
 
+class RecordingIngestion:
+    def __init__(
+        self,
+        *,
+        response: IngredientNormalizationResponse | None = None,
+        error: IngestionClientError | None = None,
+    ) -> None:
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self._response = response or IngredientNormalizationResponse(
+            ingredients=_normalized_ingredients()
+        )
+        self._error = error
+
+    async def normalize_ingredients(
+        self,
+        request: IngredientNormalizationRequest,
+        idempotency_key: str,
+        token: str,
+    ) -> IngredientNormalizationResponse:
+        self.calls.append(("normalize_ingredients", (request, idempotency_key, token)))
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
 class FakeOboProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -138,13 +188,17 @@ class FakeOboProvider:
 def _server(
     settings: Settings,
     catalog: object,
+    *,
+    ingestion: object | None = None,
     obo_provider: FakeOboProvider | None = None,
 ):
     provider = obo_provider or FakeOboProvider()
+    ingestion_client = ingestion if ingestion is not None else RecordingIngestion()
     return create_mcp_server(
         settings,
         McpInboundTokenVerifier(settings),
         catalog_client_provider=cast(Callable[[], Any], lambda: catalog),
+        ingestion_client_provider=cast(Callable[[], Any], lambda: ingestion_client),
         obo_provider_factory=lambda: provider,
     )
 
@@ -310,8 +364,9 @@ async def test_tools_exchange_mcp_token_and_forward_api_token_to_catalog(
     expected_method: str,
 ) -> None:
     catalog = RecordingCatalog()
+    ingestion = RecordingIngestion()
     obo_provider = FakeOboProvider()
-    server = _server(settings, catalog, obo_provider)
+    server = _server(settings, catalog, ingestion=ingestion, obo_provider=obo_provider)
     monkeypatch.setattr(
         mcp_auth,
         "get_access_token",
@@ -330,12 +385,24 @@ async def test_tools_exchange_mcp_token_and_forward_api_token_to_catalog(
     result = await server.call_tool(name, arguments)
 
     assert isinstance(result, tuple)
-    assert len(catalog.calls) == 1
-    method, recorded_arguments = catalog.calls[0]
-    assert method == expected_method
-    assert recorded_arguments[-1] == API_TOKEN
-    assert MCP_TOKEN not in recorded_arguments
-    assert "attacker-supplied" not in repr(recorded_arguments)
+    if name == "create_recipe":
+        assert len(catalog.calls) == 1
+        assert len(ingestion.calls) == 1
+        ingestion_method, ingestion_arguments = ingestion.calls[0]
+        catalog_method, catalog_arguments = catalog.calls[0]
+        assert ingestion_method == "normalize_ingredients"
+        assert catalog_method == "create_recipe"
+        assert ingestion_arguments[1] == catalog_arguments[1] == "idem-key-1"
+        assert ingestion_arguments[-1] == API_TOKEN
+        assert catalog_arguments[-1] == API_TOKEN
+        assert catalog_arguments[0].ingredients[0].canonical_name == "tomato"
+    else:
+        assert len(catalog.calls) == 1
+        method, recorded_arguments = catalog.calls[0]
+        assert method == expected_method
+        assert recorded_arguments[-1] == API_TOKEN
+    assert MCP_TOKEN not in repr(catalog.calls)
+    assert "attacker-supplied" not in repr(catalog.calls)
     assert obo_provider.calls == [MCP_TOKEN]
 
 
@@ -358,7 +425,7 @@ async def test_catalog_401_invalidates_cached_exchange_and_retries_once(
 
     catalog = UnauthorizedThenOkCatalog()
     obo_provider = FakeOboProvider()
-    server = _server(settings, catalog, obo_provider)
+    server = _server(settings, catalog, obo_provider=obo_provider)
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:read"))
 
     result = await server.call_tool("get_recipe", {"recipe_id": str(RECIPE_ID)})
@@ -376,7 +443,8 @@ async def test_scope_denial_precedes_handler_conversion_and_upstream_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     catalog = RecordingCatalog()
-    server = _server(settings, catalog)
+    ingestion = RecordingIngestion()
+    server = _server(settings, catalog, ingestion=ingestion)
     monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:read"))
 
     result = await server.call_tool(
@@ -387,6 +455,7 @@ async def test_scope_denial_precedes_handler_conversion_and_upstream_call(
     assert isinstance(result, CallToolResult)
     assert result.isError is True
     assert len(catalog.calls) == 0
+    assert len(ingestion.calls) == 0
     assert result.meta == {
         "mcp/www_authenticate": [
             'Bearer resource_metadata="https://mcp.storecipe.example/.well-known/'
@@ -537,3 +606,124 @@ async def test_query_recipes_rejects_duplicate_overflow_before_catalog_call(
     assert too_many_ingredients.isError is True
     assert too_many_tags.isError is True
     assert len(catalog.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_create_recipe_calls_ingestion_before_catalog_with_same_idempotency_key(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = RecordingCatalog()
+    ingestion = RecordingIngestion()
+    server = _server(settings, catalog, ingestion=ingestion)
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:write"))
+
+    result = await server.call_tool(
+        "create_recipe",
+        {
+            "idempotency_key": "idem-key-1",
+            "recipe": _recipe_create().model_dump(mode="json", by_alias=True),
+        },
+    )
+
+    assert isinstance(result, tuple)
+    assert len(ingestion.calls) == 1
+    assert len(catalog.calls) == 1
+    assert ingestion.calls[0][0] == "normalize_ingredients"
+    assert catalog.calls[0][0] == "create_recipe"
+    assert ingestion.calls[0][1][1] == catalog.calls[0][1][1] == "idem-key-1"
+    assert catalog.calls[0][1][0].ingredients[0].canonical_name == "tomato"
+
+
+@pytest.mark.asyncio
+async def test_create_recipe_skips_catalog_when_ingestion_raises(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = RecordingCatalog()
+    ingestion = RecordingIngestion(
+        error=IngestionClientError("temporary_ingestion_failure", retryable=True)
+    )
+    server = _server(settings, catalog, ingestion=ingestion)
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:write"))
+
+    result = await server.call_tool(
+        "create_recipe",
+        {
+            "idempotency_key": "idem-key-1",
+            "recipe": _recipe_create().model_dump(mode="json", by_alias=True),
+        },
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is True
+    assert len(ingestion.calls) == 1
+    assert len(catalog.calls) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_category", "expected_message"),
+    [
+        ("authentication_required", "Authentication is required."),
+        ("insufficient_scope", "Additional authorization is required."),
+        ("invalid_input", "The request is invalid."),
+        ("idempotency_conflict", "The idempotency key conflicts with an existing normalization."),
+        ("ingestion_rate_limited", "Ingredient normalization is rate limited. Try again later."),
+        ("ingredient_normalization_invalid_output", "Ingredient normalization failed."),
+        ("temporary_ingestion_failure", "Ingredient normalization is temporarily unavailable."),
+    ],
+)
+async def test_ingestion_errors_map_to_safe_messages_without_ingredient_leakage(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    status_category: str,
+    expected_message: str,
+) -> None:
+    catalog = RecordingCatalog()
+    ingestion = RecordingIngestion(
+        error=IngestionClientError(
+            status_category,
+            retryable=status_category in {"ingestion_rate_limited", "temporary_ingestion_failure"},
+            required_scope="recipes:write" if status_category == "insufficient_scope" else None,
+        )
+    )
+    server = _server(settings, catalog, ingestion=ingestion)
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:write"))
+
+    result = await server.call_tool(
+        "create_recipe",
+        {
+            "idempotency_key": "idem-key-1",
+            "recipe": _recipe_create().model_dump(mode="json", by_alias=True),
+        },
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is True
+    assert result.content[0].text == expected_message
+    assert SECRET_INGREDIENT not in result.content[0].text
+    assert len(catalog.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_exact_ingestion_replay_still_proceeds_to_catalog(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = RecordingCatalog()
+    ingestion = RecordingIngestion()
+    server = _server(settings, catalog, ingestion=ingestion)
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:write"))
+    arguments = {
+        "idempotency_key": "idem-key-1",
+        "recipe": _recipe_create().model_dump(mode="json", by_alias=True),
+    }
+
+    first = await server.call_tool("create_recipe", arguments)
+    second = await server.call_tool("create_recipe", arguments)
+
+    assert isinstance(first, tuple)
+    assert isinstance(second, tuple)
+    assert len(ingestion.calls) == 2
+    assert len(catalog.calls) == 2

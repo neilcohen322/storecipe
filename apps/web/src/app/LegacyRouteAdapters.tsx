@@ -71,14 +71,18 @@ export function RecipesRouteAdapter() {
 }
 
 export function NewRecipeRouteAdapter() {
-  const { catalog } = useLegacyApis();
+  const { catalog, ingestion } = useLegacyApis();
   const router = useRouter();
   const onUnauthorized = useUnauthorizedHandler();
   const { width } = useWindowDimensions();
+  const { importJobId } = useLocalSearchParams<{ importJobId?: string | string[] }>();
+  const resolvedImportJobId = Array.isArray(importJobId) ? importJobId[0] : importJobId;
   return (
     <AuthGate>
       <CreateRecipeScreen
         catalog={catalog}
+        ingestion={ingestion}
+        importJobId={resolvedImportJobId}
         onCreated={(recipeId) =>
           router.replace({ pathname: "/recipes/[recipeId]", params: { recipeId } })
         }
@@ -120,7 +124,12 @@ export function NewImportRouteAdapter() {
   const router = useRouter();
   return (
     <AuthGate>
-      <ImportScreen onBack={() => router.back()} />
+      <ImportScreen
+        onBack={() => router.replace("/imports")}
+        onContinueExtractedRecipe={(jobId) =>
+          router.push({ pathname: "/recipes/new", params: { importJobId: jobId } })
+        }
+      />
     </AuthGate>
   );
 }
