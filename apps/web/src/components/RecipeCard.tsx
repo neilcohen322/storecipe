@@ -2,12 +2,14 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { Recipe } from "../api/catalog";
 import { useTheme } from "../theme/ThemeProvider";
+import type { CoverImageLoader } from "./AuthenticatedRecipeImage";
 import { RecipeMedia } from "./RecipeMedia";
 
 export type RecipeCardProps = {
   item: Recipe;
   onOpen(recipeId: string): void;
   view: "card" | "list";
+  loadCoverImage?: CoverImageLoader;
 };
 
 function mediaColor(recipeId: string, colors: { accent: string; success: string; warning: string; danger: string }): string {
@@ -15,7 +17,7 @@ function mediaColor(recipeId: string, colors: { accent: string; success: string;
   return palette[recipeId.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % palette.length];
 }
 
-export function RecipeCard({ item: recipe, onOpen, view }: RecipeCardProps) {
+export function RecipeCard({ item: recipe, onOpen, view, loadCoverImage }: RecipeCardProps) {
   const { theme } = useTheme();
   const details = [
     recipe.totalMinutes != null ? `${recipe.totalMinutes} min` : null,
@@ -35,7 +37,13 @@ export function RecipeCard({ item: recipe, onOpen, view }: RecipeCardProps) {
       ]}
     >
       <View testID={`recipe-card-media-${recipe.id}`} style={[styles.mediaSlot, view === "list" && styles.listMedia, { backgroundColor: mediaColor(recipe.id, theme.colors) }]}>
-        <RecipeMedia title={recipe.title} tags={recipe.tags} />
+        <RecipeMedia
+          recipeId={recipe.id}
+          title={recipe.title}
+          tags={recipe.tags}
+          coverImage={recipe.coverImage}
+          loadCoverImage={loadCoverImage}
+        />
       </View>
       <View style={styles.copy}>
         <Text style={[styles.title, { color: theme.colors.text }]}>{recipe.title}</Text>

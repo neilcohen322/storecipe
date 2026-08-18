@@ -1,10 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  TextInput,
-  StyleSheet,
-  View,
-  Text,
-} from "react-native";
+import { Image, TextInput, StyleSheet, View, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ApiError, ApiUnauthorizedError } from "../api/client";
@@ -12,6 +7,12 @@ import type { RecipeCreate, RecipeCreateIngredient } from "../api/catalog";
 import type { createCatalogApi } from "../api/catalog";
 import type { createIngestionApi, ImportReviewDraft } from "../api/ingestion";
 import { Button, Field, InlineNotice, PageHeader, Screen, TextArea } from "../components";
+import {
+  blobFromPickerUri,
+  pickRecipeCoverImage,
+  pickerStatusMessage,
+  type PickedCover,
+} from "../media/imagePicker";
 import type { LayoutMode } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
 import {
@@ -146,6 +147,10 @@ export function CreateRecipeScreen({
   const [extractedMetadata, setExtractedMetadata] = useState<ExtractedRecipeMetadata | null>(null);
   const [reviewedAttempt, setReviewedAttempt] = useState<ReviewedCreateAttempt | null>(null);
   const [quantityDrafts, setQuantityDrafts] = useState<string[]>([]);
+  const [cover, setCover] = useState<Extract<PickedCover, { status: "selected" }> | null>(null);
+  const [coverMessage, setCoverMessage] = useState<string | null>(null);
+  const [createdRecipeId, setCreatedRecipeId] = useState<string | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
   const normalizationSessionRef = useRef<IdempotencySession | null>(null);
   const submissionInFlightRef = useRef(false);
   const formDirtyRef = useRef(false);
@@ -400,7 +405,7 @@ export function CreateRecipeScreen({
   };
 
   const saveRecipe = async () => {
-    if (submissionInFlightRef.current || !reviewedAttempt || draftLoading) {
+    if (submissionInFlightRef.current || !reviewedAttempt || draftLoading || createdRecipeId) {
       return;
     }
     const validated = validateForm();
@@ -438,7 +443,12 @@ export function CreateRecipeScreen({
       normalizationSessionRef.current = null;
       setReviewedAttempt(null);
       setQuantityDrafts([]);
-      onCreated(recipe.id);
+      if (!cover) {
+        onCreated(recipe.id);
+        return;
+      }
+      setCreatedRecipeId(recipe.id);
+      await uploadCover(recipe.id, cover);
     } catch (err) {
       if (err instanceof ApiUnauthorizedError) {
         onUnauthorized();
@@ -449,6 +459,53 @@ export function CreateRecipeScreen({
       submissionInFlightRef.current = false;
       setSubmitting(false);
     }
+  };
+
+  const uploadCover = async (
+    recipeId: string,
+    selected: Extract<PickedCover, { status: "selected" }>,
+  ) => {
+    setImageUploading(true);
+    setCoverMessage(null);
+    try {
+      const blob = await blobFromPickerUri(selected.uri, selected.mimeType);
+      await catalog.uploadCoverImage(recipeId, blob);
+      onCreated(recipeId);
+    } catch (err) {
+      if (err instanceof ApiUnauthorizedError) {
+        onUnauthorized();
+        return;
+      }
+      setCoverMessage("Recipe saved; image upload failed.");
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
+  const handlePickCover = async () => {
+    if (submitting || imageUploading || draftLoading) {
+      return;
+    }
+    const result = await pickRecipeCoverImage();
+    if (result.status === "cancelled") {
+      return;
+    }
+    const message = pickerStatusMessage(result.status);
+    if (message) {
+      setCoverMessage(message);
+      return;
+    }
+    if (result.status === "selected") {
+      setCover(result);
+      setCoverMessage(null);
+    }
+  };
+
+  const handleRetryCover = async () => {
+    if (!createdRecipeId || !cover || imageUploading) {
+      return;
+    }
+    await uploadCover(createdRecipeId, cover);
   };
 
   const handlePrimaryAction = () => {
@@ -467,7 +524,7 @@ export function CreateRecipeScreen({
       testID={testID}
       label={primaryLabel}
       loading={submitting}
-      disabled={submitting || draftLoading}
+      disabled={submitting || draftLoading || imageUploading || Boolean(createdRecipeId)}
       onPress={handlePrimaryAction}
     />
   );
@@ -581,6 +638,31 @@ export function CreateRecipeScreen({
             onSubmitEditing={handlePrimaryAction}
           />
           {requestError ? <InlineNotice tone="error" message={requestError} /> : null}
+          <View style={styles.coverSection}>
+            <Button
+              label={cover ? "Replace cover image" : "Add cover image"}
+              variant="secondary"
+              onPress={() => void handlePickCover()}
+              disabled={submitting || imageUploading || draftLoading}
+            />
+            {cover ? (
+              <Image
+                testID="create-recipe-cover-preview"
+                accessibilityLabel="Selected cover preview"
+                source={{ uri: cover.uri }}
+                style={styles.coverPreview}
+              />
+            ) : null}
+            {coverMessage ? <InlineNotice tone="error" message={coverMessage} /> : null}
+            {createdRecipeId && coverMessage?.startsWith("Recipe saved") ? (
+              <Button
+                label="Try image upload again"
+                variant="secondary"
+                loading={imageUploading}
+                onPress={() => void handleRetryCover()}
+              />
+            ) : null}
+          </View>
         </View>
       </Screen>
       {compact ? (
@@ -612,4 +694,6 @@ const styles = StyleSheet.create({
   reviewHeading: { fontSize: 16, fontWeight: "700" },
   reviewIngredient: { gap: 8 },
   reviewRawLine: { fontSize: 13, fontStyle: "italic" },
+  coverSection: { marginTop: 16, gap: 12 },
+  coverPreview: { width: "100%", height: 180, borderRadius: 16 },
 });

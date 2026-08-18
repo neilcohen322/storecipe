@@ -62,6 +62,12 @@ if ([string]::IsNullOrWhiteSpace($env:STORECIPE_TEST_REDIS_URL)) {
     Write-Host 'AVAILABLE: Redis integration checks can run with STORECIPE_TEST_REDIS_URL.'
 }
 
+if ([string]::IsNullOrWhiteSpace($env:CATALOG_TEST_MEDIA_BUCKET)) {
+    Write-Host 'UNVERIFIED: Live GCS cover-image checks require CATALOG_TEST_MEDIA_BUCKET.'
+} else {
+    Write-Host 'AVAILABLE: Live GCS cover-image checks can run with CATALOG_TEST_MEDIA_BUCKET.'
+}
+
 if ($env:RUN_DOCKER_INTEGRATION -ne '1') {
     Write-Host 'UNVERIFIED: Docker integration checks require RUN_DOCKER_INTEGRATION=1.'
 } else {

@@ -122,6 +122,7 @@ test("createRecipe reuses caller-supplied idempotency key", async () => {
       instructions: [],
       tags: [],
       rating: null,
+      coverImage: null,
     });
   }) as typeof fetch;
 

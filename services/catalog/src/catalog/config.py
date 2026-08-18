@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     redis_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
     recipe_query_cache_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)
+    media_bucket: str = ""
+    media_max_input_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=8 * 1024 * 1024)
+    media_max_pixels: int = Field(default=12_000_000, ge=1, le=12_000_000)
+    media_max_output_bytes: int = Field(default=1_572_864, ge=1, le=1_572_864)
     auth0_issuer: str = Field(default="", validation_alias="AUTH0_ISSUER")
     auth0_audience: str = Field(default="", validation_alias="AUTH0_AUDIENCE")
     auth0_jwks_url: str = Field(default="", validation_alias="AUTH0_JWKS_URL")

@@ -25,6 +25,6 @@ test("returns to the imports list from a direct new-import entry", async ({ page
   await page.goto("/imports/new");
   await page.getByRole("button", { name: "Back to imports" }).click();
   await expect(page).toHaveURL(/\/imports$/);
-  await expect(page.getByRole("heading", { name: "Imports" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Imports", exact: true })).toBeVisible();
   await assertStablePageQuality(page, errors);
 });

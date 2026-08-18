@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from catalog.auth import Principal, get_principal
 from catalog.database import get_session
 from catalog.main import app
-from catalog.models import Base, Ingredient, Recipe, User
+from catalog.models import Base, Ingredient, Recipe, RecipeImage, User
+from catalog.recipe_views import to_recipe_view
 
 
 @pytest_asyncio.fixture
@@ -69,6 +70,35 @@ def recipe_payload() -> dict[str, object]:
         "instructions": ["Cook the onion.", "Add the chickpeas."],
         "tags": ["Dinner", "spicy", "dinner"],
     }
+
+
+def recipe_with_cover() -> Recipe:
+    recipe_id = UUID("11111111-1111-1111-1111-111111111111")
+    recipe = Recipe(id=recipe_id, user_id=uuid4(), title="Cover soup")
+    recipe.ingredients = []
+    recipe.instructions = []
+    recipe.recipe_tags = []
+    recipe.ratings = []
+    recipe.cover_image = RecipeImage(
+        recipe_id=recipe_id,
+        object_key="recipe-images/hidden/object.webp",
+        object_generation="17",
+        content_type="image/webp",
+        byte_size=1234,
+        sha256="a" * 64,
+    )
+    return recipe
+
+
+def test_recipe_view_exposes_stable_cover_metadata() -> None:
+    view = to_recipe_view(recipe_with_cover(), rating=None)
+    assert view.cover_image is not None
+    assert view.cover_image.url == f"/v1/recipes/{view.id}/cover-image"
+    assert view.cover_image.etag == "a" * 64
+    assert view.cover_image.byte_size == 1234
+    dumped = view.model_dump()
+    assert "object_key" not in dumped
+    assert "bucket" not in str(dumped).lower()
 
 
 @pytest.mark.asyncio

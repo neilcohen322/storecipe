@@ -16,6 +16,7 @@ export const fixtureRecipe: Recipe = {
   instructions: ["Boil the pasta.", "Simmer the tomatoes and combine."],
   tags: ["weeknight", "vegetarian"],
   rating: 4,
+  coverImage: null,
 };
 
 export const fixtureRecipePage: RecipeQueryPage = {

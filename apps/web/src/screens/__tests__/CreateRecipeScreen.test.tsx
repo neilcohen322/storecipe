@@ -3,6 +3,17 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { ApiError, ApiUnauthorizedError } from "../../api/client";
 import type { Recipe } from "../../api/catalog";
 import { CreateRecipeScreen } from "../CreateRecipeScreen";
+import { pickRecipeCoverImage, blobFromPickerUri } from "../../media/imagePicker";
+
+jest.mock("../../media/imagePicker", () => ({
+  pickRecipeCoverImage: jest.fn(),
+  blobFromPickerUri: jest.fn(async () => new Blob(["RIFF"])),
+  pickerStatusMessage: (status: string) => {
+    if (status === "too_large") return "Choose an image smaller than 8 MB.";
+    if (status === "unsupported") return "Choose a valid JPEG, PNG, or WebP image.";
+    return null;
+  },
+}));
 
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 12, left: 0 }),
@@ -12,7 +23,7 @@ jest.mock("../../theme/ThemeProvider", () => ({
   useTheme: () => ({ theme: { colors: { canvas: "#fff", surface: "#fff", elevatedSurface: "#fff", text: "#111", mutedText: "#555", border: "#ddd", accent: "#080", accentHover: "#060", accentContrast: "#fff", success: "#080", warning: "#850", danger: "#b00", focusRing: "#080", scrim: "rgba(0,0,0,.4)" }, spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 }, sizing: { control: 44, icon: 24, touchTarget: 48 }, radii: { sm: 8, md: 12, lg: 16, pill: 999 }, type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 } } }),
 }));
 
-const recipe: Recipe = { id: "recipe-1", title: "Soup", sourceUrl: null, servings: null, prepMinutes: null, cookMinutes: null, totalMinutes: null, ingredients: [], instructions: [], tags: [], rating: null };
+const recipe: Recipe = { id: "recipe-1", title: "Soup", sourceUrl: null, servings: null, prepMinutes: null, cookMinutes: null, totalMinutes: null, ingredients: [], instructions: [], tags: [], rating: null, coverImage: null };
 const actions = { onCreated: jest.fn(), onBack: jest.fn(), onUnauthorized: jest.fn() };
 const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; }); return { promise, resolve, reject }; };
 
@@ -23,18 +34,18 @@ const normalizedIngredients = {
   ],
 };
 
-const catalogWith = (createRecipe: jest.Mock) => ({ createRecipe }) as unknown as React.ComponentProps<typeof CreateRecipeScreen>["catalog"];
+const catalogWith = (createRecipe: jest.Mock, uploadCoverImage = jest.fn()) => ({ createRecipe, uploadCoverImage }) as unknown as React.ComponentProps<typeof CreateRecipeScreen>["catalog"];
 const ingestionWith = (normalizeIngredients: jest.Mock, getImportDraft = jest.fn()) => ({ normalizeIngredients, getImportDraft }) as unknown as React.ComponentProps<typeof CreateRecipeScreen>["ingestion"];
 
 async function renderScreen(
   createRecipe = jest.fn().mockResolvedValue(recipe),
   normalizeIngredients = jest.fn().mockResolvedValue(normalizedIngredients),
   layoutMode: "compact" | "medium" | "expanded" = "medium",
-  extras: { importJobId?: string; getImportDraft?: jest.Mock } = {},
+  extras: { importJobId?: string; getImportDraft?: jest.Mock; uploadCoverImage?: jest.Mock } = {},
 ) {
   return await render(
     <CreateRecipeScreen
-      catalog={catalogWith(createRecipe)}
+      catalog={catalogWith(createRecipe, extras.uploadCoverImage)}
       ingestion={ingestionWith(normalizeIngredients, extras.getImportDraft)}
       {...actions}
       layoutMode={layoutMode}
@@ -418,4 +429,51 @@ test("does not overwrite user edits with a late import draft", async () => {
     instructions: ["boil", "serve"],
     tags: [],
   });
+});
+
+test("create without an image still saves the recipe", async () => {
+  const createRecipe = jest.fn().mockResolvedValue(recipe);
+  const uploadCoverImage = jest.fn();
+  const screen = await renderScreen(createRecipe, jest.fn().mockResolvedValue(normalizedIngredients), "medium", { uploadCoverImage });
+  await fillValidRecipe(screen);
+  await reviewRecipe(screen);
+  await fireEvent.press(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(actions.onCreated).toHaveBeenCalledWith("recipe-1"));
+  expect(uploadCoverImage).not.toHaveBeenCalled();
+});
+
+test("uploads a selected cover after create and retries upload only", async () => {
+  const createRecipe = jest.fn().mockResolvedValue(recipe);
+  const uploadCoverImage = jest.fn()
+    .mockRejectedValueOnce(new ApiError("Images are temporarily unavailable. Your recipe is safe.", 503, "media_unavailable"))
+    .mockResolvedValueOnce({ url: "/v1/recipes/recipe-1/cover-image", etag: "a".repeat(64), byteSize: 8, contentType: "image/webp" });
+  (pickRecipeCoverImage as jest.Mock).mockResolvedValue({
+    status: "selected",
+    uri: "blob:cover",
+    mimeType: "image/jpeg",
+    fileName: "cover.jpg",
+    fileSize: 12,
+  });
+  const screen = await renderScreen(createRecipe, jest.fn().mockResolvedValue(normalizedIngredients), "medium", { uploadCoverImage });
+  await fillValidRecipe(screen);
+  await fireEvent.press(screen.getByRole("button", { name: "Add cover image" }));
+  await waitFor(() => expect(screen.getByLabelText("Selected cover preview")).toBeTruthy());
+  await reviewRecipe(screen);
+  await fireEvent.press(screen.getByRole("button", { name: "Save recipe" }));
+  await waitFor(() => expect(screen.getByText("Recipe saved; image upload failed.")).toBeTruthy());
+  expect(actions.onCreated).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole("button", { name: "Try image upload again" }));
+  await waitFor(() => expect(actions.onCreated).toHaveBeenCalledWith("recipe-1"));
+  expect(createRecipe).toHaveBeenCalledTimes(1);
+  expect(uploadCoverImage).toHaveBeenCalledTimes(2);
+  expect(blobFromPickerUri).toHaveBeenCalled();
+});
+
+test("shows early oversize feedback without creating a recipe", async () => {
+  (pickRecipeCoverImage as jest.Mock).mockResolvedValue({ status: "too_large" });
+  const createRecipe = jest.fn();
+  const screen = await renderScreen(createRecipe);
+  await fireEvent.press(screen.getByRole("button", { name: "Add cover image" }));
+  await waitFor(() => expect(screen.getByText("Choose an image smaller than 8 MB.")).toBeTruthy());
+  expect(createRecipe).not.toHaveBeenCalled();
 });

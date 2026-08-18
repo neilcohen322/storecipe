@@ -10,6 +10,7 @@ import { FacetPicker } from "../components/FacetPicker";
 import { FilterDialog, type FilterDraft } from "../components/FilterDialog";
 import { RatingFilter } from "../components/RatingFilter";
 import { RecipeCard } from "../components/RecipeCard";
+import type { CoverImageLoader } from "../components/AuthenticatedRecipeImage";
 import { SortMenu } from "../components/SortMenu";
 import { Button, EmptyState, ErrorState, Field, InlineNotice, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Skeleton } from "../components";
 import type { LayoutMode } from "../navigation/types";
@@ -155,6 +156,10 @@ export function RecipeListScreen({
   void onCreate; void onImport; void onLogout;
   const onUnauthorizedRef = useRef(onUnauthorized);
   onUnauthorizedRef.current = onUnauthorized;
+  const loadCoverImage = useCallback<CoverImageLoader>(
+    ({ recipeId, etag, signal }) => catalog.getCoverImage(recipeId, { etag, signal }),
+    [catalog],
+  );
   const pushFilters = useCallback((next: ListRecipesParams) => router.push({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
   const replaceFilters = useCallback((next: ListRecipesParams) => router.replace({ pathname: "/recipes", params: serializeRecipeListParams(next) }), [router]);
   const options = useRecipeFacetOptions({ catalog, onUnauthorized });
@@ -274,8 +279,8 @@ export function RecipeListScreen({
           : items.length === 0
             ? <EmptyState title="Your recipe library is empty." description="Create or import a recipe to start building your library." />
             : view === "card"
-              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="card" />)}</ResponsiveGrid>
-              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="list" />)}</View>}
+              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="card" loadCoverImage={loadCoverImage} />)}</ResponsiveGrid>
+              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="list" loadCoverImage={loadCoverImage} />)}</View>}
       {nextCursor ? <Button label="Load more recipes" loading={loadingMore} onPress={() => void request(nextCursor)} /> : null}
     </Screen>
     <FilterDialog
