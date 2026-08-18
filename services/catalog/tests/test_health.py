@@ -30,12 +30,31 @@ def test_recipe_query_cache_ttl_environment_name_is_consistent() -> None:
         assert content.count(new_name) == expected_count
 
 
+def test_mutation_burst_environment_names_are_consistent() -> None:
+    root = Path(__file__).resolve().parents[3]
+    expected_occurrences = {
+        ".env.example": 1,
+        "compose.yaml": 2,
+        "contracts/environment.md": 1,
+    }
+
+    for name in (
+        "CATALOG_MUTATION_BURST_REQUESTS",
+        "CATALOG_MUTATION_BURST_WINDOW_SECONDS",
+    ):
+        for relative_path, expected_count in expected_occurrences.items():
+            content = (root / relative_path).read_text()
+            assert content.count(name) == expected_count
+
+
 def test_recipe_query_cache_defaults() -> None:
     settings = Settings()
 
     assert settings.redis_url == "redis://localhost:6379"
     assert settings.recipe_query_cache_ttl_seconds == 1800
     assert settings.redis_timeout_seconds == 1.0
+    assert settings.mutation_burst_requests == 30
+    assert settings.mutation_burst_window_seconds == 60
 
 
 def test_recipe_query_cache_ttl_is_bounded() -> None:
@@ -110,6 +129,11 @@ class _ClosingRedis:
         raise RedisError("Redis stopped before application shutdown")
 
 
+class _IdleLimiter:
+    async def close(self) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_catalog_shutdown_redis_failure_does_not_prevent_engine_disposal(
     monkeypatch: pytest.MonkeyPatch,
@@ -119,6 +143,8 @@ async def test_catalog_shutdown_redis_failure_does_not_prevent_engine_disposal(
         redis_url="redis://test",
         recipe_query_cache_ttl_seconds=1800,
         redis_timeout_seconds=1.0,
+        mutation_burst_requests=30,
+        mutation_burst_window_seconds=60,
     )
 
     def closing_redis(redis_url: str, *, timeout_seconds: float) -> _ClosingRedis:
@@ -130,6 +156,11 @@ async def test_catalog_shutdown_redis_failure_does_not_prevent_engine_disposal(
     monkeypatch.setattr(main, "create_engine", lambda: engine)
     monkeypatch.setattr(main, "create_session_factory", lambda _: object())
     monkeypatch.setattr(main, "create_redis_client", closing_redis)
+    monkeypatch.setattr(
+        main.RedisBurstLimiter,
+        "from_redis_url",
+        classmethod(lambda cls, redis_url, *, amount, window_seconds: _IdleLimiter()),
+    )
 
     application = FastAPI()
     with pytest.raises(RedisError, match="Redis stopped"):

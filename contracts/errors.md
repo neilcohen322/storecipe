@@ -133,4 +133,24 @@ Both import submission endpoints return `429 Too Many Requests` when the caller
 exceeds the configured import burst limit. The response includes `Retry-After`,
 `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers and uses
 the safe problem category `import_burst_exceeded`; it exposes no internal limiter
-or Redis details.
+or Redis details. If Redis cannot make an admission decision, both endpoints
+return `503 Service Unavailable` with `Retry-After` and the safe problem category
+`rate_limit_unavailable`, and they do not create a job.
+
+## Catalog mutation burst limit
+
+Authenticated Catalog recipe and rating mutations (`POST /v1/recipes`,
+`PATCH /v1/recipes/{recipeId}`, `DELETE /v1/recipes/{recipeId}`,
+`PUT /v1/recipes/{recipeId}/rating`, and `DELETE /v1/recipes/{recipeId}/rating`)
+return `429 Too Many Requests` when the subject exceeds 30 mutations per 60
+seconds by default. Read-only Catalog routes are unaffected. Internal M2M import
+writes are not subject to this limiter. Redis failure returns `503 Service
+Unavailable` with `rate_limit_unavailable` and does not persist the mutation.
+MCP mutations inherit this Catalog limiter after OBO exchange.
+
+## Request body size limits
+
+Catalog and MCP reject request bodies larger than 1 MiB with `413 Payload Too Large`
+and `errorCategory: request_too_large`. Ingestion rejects bodies larger than 320 KiB
+the same way. The limit is enforced while reading the body; a `Content-Length` header
+is not trusted on its own.

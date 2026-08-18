@@ -22,6 +22,8 @@ __all__ = [
     "IdempotencyConflict",
     "InvalidCursor",
     "InvalidFilter",
+    "MutationRateLimited",
+    "MutationRateLimitUnavailable",
     "RecipeNotFound",
     "StaleRecipeFacetCursor",
     "StaleRecipeQueryCursor",
@@ -57,3 +59,19 @@ class UnstableCatalogSnapshot(CatalogError):
 
     def __init__(self) -> None:
         super().__init__("Catalog changed while reading recipe facets.")
+
+
+class MutationRateLimited(CatalogError):
+    """The authenticated subject exceeded the Catalog mutation burst limit."""
+
+    def __init__(self, headers: dict[str, str]) -> None:
+        self.headers = headers
+        super().__init__("Catalog mutation burst limit exceeded.")
+
+
+class MutationRateLimitUnavailable(CatalogError):
+    """Redis could not make a Catalog mutation admission decision."""
+
+    def __init__(self, headers: dict[str, str]) -> None:
+        self.headers = headers
+        super().__init__("Catalog mutation admission is temporarily unavailable.")

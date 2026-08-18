@@ -57,6 +57,23 @@ def test_recipe_create_documents_idempotency_boundary() -> None:
     assert example["errorCategory"] == "idempotency_conflict"
 
 
+def test_recipe_create_documents_body_and_mutation_limits() -> None:
+    contract = _contract()
+    operation = contract["paths"]["/v1/recipes"]["post"]
+    schema = contract["components"]["schemas"]["RecipeCreate"]
+    ingredient = contract["components"]["schemas"]["Ingredient"]
+
+    assert operation["responses"]["413"] == {"$ref": "#/components/responses/RequestTooLarge"}
+    assert operation["responses"]["429"] == {"$ref": "#/components/responses/CatalogRateLimited"}
+    assert operation["responses"]["503"] == {"$ref": "#/components/responses/RateLimitUnavailable"}
+    assert schema["properties"]["ingredients"]["maxItems"] == 256
+    assert schema["properties"]["instructions"]["maxItems"] == 256
+    assert schema["properties"]["tags"]["maxItems"] == 64
+    assert schema["properties"]["instructions"]["items"]["maxLength"] == 4096
+    assert schema["properties"]["servings"]["maximum"] == 2_147_483_647
+    assert ingredient["properties"]["rawText"]["maxLength"] == 4096
+
+
 def test_recipe_source_urls_document_catalog_http_url_behavior() -> None:
     contract = _contract()
 

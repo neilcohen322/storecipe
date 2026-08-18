@@ -47,6 +47,7 @@ async def test_auth0_verifier_checks_signature_issuer_audience_and_scopes() -> N
         },
         private_key,
         algorithm="RS256",
+        headers={"kid": "test-key"},
     )
 
     principal = await verifier.verify(token)
@@ -70,6 +71,7 @@ async def test_auth0_verifier_rejects_wrong_audience() -> None:
         },
         private_key,
         algorithm="RS256",
+        headers={"kid": "test-key"},
     )
 
     with pytest.raises(InvalidAccessToken):
@@ -92,6 +94,7 @@ async def test_auth0_verifier_rejects_mcp_audience_tokens() -> None:
         },
         private_key,
         algorithm="RS256",
+        headers={"kid": "test-key"},
     )
 
     with pytest.raises(InvalidAccessToken):
@@ -122,6 +125,7 @@ async def test_auth0_verifier_rejects_wrong_issuer_or_expired_token(
         },
         private_key,
         algorithm="RS256",
+        headers={"kid": "test-key"},
     )
 
     with pytest.raises(InvalidAccessToken):

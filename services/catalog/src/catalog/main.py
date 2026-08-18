@@ -10,6 +10,7 @@ from catalog.auth import build_token_verifier
 from catalog.config import get_settings
 from catalog.database import create_engine, create_session_factory
 from catalog.problems import PROBLEM_TYPE_BASE, install_problem_details, problem_response
+from catalog.rate_limits import RedisBurstLimiter
 from catalog.recipe_query_cache import RecipeQueryCache, create_redis_client
 from catalog.routes.health import router as health_router
 from catalog.routes.internal_recipes import router as internal_recipes_router
@@ -21,11 +22,14 @@ from catalog.services.errors import (
     IdempotencyConflict,
     InvalidCursor,
     InvalidFilter,
+    MutationRateLimited,
+    MutationRateLimitUnavailable,
     RecipeNotFound,
     StaleRecipeFacetCursor,
     StaleRecipeQueryCursor,
     UnstableCatalogSnapshot,
 )
+from storecipe_auth.body_limit import CATALOG_MAX_REQUEST_BYTES, RequestBodyLimitMiddleware
 
 settings = get_settings()
 token_verifier = build_token_verifier(settings)
@@ -34,8 +38,10 @@ token_verifier = build_token_verifier(settings)
 def _status_for(exc: CatalogError) -> int:
     if isinstance(exc, RecipeNotFound):
         return status.HTTP_404_NOT_FOUND
-    if isinstance(exc, UnstableCatalogSnapshot):
+    if isinstance(exc, UnstableCatalogSnapshot | MutationRateLimitUnavailable):
         return status.HTTP_503_SERVICE_UNAVAILABLE
+    if isinstance(exc, MutationRateLimited):
+        return status.HTTP_429_TOO_MANY_REQUESTS
     if isinstance(exc, StaleRecipeQueryCursor | StaleRecipeFacetCursor):
         return status.HTTP_409_CONFLICT
     if isinstance(exc, IdempotencyConflict):
@@ -57,21 +63,33 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
         if isinstance(exc, StaleRecipeQueryCursor)
         else f"{PROBLEM_TYPE_BASE}/idempotency_conflict"
         if isinstance(exc, IdempotencyConflict)
+        else f"{PROBLEM_TYPE_BASE}/catalog-rate-limited"
+        if isinstance(exc, MutationRateLimited)
+        else f"{PROBLEM_TYPE_BASE}/rate-limit-unavailable"
+        if isinstance(exc, MutationRateLimitUnavailable)
         else None
     )
     extra: dict[str, object] | None = None
+    headers = None
     if isinstance(exc, StaleRecipeFacetCursor):
         extra = {"errorCategory": "stale_recipe_facet_cursor"}
     elif isinstance(exc, StaleRecipeQueryCursor):
         extra = {"errorCategory": "stale_recipe_query_cursor"}
     elif isinstance(exc, IdempotencyConflict):
         extra = {"errorCategory": "idempotency_conflict"}
+    elif isinstance(exc, MutationRateLimited):
+        extra = {"errorCategory": "catalog_rate_limited"}
+        headers = exc.headers
+    elif isinstance(exc, MutationRateLimitUnavailable):
+        extra = {"errorCategory": "rate_limit_unavailable"}
+        headers = exc.headers
     return problem_response(
         request,
         _status_for(exc),
         detail=detail,
         problem_type=problem_type,
         extra=extra,
+        headers=headers,
     )
 
 
@@ -94,13 +112,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ttl_seconds=runtime_settings.recipe_query_cache_ttl_seconds,
         redis_timeout_seconds=runtime_settings.redis_timeout_seconds,
     )
+    app.state.mutation_burst_limiter = RedisBurstLimiter.from_redis_url(
+        runtime_settings.redis_url,
+        amount=runtime_settings.mutation_burst_requests,
+        window_seconds=runtime_settings.mutation_burst_window_seconds,
+    )
     try:
         yield
     finally:
         try:
-            await app.state.redis.aclose()
+            await app.state.mutation_burst_limiter.close()
         finally:
-            await app.state.engine.dispose()
+            try:
+                await app.state.redis.aclose()
+            finally:
+                await app.state.engine.dispose()
 
 
 app = FastAPI(
@@ -129,6 +155,11 @@ app.include_router(recipe_facets_router)
 app.include_router(ratings_router)
 app.include_router(internal_recipes_router)
 app.include_router(health_router)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_bytes=CATALOG_MAX_REQUEST_BYTES,
+    problem_type_base=PROBLEM_TYPE_BASE,
+)
 # Outermost so browser preflight OPTIONS succeeds before auth/route handling.
 app.add_middleware(
     CORSMiddleware,

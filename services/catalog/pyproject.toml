@@ -6,7 +6,8 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "alembic>=1.16,<2",
     "asyncpg>=0.30,<0.31",
-    "fastapi>=0.116,<0.117",
+    "fastapi>=0.141,<0.142",
+    "limits>=5.8,<6",
     "pydantic>=2.10,<2.12",
     "pydantic-settings>=2.10,<3",
     "redis>=6.2,<7",

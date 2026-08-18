@@ -69,7 +69,7 @@ def _token(
     }
     if subject is not None:
         claims["sub"] = subject
-    return jwt.encode(claims, private_key, algorithm="RS256")
+    return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": "test-key"})
 
 
 @pytest.mark.asyncio

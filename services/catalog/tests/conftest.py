@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from catalog.main import app
+from catalog.rate_limits import UnlimitedBurstLimiter
 from catalog.recipe_query_cache import RecipeQueryCache
 
 
@@ -38,9 +39,11 @@ def recipe_query_cache_state() -> Iterator[FakeRedis]:
     missing = object()
     previous_redis = state.get("redis", missing)
     previous_cache = state.get("recipe_query_cache", missing)
+    previous_limiter = state.get("mutation_burst_limiter", missing)
     redis = FakeRedis()
     app.state.redis = redis
     app.state.recipe_query_cache = RecipeQueryCache(redis)
+    app.state.mutation_burst_limiter = UnlimitedBurstLimiter(limit=30, window_seconds=60)
     try:
         yield redis
     finally:
@@ -52,6 +55,10 @@ def recipe_query_cache_state() -> Iterator[FakeRedis]:
             del state["recipe_query_cache"]
         else:
             state["recipe_query_cache"] = previous_cache
+        if previous_limiter is missing:
+            del state["mutation_burst_limiter"]
+        else:
+            state["mutation_burst_limiter"] = previous_limiter
 
 
 @pytest.fixture(scope="session")

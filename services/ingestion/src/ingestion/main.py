@@ -13,11 +13,12 @@ from ingestion.config import get_settings
 from ingestion.cors_origins import parse_cors_origins
 from ingestion.crypto import PayloadCipher
 from ingestion.database import create_engine
-from ingestion.problems import install_problem_details
+from ingestion.problems import PROBLEM_TYPE_BASE, install_problem_details
 from ingestion.rate_limits import RedisBurstLimiter
 from ingestion.repositories.imports import ImportRepository
 from ingestion.routes.health import router as health_router
 from ingestion.routes.imports import router as imports_router
+from storecipe_auth.body_limit import INGESTION_MAX_REQUEST_BYTES, RequestBodyLimitMiddleware
 
 
 def _cors_origins_from_env() -> list[str]:
@@ -81,6 +82,11 @@ app = FastAPI(
 install_problem_details(app)
 app.include_router(health_router)
 app.include_router(imports_router)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_bytes=INGESTION_MAX_REQUEST_BYTES,
+    problem_type_base=PROBLEM_TYPE_BASE,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins_from_env(),

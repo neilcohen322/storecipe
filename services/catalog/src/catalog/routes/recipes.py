@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field
 
 from catalog.auth import Principal, require_scopes
 from catalog.database import SessionDependency
+from catalog.mutation_quota import enforce_mutation_quota
 from catalog.recipe_queries import RecipeQueryPage, RecipeQueryRequest
 from catalog.schemas import RecipeCreate, RecipePatch, RecipeView
 from catalog.services import recipe_queries as recipe_query_service
@@ -23,6 +24,18 @@ REMOVED_RECIPE_QUERY_KEYS = (
 
 ReadPrincipal = Annotated[Principal, Depends(require_scopes("recipes:read"))]
 WritePrincipal = Annotated[Principal, Depends(require_scopes("recipes:write"))]
+
+
+async def recipe_mutation_principal(
+    request: Request,
+    response: Response,
+    principal: WritePrincipal,
+) -> Principal:
+    await enforce_mutation_quota(request, response, principal.subject)
+    return principal
+
+
+RecipeMutationPrincipal = Annotated[Principal, Depends(recipe_mutation_principal)]
 RecipeCreateIdempotencyKey = Annotated[
     str,
     Header(
@@ -76,7 +89,7 @@ async def create_recipe(
     payload: RecipeCreate,
     response: Response,
     session: SessionDependency,
-    principal: WritePrincipal,
+    principal: RecipeMutationPrincipal,
     idempotency_key: RecipeCreateIdempotencyKey,
 ) -> RecipeView:
     view, replayed = await recipe_service.create_recipe_idempotently(
@@ -114,8 +127,9 @@ async def get_recipe(
 async def update_recipe(
     recipe_id: UUID,
     payload: RecipePatch,
+    response: Response,
     session: SessionDependency,
-    principal: WritePrincipal,
+    principal: RecipeMutationPrincipal,
 ) -> RecipeView:
     return await recipe_service.update_recipe(session, principal.subject, recipe_id, payload)
 
@@ -123,8 +137,9 @@ async def update_recipe(
 @router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_recipe(
     recipe_id: UUID,
+    response: Response,
     session: SessionDependency,
-    principal: WritePrincipal,
+    principal: RecipeMutationPrincipal,
 ) -> Response:
     await recipe_service.delete_recipe(session, principal.subject, recipe_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

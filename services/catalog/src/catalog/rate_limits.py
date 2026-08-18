@@ -1,4 +1,4 @@
-"""Safe, async burst limiting for authenticated import submissions."""
+"""Safe, async burst limiting for authenticated Catalog mutations."""
 
 from __future__ import annotations
 

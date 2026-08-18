@@ -68,6 +68,16 @@ async def _admit_import(request: Request, response: Response, subject: str) -> R
     limiter: BurstLimiter = request.app.state.import_burst_limiter
     decision = await limiter.hit(subject, "import")
     headers = _rate_limit_headers(decision)
+    if decision.degraded:
+        headers["Retry-After"] = str(max(1, decision.reset_at - math.floor(time.time())))
+        return problem_response(
+            request,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Import admission is temporarily unavailable.",
+            problem_type=f"{PROBLEM_TYPE_BASE}/rate-limit-unavailable",
+            extra={"errorCategory": "rate_limit_unavailable"},
+            headers=headers,
+        )
     if not decision.allowed:
         headers["Retry-After"] = str(max(1, decision.reset_at - math.floor(time.time())))
         return problem_response(

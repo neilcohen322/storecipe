@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request, status
 
+from storecipe_auth.body_limit import MCP_MAX_REQUEST_BYTES, RequestBodyLimitMiddleware
 from storecipe_mcp.auth import McpInboundTokenVerifier
 from storecipe_mcp.catalog_client import CatalogClient
 from storecipe_mcp.config import Settings, get_settings
@@ -167,6 +168,11 @@ def create_app(
         }
 
     application.mount("/", mcp_app)
+    application.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=MCP_MAX_REQUEST_BYTES,
+        problem_type_base="https://docs.storecipe.example/problems",
+    )
 
     return application
 

@@ -115,6 +115,22 @@ def test_recipe_create_rejects_openapi_invalid_values(payload: dict[str, object]
         RecipeCreate.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ingredients": [{"rawText": "onion", "name": "onion"}] * 257},
+        {"instructions": ["Cook."] * 257},
+        {"tags": ["tag"] * 65},
+        {"ingredients": [{"rawText": "x" * 4097, "name": "onion"}]},
+        {"instructions": ["y" * 4097]},
+        {"servings": 2_147_483_648},
+    ],
+)
+def test_recipe_create_rejects_list_text_and_int4_overflow(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        RecipeCreate.model_validate({**_recipe_payload(), **overrides})
+
+
 def test_query_normalizes_ingredient_and_tag_lists_but_preserves_ordered_sorts() -> None:
     query = RecipeQueryRequest.model_validate(
         {

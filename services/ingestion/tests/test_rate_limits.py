@@ -76,10 +76,10 @@ async def test_limiter_hashes_subject_and_returns_window_stats() -> None:
 
 
 @pytest.mark.asyncio
-async def test_limiter_allows_requests_when_redis_is_unavailable(
+async def test_limiter_rejects_requests_when_redis_is_unavailable(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Catches failing closed or logging an identifier when Redis is unavailable."""
+    """Catches failing open or logging an identifier when Redis is unavailable."""
 
     limiter = RedisBurstLimiter(
         UnavailableStrategy(), amount=5, window_seconds=60, clock=lambda: 1_800_000_000
@@ -88,9 +88,10 @@ async def test_limiter_allows_requests_when_redis_is_unavailable(
 
     decision = await limiter.hit("auth0|private-user", "import")
 
-    assert decision.allowed is True
+    assert decision.allowed is False
     assert decision.degraded is True
-    assert "rate_limit.degraded" in caplog.text
+    assert decision.remaining == 0
+    assert "rate_limit.unavailable" in caplog.text
     assert "auth0|private-user" not in caplog.text
 
 
