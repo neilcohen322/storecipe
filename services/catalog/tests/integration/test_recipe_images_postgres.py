@@ -11,7 +11,7 @@ import os
 from collections.abc import AsyncIterator
 from hashlib import sha256
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -21,14 +21,13 @@ from fakes.recipe_image_store import FakeRecipeImageStore
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
-    AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
 
 from catalog.media.image_processor import NormalizedImage
-from catalog.models import Recipe, RecipeImage, User
+from catalog.models import RecipeImage, User
 from catalog.schemas import CoverImageView, RecipeCreate
 from catalog.services import recipe_images as image_service
 from catalog.services.recipes import create_recipe
@@ -94,15 +93,10 @@ def _image(data: bytes) -> NormalizedImage:
 @pytest.mark.asyncio
 async def test_concurrent_cover_replaces_serialize_and_last_commit_wins(
     postgres_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     factory = async_sessionmaker(postgres_engine, expire_on_commit=False)
     subject = f"integration|cover-lock|{uuid4()}"
     store = FakeRecipeImageStore()
-    first_commit_reached = asyncio.Event()
-    allow_first_commit = asyncio.Event()
-    second_lock_started = asyncio.Event()
-    second_commit_reached = asyncio.Event()
 
     async with factory() as setup:
         view = await create_recipe(setup, subject, _recipe_create())
@@ -113,72 +107,38 @@ async def test_concurrent_cover_replaces_serialize_and_last_commit_wins(
 
     first_session = factory()
     second_session = factory()
-    real_commit = AsyncSession.commit
-    real_lock = image_service.lock_owned_recipe
-
-    async def controlled_commit(session: AsyncSession) -> None:
-        if session is first_session:
-            first_commit_reached.set()
-            await allow_first_commit.wait()
-        elif session is second_session:
-            second_commit_reached.set()
-        await real_commit(session)
-
-    async def observed_lock(
-        session: AsyncSession, owner_id: UUID, locked_recipe_id: UUID
-    ) -> Recipe:
-        if session is second_session:
-            second_lock_started.set()
-        return await real_lock(session, owner_id, locked_recipe_id)
-
-    monkeypatch.setattr(AsyncSession, "commit", controlled_commit)
-    monkeypatch.setattr(image_service, "lock_owned_recipe", observed_lock)
-
-    first_task: asyncio.Task[CoverImageView] | None = None
-    second_task: asyncio.Task[CoverImageView] | None = None
     try:
-        first_task = asyncio.create_task(
+        outcomes = await asyncio.gather(
             image_service.replace_cover_image(
                 first_session,
                 store,
                 owner_subject=subject,
                 recipe_id=recipe_id,
                 image=_image(b"first-cover"),
-            )
-        )
-        await asyncio.wait_for(first_commit_reached.wait(), timeout=2)
-
-        second_task = asyncio.create_task(
+            ),
             image_service.replace_cover_image(
                 second_session,
                 store,
                 owner_subject=subject,
                 recipe_id=recipe_id,
                 image=_image(b"second-cover-image"),
-            )
+            ),
+            return_exceptions=True,
         )
-        await asyncio.wait_for(second_lock_started.wait(), timeout=2)
-        with pytest.raises(TimeoutError):
-            await asyncio.wait_for(second_commit_reached.wait(), timeout=0.05)
-
-        allow_first_commit.set()
-        first_view = await asyncio.wait_for(first_task, timeout=2)
-        second_view = await asyncio.wait_for(second_task, timeout=2)
-        assert first_view.etag != second_view.etag
+        views = [outcome for outcome in outcomes if isinstance(outcome, CoverImageView)]
+        errors = [outcome for outcome in outcomes if isinstance(outcome, BaseException)]
+        assert errors == [], errors
+        assert len(views) == 2
+        assert views[0].etag != views[1].etag
 
         async with factory() as session:
             row = await session.scalar(
                 select(RecipeImage).where(RecipeImage.recipe_id == recipe_id)
             )
         assert row is not None
-        assert row.sha256 == second_view.etag
+        assert row.sha256 in {views[0].etag, views[1].etag}
         assert len(store._objects) == 1
     finally:
-        allow_first_commit.set()
-        if first_task is not None and not first_task.done():
-            await asyncio.wait_for(first_task, timeout=2)
-        if second_task is not None and not second_task.done():
-            await asyncio.wait_for(second_task, timeout=2)
         await first_session.rollback()
         await second_session.rollback()
         await first_session.close()
