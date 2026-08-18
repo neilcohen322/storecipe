@@ -315,6 +315,11 @@ def test_prepare_extraction_source_leaves_plain_text_unchanged() -> None:
     assert prepare_extraction_source(source, content_type="text/plain") == source
 
 
+def test_prepare_extraction_source_preserves_html_without_comment_widgets() -> None:
+    source = "<!doctype html><html><body><h1>Chili</h1><p>1 onion</p></body></html>"
+    assert prepare_extraction_source(source, content_type="text/html") == source
+
+
 def test_serialize_extraction_request_uses_the_raised_output_cap() -> None:
     payload = json.loads(
         serialize_openrouter_request(

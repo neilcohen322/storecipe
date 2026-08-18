@@ -199,9 +199,13 @@ def prepare_extraction_source(source: str, *, content_type: str) -> str:
     if "html" not in content_type.casefold():
         return source
     soup = BeautifulSoup(source, "html.parser")
+    removed = False
     for selector in _EXTRACTION_NOISE_SELECTORS:
         for element in soup.select(selector):
             element.decompose()
+            removed = True
+    if not removed:
+        return source
     cleaned = str(soup).strip()
     return cleaned or source
 
