@@ -151,3 +151,20 @@ Safe problem categories include `idempotency_conflict`,
 `ingredient_normalization_invalid_output`, `ingredient_normalization_unavailable`,
 and `ingredient_normalization_unresolved`. Responses never echo raw ingredient
 text, model content, or internal provider details.
+
+## Recipe cover images
+
+Owner-uploaded covers are private Catalog media. GCS object keys, bucket names,
+generations, decoder exceptions, and original filenames never appear in problem
+details.
+
+| Outcome | HTTP | `errorCategory` | Safe detail |
+|---|---|---|---|
+| Input, decoded, or stored size exceeds the bound | `413` | `image_too_large` | Choose an image smaller than 8 MB. |
+| Unsupported, animated, malformed, or non-image content | `422` | `invalid_image` | Choose a valid JPEG, PNG, or WebP image. |
+| Owned recipe has no cover | `404` | `cover_image_not_found` | Cover image not found. |
+| Storage disabled or temporarily inconsistent | `503` | `media_unavailable` | Images are temporarily unavailable. Your recipe is safe. |
+
+An unknown recipe or a recipe owned by someone else keeps the existing recipe-not-found
+response so cover routes do not reveal cross-user existence. A media failure never
+deletes or invalidates a stored recipe.

@@ -30,12 +30,47 @@ def test_recipe_query_cache_ttl_environment_name_is_consistent() -> None:
         assert content.count(new_name) == expected_count
 
 
+def test_media_environment_names_are_consistent() -> None:
+    root = Path(__file__).resolve().parents[3]
+    expected_occurrences = {
+        "CATALOG_MEDIA_BUCKET": {
+            ".env.example": 1,
+            "compose.yaml": 2,
+            "contracts/environment.md": 1,
+        },
+        "CATALOG_MEDIA_MAX_INPUT_BYTES": {
+            ".env.example": 1,
+            "compose.yaml": 2,
+            "contracts/environment.md": 1,
+        },
+        "CATALOG_MEDIA_MAX_PIXELS": {
+            ".env.example": 1,
+            "compose.yaml": 2,
+            "contracts/environment.md": 1,
+        },
+        "CATALOG_MEDIA_MAX_OUTPUT_BYTES": {
+            ".env.example": 1,
+            "compose.yaml": 2,
+            "contracts/environment.md": 1,
+        },
+    }
+    for name, files in expected_occurrences.items():
+        for relative_path, expected_count in files.items():
+            content = (root / relative_path).read_text()
+            assert content.count(name) == expected_count
+            assert "GOOGLE_APPLICATION_CREDENTIALS" not in content
+
+
 def test_recipe_query_cache_defaults() -> None:
     settings = Settings()
 
     assert settings.redis_url == "redis://localhost:6379"
     assert settings.recipe_query_cache_ttl_seconds == 1800
     assert settings.redis_timeout_seconds == 1.0
+    assert settings.media_bucket == ""
+    assert settings.media_max_input_bytes == 8_388_608
+    assert settings.media_max_pixels == 12_000_000
+    assert settings.media_max_output_bytes == 1_572_864
 
 
 def test_recipe_query_cache_ttl_is_bounded() -> None:
@@ -119,6 +154,7 @@ async def test_catalog_shutdown_redis_failure_does_not_prevent_engine_disposal(
         redis_url="redis://test",
         recipe_query_cache_ttl_seconds=1800,
         redis_timeout_seconds=1.0,
+        media_bucket="",
     )
 
     def closing_redis(redis_url: str, *, timeout_seconds: float) -> _ClosingRedis:

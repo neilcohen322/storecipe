@@ -110,6 +110,12 @@ class Recipe(Base):
     recipe_creation_idempotency: Mapped["RecipeCreationIdempotency | None"] = relationship(
         back_populates="recipe", cascade="all, delete-orphan", single_parent=True
     )
+    cover_image: Mapped["RecipeImage | None"] = relationship(
+        back_populates="recipe",
+        uselist=False,
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
 
 
 class RecipeCreationIdempotency(Base):
@@ -132,6 +138,37 @@ class RecipeCreationIdempotency(Base):
 
     user: Mapped[User] = relationship(back_populates="recipe_creation_idempotency_records")
     recipe: Mapped[Recipe] = relationship(back_populates="recipe_creation_idempotency")
+
+
+class RecipeImage(Base):
+    __tablename__ = "recipe_images"
+    __table_args__ = (
+        UniqueConstraint("recipe_id", name="uq_recipe_images_recipe_id"),
+        UniqueConstraint("object_key", name="uq_recipe_images_object_key"),
+        CheckConstraint("content_type = 'image/webp'", name="ck_recipe_images_webp"),
+        CheckConstraint(
+            "byte_size > 0 AND byte_size <= 1572864",
+            name="ck_recipe_images_byte_size",
+        ),
+        CheckConstraint("length(sha256) = 64", name="ck_recipe_images_sha256"),
+        {"schema": CATALOG_SCHEMA},
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    recipe_id: Mapped[UUID] = mapped_column(
+        ForeignKey(f"{CATALOG_SCHEMA}.recipes.id", ondelete="CASCADE")
+    )
+    object_key: Mapped[str] = mapped_column(String(512))
+    object_generation: Mapped[str] = mapped_column(String(32))
+    content_type: Mapped[str] = mapped_column(String(32), default="image/webp")
+    byte_size: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+    recipe: Mapped[Recipe] = relationship(back_populates="cover_image")
 
 
 class Ingredient(Base):

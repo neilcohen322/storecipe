@@ -76,6 +76,7 @@ export type ApiClientBases = Record<ApiService, string>;
 
 export type ApiRequestOptions = RequestInit & {
   service?: ApiService;
+  allowStatuses?: number[];
 };
 
 function joinUrl(base: string, path: string): string {
@@ -104,8 +105,9 @@ export function createApiClient(
 ) {
   const request = async (
     path: string,
-    { service = "catalog", headers: requestHeaders, ...init }: ApiRequestOptions = {},
+    options: ApiRequestOptions = {},
   ): Promise<Response> => {
+    const { service = "catalog", headers: requestHeaders, allowStatuses = [], ...init } = options;
     let accessToken: string;
     try {
       accessToken = await getAccessToken();
@@ -130,7 +132,7 @@ export function createApiClient(
       throw new ApiNetworkError(err);
     }
 
-    if (!response.ok) {
+    if (!response.ok && !allowStatuses.includes(response.status)) {
       const problem = await errorProblem(response);
       if (response.status === 401) {
         throw new ApiUnauthorizedError(problem.detail);

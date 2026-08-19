@@ -1,2 +1,4 @@
 allowBuilds:
   browser-tabs-lock: false
+minimumReleaseAgeExclude:
+  - expo-image-picker@57.0.11

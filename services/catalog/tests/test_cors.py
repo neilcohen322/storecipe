@@ -58,6 +58,7 @@ def test_unauthorized_get_still_exposes_cors_headers(client: TestClient) -> None
 
     assert response.status_code == 401
     assert response.headers["access-control-allow-origin"] == "http://localhost:8081"
+    assert "etag" in response.headers.get("access-control-expose-headers", "").lower()
 
 
 @pytest.mark.parametrize(

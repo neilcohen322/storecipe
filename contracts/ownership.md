@@ -21,6 +21,7 @@ server-side LLM request.
 | Concern | Owner | Other services interact through |
 |---|---|---|
 | Recipes, ingredients, steps, tags | Catalog | Catalog REST/application layer |
+| Recipe cover images and private object storage | Catalog | Authenticated `PUT`/`GET`/`DELETE /v1/recipes/{recipeId}/cover-image` |
 | Ratings and `catalog_version` | Catalog | Catalog REST/application layer |
 | Deterministic recipe queries and query cache | Catalog | `GET /v1/recipes` |
 | Public MCP endpoint, OAuth metadata, and Streamable HTTP transport | MCP gateway | Public HTTPS; Caddy routes `/mcp*` |
@@ -51,7 +52,9 @@ implicitly add an MCP tool.
 `sort` parameters; opaque cursors pass through unchanged. `create_recipe` receives
 structured recipe content and treats `sourceUrl` as metadata only. The gateway does
 not fetch URLs or text, and it exposes no import, import-status, recommendation,
-update, delete, or server-side LLM tools.
+update, delete, cover-image, or server-side LLM tools. Cover images remain Catalog REST
+only: the client uploads through Catalog, Catalog stores private GCS objects, and no
+service except Catalog receives bucket credentials.
 
 ## Authentication, rate limits, and future aggregation
 

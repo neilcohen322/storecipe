@@ -101,8 +101,9 @@ production exports select the real Auth0 provider. `pnpm run test:production-bun
 rebuilds without that variable and fails if E2E fixture markers appear in `dist`.
 Playwright retains traces and screenshots only on failure in `apps/web/test-results`;
 inspect that directory (or the CI `playwright-failure-diagnostics` artifact) when a
-browser gate fails. Recipe artwork is deterministic placeholder-only media until the
-later object-storage work.
+browser gate fails. Recipe covers are optional private WebP images. An empty media
+bucket keeps recipes usable and shows the existing placeholder until a production
+bucket is configured.
 
 ## Quality checks
 
@@ -114,6 +115,9 @@ External integration checks are opt-in. Set `CATALOG_TEST_DATABASE_URL` only to 
 disposable PostgreSQL database: the Catalog integration module applies all migrations
 to that target. Set `STORECIPE_TEST_REDIS_URL` only to an isolated Redis instance.
 When either variable is unset, its integration checks report explicit skips.
+Set `CATALOG_TEST_MEDIA_BUCKET` only after Terraform creates the private production
+bucket; Catalog uses Application Default Credentials and never a JSON key path. When
+that variable is unset, the live GCS proof is skipped.
 
 ### Server-rendered variant smoke (operator opt-in)
 
@@ -139,6 +143,20 @@ uv run python -m ingestion.variant_smoke --url '<approved-source-url>'
 The client prints only `jobId`, `status`, `recipeId`, and `errorCategory`; errors expose
 only an HTTP status and a fixed safe category. Do not commit the registry, URL, token,
 or response body. CI never performs this live call.
+
+### Recipe cover smoke (operator opt-in)
+
+Cover storage stays disabled while `CATALOG_MEDIA_BUCKET` is empty. After a private
+bucket exists and Catalog has Application Default Credentials, an operator can prove
+upload, authenticated GET, and delete. Supply the access token only through the
+environment; the script prints recipe ID, status, ETag prefix, and byte count:
+
+```powershell
+$env:STORECIPE_SMOKE_ACCESS_TOKEN = '<operator-supplied-token>'
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-recipe-image.ps1 -RecipeId '<recipe-id>' -ImagePath '<local-image>'
+```
+
+Do not commit the token, image, or response body. CI never performs this live call.
 
 ## Contract-first rule
 

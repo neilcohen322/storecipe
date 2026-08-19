@@ -38,6 +38,7 @@ def _recipe_load_options() -> tuple[Any, ...]:
         selectinload(Recipe.instructions),
         selectinload(Recipe.recipe_tags).selectinload(RecipeTag.tag),
         selectinload(Recipe.ratings),
+        selectinload(Recipe.cover_image),
     )
 
 

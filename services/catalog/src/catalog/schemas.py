@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
@@ -99,6 +99,13 @@ class IngredientView(ApiModel):
     unit: str | None
 
 
+class CoverImageView(ApiModel):
+    url: str
+    etag: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    byte_size: Annotated[int, Field(gt=0, le=1_572_864)]
+    content_type: Literal["image/webp"] = "image/webp"
+
+
 class RecipeView(ApiModel):
     id: UUID
     title: str
@@ -111,6 +118,7 @@ class RecipeView(ApiModel):
     instructions: list[str]
     tags: list[str]
     rating: int | None = None
+    cover_image: CoverImageView | None = None
 
 
 class RecipePage(ApiModel):

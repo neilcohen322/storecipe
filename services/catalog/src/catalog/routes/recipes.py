@@ -123,8 +123,14 @@ async def update_recipe(
 @router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_recipe(
     recipe_id: UUID,
+    request: Request,
     session: SessionDependency,
     principal: WritePrincipal,
 ) -> Response:
-    await recipe_service.delete_recipe(session, principal.subject, recipe_id)
+    await recipe_service.delete_recipe(
+        session,
+        principal.subject,
+        recipe_id,
+        store=getattr(request.app.state, "recipe_image_store", None),
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

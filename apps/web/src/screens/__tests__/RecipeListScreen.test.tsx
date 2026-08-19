@@ -44,10 +44,10 @@ jest.mock("../../theme/ThemeProvider", () => ({
   }),
 }));
 
-const recipe: Recipe = { id: "recipe-1", title: "Lemon pasta", sourceUrl: null, servings: 4, prepMinutes: 10, cookMinutes: 15, totalMinutes: 25, ingredients: [], instructions: [], tags: ["pasta"], rating: 4 };
+const recipe: Recipe = { id: "recipe-1", title: "Lemon pasta", sourceUrl: null, servings: 4, prepMinutes: 10, cookMinutes: 15, totalMinutes: 25, ingredients: [], instructions: [], tags: ["pasta"], rating: 4, coverImage: null };
 const secondRecipe: Recipe = { ...recipe, id: "recipe-2", title: "Tomato risotto" };
 type Page = { items: Recipe[]; nextCursor: string | null };
-type CatalogExtras = { listRecipeFacets?: jest.Mock; resolveRecipeFacetSelections?: jest.Mock };
+type CatalogExtras = { listRecipeFacets?: jest.Mock; resolveRecipeFacetSelections?: jest.Mock; getCoverImage?: jest.Mock };
 const hidden = { includeHiddenElements: true } as const;
 type Screen = Awaited<ReturnType<typeof render>>;
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; }); return { promise, resolve, reject }; }
@@ -75,6 +75,7 @@ function catalogWith(listRecipes: jest.Mock, extras: CatalogExtras = {}) {
     listRecipes,
     listRecipeFacets: extras.listRecipeFacets ?? jest.fn().mockResolvedValue(defaultFacetPage()),
     resolveRecipeFacetSelections: extras.resolveRecipeFacetSelections ?? jest.fn().mockImplementation(async (body: { ingredients?: string[]; tags?: string[] }) => echoResolve(body)),
+    getCoverImage: extras.getCoverImage ?? jest.fn().mockResolvedValue({ blob: null, etag: null, notModified: false }),
   } as unknown as React.ComponentProps<typeof RecipeListScreen>["catalog"];
 }
 const actions = { onOpenDetail: jest.fn(), onCreate: jest.fn(), onImport: jest.fn(), onLogout: jest.fn(), onUnauthorized: jest.fn() };
@@ -170,6 +171,23 @@ test("keeps unauthorized handling distinct from retryable library failures", asy
   const screen = await renderScreen(jest.fn().mockRejectedValue(new ApiUnauthorizedError()));
   await waitFor(() => expect(actions.onUnauthorized).toHaveBeenCalledTimes(1));
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+test("renders cover images for recipes that have cover metadata", async () => {
+  globalThis.URL.createObjectURL = jest.fn(() => "blob:cover-list") as typeof URL.createObjectURL;
+  globalThis.URL.revokeObjectURL = jest.fn() as typeof URL.revokeObjectURL;
+  const getCoverImage = jest.fn().mockResolvedValue({ blob: new Blob(["RIFF"]), etag: "a".repeat(64), notModified: false });
+  const covered = {
+    ...recipe,
+    coverImage: { url: "/v1/recipes/recipe-1/cover-image", etag: "a".repeat(64), byteSize: 8, contentType: "image/webp" as const },
+  };
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [covered], nextCursor: null }), { getCoverImage });
+  await waitFor(() => expect(getCoverImage).toHaveBeenCalled());
+  expect(getCoverImage).toHaveBeenCalledWith(
+    "recipe-1",
+    expect.objectContaining({ etag: undefined }),
+  );
+  await waitFor(() => expect(screen.getByLabelText("Cover image for Lemon pasta")).toBeTruthy());
 });
 
 test("switches populated results between card and semantic list views", async () => {
