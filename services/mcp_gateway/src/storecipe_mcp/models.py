@@ -64,7 +64,7 @@ class IngredientCreate(ApiModel):
 
 
 class IngredientView(ApiModel):
-    raw_text: BoundedLine
+    raw_text: NonEmptyText
     name: Annotated[str, Field(min_length=1, max_length=200)]
     quantity: Annotated[float | None, Field(ge=0)] = None
     unit: Annotated[str | None, Field(min_length=1, max_length=64)] = None

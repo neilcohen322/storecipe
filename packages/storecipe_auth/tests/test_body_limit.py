@@ -21,10 +21,17 @@ async def _ok_app(scope: dict[str, object], receive: object, send: object) -> No
     await send({"type": "http.response.body", "body": b"ok"})  # type: ignore[misc,operator]
 
 
-def _scope(*, content_length: bytes | None, path: str = "/v1/recipes") -> dict[str, object]:
+def _scope(
+    *,
+    content_length: bytes | None,
+    path: str = "/v1/recipes",
+    extra_headers: list[tuple[bytes, bytes]] | None = None,
+) -> dict[str, object]:
     headers: list[tuple[bytes, bytes]] = []
     if content_length is not None:
         headers.append((b"content-length", content_length))
+    if extra_headers:
+        headers.extend(extra_headers)
     return {
         "type": "http",
         "asgi": {"version": "3.0"},
@@ -111,3 +118,21 @@ async def test_body_within_limit_is_forwarded() -> None:
 
     assert send.messages[0]["status"] == 200
     assert send.messages[1]["body"] == b"ok"
+
+
+@pytest.mark.asyncio
+async def test_413_echoes_inbound_request_id_in_body_and_header() -> None:
+    limiter = RequestBodyLimitMiddleware(_ok_app, max_bytes=8, problem_type_base=PROBLEM_TYPE_BASE)
+    receive = ScriptedReceive([{"type": "http.request", "body": b"0123456789", "more_body": False}])
+    send = RecordingSend()
+
+    await limiter(
+        _scope(content_length=b"100", extra_headers=[(b"x-request-id", b"req-413")]),
+        receive,
+        send,
+    )
+
+    headers = dict(send.messages[0]["headers"])
+    body = json.loads(send.messages[1]["body"])
+    assert headers[b"x-request-id"] == b"req-413"
+    assert body["request_id"] == "req-413"

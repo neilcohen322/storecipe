@@ -61,26 +61,45 @@ class RequestBodyLimitMiddleware:
         await self.app(scope, replay_receive, send)
 
 
-def _content_length(scope: Scope) -> int | None:
-    for name, value in scope.get("headers") or ():
-        if name == b"content-length":
-            try:
-                return int(value)
-            except ValueError:
-                return None
+def _header(scope: Scope, name: bytes) -> bytes | None:
+    for header_name, value in scope.get("headers") or ():
+        if header_name == name and isinstance(value, bytes):
+            return value
     return None
+
+
+def _content_length(scope: Scope) -> int | None:
+    raw = _header(scope, b"content-length")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _request_id(scope: Scope) -> str:
+    raw = _header(scope, b"x-request-id")
+    if raw is None:
+        return uuid.uuid4().hex
+    try:
+        inbound = raw.decode("ascii").strip()
+    except UnicodeDecodeError:
+        return uuid.uuid4().hex
+    return inbound or uuid.uuid4().hex
 
 
 async def _send_413(scope: Scope, send: Send, problem_type_base: str) -> None:
     path = scope.get("path")
     instance = path if isinstance(path, str) else "/"
+    request_id = _request_id(scope)
     payload = {
         "type": f"{problem_type_base}/request-too-large",
         "title": "Payload Too Large",
         "status": 413,
         "detail": "Request body exceeds the allowed size.",
         "instance": instance,
-        "request_id": uuid.uuid4().hex,
+        "request_id": request_id,
         "errorCategory": REQUEST_TOO_LARGE_CATEGORY,
     }
     body = json.dumps(payload).encode("utf-8")
@@ -91,6 +110,7 @@ async def _send_413(scope: Scope, send: Send, problem_type_base: str) -> None:
             "headers": [
                 (b"content-type", b"application/problem+json"),
                 (b"content-length", str(len(body)).encode("ascii")),
+                (b"x-request-id", request_id.encode("ascii")),
             ],
         }
     )

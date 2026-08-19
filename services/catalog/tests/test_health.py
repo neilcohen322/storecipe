@@ -159,7 +159,9 @@ async def test_catalog_shutdown_redis_failure_does_not_prevent_engine_disposal(
     monkeypatch.setattr(
         main.RedisBurstLimiter,
         "from_redis_url",
-        classmethod(lambda cls, redis_url, *, amount, window_seconds: _IdleLimiter()),
+        classmethod(
+            lambda cls, redis_url, *, amount, window_seconds, timeout_seconds=1.0: _IdleLimiter()
+        ),
     )
 
     application = FastAPI()

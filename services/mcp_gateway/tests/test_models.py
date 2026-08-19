@@ -249,6 +249,13 @@ def test_recipe_view_rejects_openapi_invalid_values(field_name: str, value: obje
         RecipeView.model_validate(payload)
 
 
+def test_recipe_view_accepts_legacy_ingredient_text_beyond_create_bounds() -> None:
+    payload = _recipe_view_payload()
+    payload["ingredients"] = [{"rawText": "x" * 4097, "name": "onion"}]
+    recipe = RecipeView.model_validate(payload)
+    assert recipe.ingredients[0].raw_text == "x" * 4097
+
+
 def test_rating_view_enforces_one_to_five() -> None:
     assert RatingView(value=5).value == 5
     with pytest.raises(ValidationError):

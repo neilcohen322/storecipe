@@ -167,3 +167,31 @@ async def test_internal_recipe_writes_are_not_subject_to_the_user_mutation_limit
 
     assert response.status_code == 201
     assert limiter.calls == []
+
+
+@pytest.mark.asyncio
+async def test_successful_deletes_return_mutation_quota_headers(api_client: AsyncClient) -> None:
+    limiter = StubLimiter(RateLimitDecision(True, 30, 29, 1_800_000_030))
+    app.state.mutation_burst_limiter = limiter
+
+    created = await api_client.post(
+        "/v1/recipes", headers={"Idempotency-Key": "catalog-delete-headers"}, json=_payload()
+    )
+    recipe_id = created.json()["id"]
+    recipe_delete = await api_client.delete(f"/v1/recipes/{recipe_id}")
+
+    created = await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "catalog-rating-delete-headers"},
+        json=_payload(),
+    )
+    recipe_id = created.json()["id"]
+    await api_client.put(f"/v1/recipes/{recipe_id}/rating", json={"value": 5})
+    rating_delete = await api_client.delete(f"/v1/recipes/{recipe_id}/rating")
+
+    assert recipe_delete.status_code == 204
+    assert rating_delete.status_code == 204
+    assert recipe_delete.headers["RateLimit-Limit"] == "30"
+    assert recipe_delete.headers["RateLimit-Remaining"] == "29"
+    assert recipe_delete.headers["RateLimit-Reset"] == "1800000030"
+    assert rating_delete.headers["RateLimit-Limit"] == "30"

@@ -116,6 +116,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         runtime_settings.redis_url,
         amount=runtime_settings.mutation_burst_requests,
         window_seconds=runtime_settings.mutation_burst_window_seconds,
+        timeout_seconds=runtime_settings.redis_timeout_seconds,
     )
     try:
         yield

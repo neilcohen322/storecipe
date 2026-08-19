@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -64,6 +65,7 @@ class RedisBurstLimiter:
         *,
         amount: int,
         window_seconds: int,
+        timeout_seconds: float = 1.0,
         clock: Callable[[], float] | None = None,
         storage: RedisStorage | None = None,
     ) -> None:
@@ -72,38 +74,50 @@ class RedisBurstLimiter:
         self._item = RateLimitItemPerSecond(amount, multiples=window_seconds)
         self._amount = amount
         self._window_seconds = window_seconds
+        self._timeout_seconds = timeout_seconds
         self._clock = clock or time.time
 
     @classmethod
     def from_redis_url(
-        cls, redis_url: str, *, amount: int, window_seconds: int
+        cls,
+        redis_url: str,
+        *,
+        amount: int,
+        window_seconds: int,
+        timeout_seconds: float = 1.0,
     ) -> RedisBurstLimiter:
         """Create a moving-window limiter backed by the configured Redis instance."""
 
         storage = RedisStorage(
-            _as_async_storage_url(redis_url), implementation="redispy", wrap_exceptions=True
+            _as_async_storage_url(redis_url),
+            implementation="redispy",
+            wrap_exceptions=True,
+            socket_connect_timeout=timeout_seconds,
+            socket_timeout=timeout_seconds,
         )
         return cls(
             MovingWindowRateLimiter(storage),
             amount=amount,
             window_seconds=window_seconds,
+            timeout_seconds=timeout_seconds,
             storage=storage,
         )
 
     async def hit(self, subject: str, operation: str) -> RateLimitDecision:
         identifier = hashlib.sha256(subject.encode("utf-8")).hexdigest()
         try:
-            allowed = await self._strategy.hit(self._item, operation, identifier)
-            reset_at, remaining = await self._strategy.get_window_stats(
-                self._item, operation, identifier
-            )
+            async with asyncio.timeout(self._timeout_seconds):
+                allowed = await self._strategy.hit(self._item, operation, identifier)
+                reset_at, remaining = await self._strategy.get_window_stats(
+                    self._item, operation, identifier
+                )
             return RateLimitDecision(
                 allowed=allowed,
                 limit=self._amount,
                 remaining=max(0, remaining),
                 reset_at=int(reset_at),
             )
-        except (RedisError, StorageError):
+        except (RedisError, StorageError, TimeoutError):
             logger.info("rate_limit.unavailable")
             return RateLimitDecision(
                 allowed=False,

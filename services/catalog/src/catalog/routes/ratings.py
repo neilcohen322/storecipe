@@ -45,4 +45,5 @@ async def delete_rating(
     principal: RatingMutationPrincipal,
 ) -> Response:
     await rating_service.delete_rating(session, principal.subject, recipe_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response

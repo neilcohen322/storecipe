@@ -142,4 +142,5 @@ async def delete_recipe(
     principal: RecipeMutationPrincipal,
 ) -> Response:
     await recipe_service.delete_recipe(session, principal.subject, recipe_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
