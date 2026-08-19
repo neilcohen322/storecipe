@@ -27,7 +27,7 @@ def unavailable_redis_url(url: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_real_redis_moving_window_is_concurrent_isolated_and_fails_open() -> None:
+async def test_real_redis_moving_window_is_concurrent_isolated_and_fails_closed() -> None:
     url = redis_url()
     namespace = f"storecipe-test-{uuid4()}"
     operation = f"{namespace}:import"
@@ -55,8 +55,9 @@ async def test_real_redis_moving_window_is_concurrent_isolated_and_fails_open() 
         )
         try:
             degraded = await degraded_limiter.hit("auth0|shared-user", operation)
-            assert degraded.allowed
-            assert degraded.degraded
+            assert degraded.allowed is False
+            assert degraded.degraded is True
+            assert degraded.remaining == 0
         finally:
             await degraded_limiter.close()
     finally:

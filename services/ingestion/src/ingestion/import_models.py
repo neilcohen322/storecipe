@@ -8,11 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, mod
 # Bound candidate integers to PostgreSQL int4 so an out-of-range scraped value
 # fails as a typed validation error here instead of a 500 at the catalog insert.
 MAX_PG_INT = 2_147_483_647
-# Match the catalog recipes.source_url column width (String(2048)).
 MAX_SOURCE_URL_LENGTH = 2048
 MAX_INGREDIENT_LINES = 256
 MAX_INGREDIENT_LINE_CHARS = 4_096
 MAX_INGREDIENT_TOTAL_BYTES = 65_536
+MAX_INGREDIENTS = MAX_INGREDIENT_LINES
+MAX_INSTRUCTIONS = 256
+MAX_TAGS = 64
+MAX_LINE_CHARS = MAX_INGREDIENT_LINE_CHARS
 
 
 class FetchFailureCode(StrEnum):
@@ -76,12 +79,11 @@ class ImportModel(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
 
-NonEmptyText = Annotated[str, Field(min_length=1)]
-BoundedReviewText = Annotated[str, Field(min_length=1, max_length=4096)]
+BoundedReviewText = Annotated[str, Field(min_length=1, max_length=MAX_LINE_CHARS)]
 
 
 class IngredientCandidate(ImportModel):
-    raw_text: NonEmptyText
+    raw_text: BoundedReviewText
     name: Annotated[str, Field(min_length=1, max_length=200)]
     quantity: Annotated[Decimal | None, Field(ge=0)] = None
     unit: Annotated[str | None, Field(min_length=1, max_length=64)] = None
@@ -123,8 +125,12 @@ class DeterministicRecipeCandidate(ImportModel):
     ingredients: Annotated[
         list[RawIngredientLine], Field(min_length=1, max_length=MAX_INGREDIENT_LINES)
     ]
-    instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
-    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(default_factory=list)
+    instructions: Annotated[
+        list[BoundedReviewText], Field(min_length=1, max_length=MAX_INSTRUCTIONS)
+    ]
+    tags: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=MAX_TAGS)
+    ] = Field(default_factory=list)
 
     @field_validator("source_url")
     @classmethod
@@ -148,9 +154,15 @@ class RecipeImportCandidate(ImportModel):
     prep_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     cook_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     total_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
-    ingredients: Annotated[list[IngredientNormalizationItem], Field(min_length=1)]
-    instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
-    tags: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(default_factory=list)
+    ingredients: Annotated[
+        list[IngredientNormalizationItem], Field(min_length=1, max_length=MAX_INGREDIENT_LINES)
+    ]
+    instructions: Annotated[
+        list[BoundedReviewText], Field(min_length=1, max_length=MAX_INSTRUCTIONS)
+    ]
+    tags: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=MAX_TAGS)
+    ] = Field(default_factory=list)
 
     @field_validator("source_url")
     @classmethod
@@ -171,14 +183,14 @@ class ReviewRecipeCandidate(ImportModel):
     prep_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     cook_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
     total_minutes: Annotated[int | None, Field(ge=0, le=MAX_PG_INT)] = None
-    ingredients: Annotated[list[IngredientCandidate], Field(max_length=256)] = Field(
+    ingredients: Annotated[list[IngredientCandidate], Field(max_length=MAX_INGREDIENTS)] = Field(
         default_factory=list
     )
-    instructions: Annotated[list[BoundedReviewText], Field(max_length=256)] = Field(
+    instructions: Annotated[list[BoundedReviewText], Field(max_length=MAX_INSTRUCTIONS)] = Field(
         default_factory=list
     )
     tags: Annotated[
-        list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=64)
+        list[Annotated[str, Field(min_length=1, max_length=64)]], Field(max_length=MAX_TAGS)
     ] = Field(default_factory=list)
 
     @field_validator("source_url")

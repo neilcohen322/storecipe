@@ -98,6 +98,28 @@ def test_candidate_rejects_integers_beyond_postgres_int4() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ingredients": [{"raw_text": "salt", "name": "salt"}] * 257},
+        {"instructions": ["Mix"] * 257},
+        {"tags": ["tag"] * 65},
+        {"ingredients": [{"raw_text": "x" * 4097, "name": "salt"}]},
+        {"instructions": ["y" * 4097]},
+    ],
+)
+def test_candidate_rejects_list_and_line_overflow(overrides: dict[str, object]) -> None:
+    payload: dict[str, object] = {
+        "title": "Soup",
+        "source_url": "https://example.com/recipe",
+        "ingredients": [{"raw_text": "salt", "name": "salt"}],
+        "instructions": ["Mix"],
+    }
+    payload.update(overrides)
+    with pytest.raises(ValidationError):
+        RecipeImportCandidate.model_validate(payload)
+
+
 def test_candidate_rejects_source_url_beyond_column_width() -> None:
     long_url = "https://example.com/" + "a" * 2100
     with pytest.raises(ValidationError):

@@ -30,6 +30,7 @@ class ApiModel(BaseModel):
 
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
+BoundedLine = Annotated[str, Field(min_length=1, max_length=4096)]
 Title = Annotated[str, Field(min_length=1, max_length=200)]
 TagName = Annotated[str, Field(min_length=1, max_length=64)]
 IdempotencyKey = Annotated[str, Field(min_length=1, max_length=255)]
@@ -56,11 +57,11 @@ SourceUrl = Annotated[
 
 
 class IngredientDraft(ApiModel):
-    raw_text: NonEmptyText
+    raw_text: BoundedLine
 
 
 class IngredientCreate(ApiModel):
-    raw_text: NonEmptyText
+    raw_text: BoundedLine
     name: Annotated[str, Field(min_length=1, max_length=200)]
     canonical_name: Annotated[str, Field(min_length=1, max_length=200)]
     quantity: Annotated[Decimal | None, Field(ge=0)] = None
@@ -78,25 +79,25 @@ class IngredientView(ApiModel):
 class RecipeCreate(ApiModel):
     title: Title
     source_url: SourceUrl = None
-    servings: Annotated[int | None, Field(ge=1)] = None
-    prep_minutes: Annotated[int | None, Field(ge=0)] = None
-    cook_minutes: Annotated[int | None, Field(ge=0)] = None
-    total_minutes: Annotated[int | None, Field(ge=0)] = None
-    ingredients: Annotated[list[IngredientDraft], Field(min_length=1)]
-    instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
-    tags: list[TagName] = Field(default_factory=list)
+    servings: Annotated[int | None, Field(ge=1, le=2_147_483_647)] = None
+    prep_minutes: Annotated[int | None, Field(ge=0, le=2_147_483_647)] = None
+    cook_minutes: Annotated[int | None, Field(ge=0, le=2_147_483_647)] = None
+    total_minutes: Annotated[int | None, Field(ge=0, le=2_147_483_647)] = None
+    ingredients: Annotated[list[IngredientDraft], Field(min_length=1, max_length=256)]
+    instructions: Annotated[list[BoundedLine], Field(min_length=1, max_length=256)]
+    tags: Annotated[list[TagName], Field(max_length=64)] = Field(default_factory=list)
 
 
 class CatalogRecipeCreate(ApiModel):
     title: Title
     source_url: SourceUrl = None
-    servings: Annotated[int | None, Field(ge=1)] = None
-    prep_minutes: Annotated[int | None, Field(ge=0)] = None
-    cook_minutes: Annotated[int | None, Field(ge=0)] = None
-    total_minutes: Annotated[int | None, Field(ge=0)] = None
-    ingredients: Annotated[list[IngredientCreate], Field(min_length=1)]
-    instructions: Annotated[list[NonEmptyText], Field(min_length=1)]
-    tags: list[TagName] = Field(default_factory=list)
+    servings: Annotated[int | None, Field(ge=1, le=2_147_483_647)] = None
+    prep_minutes: Annotated[int | None, Field(ge=0, le=2_147_483_647)] = None
+    cook_minutes: Annotated[int | None, Field(ge=0, le=2_147_483_647)] = None
+    total_minutes: Annotated[int | None, Field(ge=0, le=2_147_483_647)] = None
+    ingredients: Annotated[list[IngredientCreate], Field(min_length=1, max_length=256)]
+    instructions: Annotated[list[BoundedLine], Field(min_length=1, max_length=256)]
+    tags: Annotated[list[TagName], Field(max_length=64)] = Field(default_factory=list)
 
 
 class RecipeView(ApiModel):
@@ -297,11 +298,11 @@ class RecipeFacetSelectionsResponse(ApiModel):
 
 
 class IngredientNormalizationRequest(ApiModel):
-    ingredients: Annotated[list[IngredientDraft], Field(min_length=1)]
+    ingredients: Annotated[list[IngredientDraft], Field(min_length=1, max_length=256)]
 
 
 class IngredientNormalizationResponse(ApiModel):
-    ingredients: Annotated[list[IngredientCreate], Field(min_length=1)]
+    ingredients: Annotated[list[IngredientCreate], Field(min_length=1, max_length=256)]
 
 
 # The Catalog contract names the nested ingredient schema simply Ingredient.

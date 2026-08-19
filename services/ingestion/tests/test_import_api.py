@@ -112,6 +112,7 @@ async def test_auth0_verifier_validates_a_signed_token_and_extracts_scopes() -> 
         },
         private_key,
         algorithm="RS256",
+        headers={"kid": "test-key"},
     )
 
     principal = await verifier.verify(token)
@@ -193,14 +194,21 @@ async def test_import_burst_limiter_uses_distinct_authenticated_subjects(
 
 
 @pytest.mark.asyncio
-async def test_degraded_import_burst_decision_allows_submission(api_client: AsyncClient) -> None:
+async def test_degraded_import_burst_decision_rejects_submission_without_a_job(
+    api_client: AsyncClient,
+) -> None:
     app.state.import_burst_limiter = StubLimiter(
-        RateLimitDecision(True, 5, 5, 1_800_000_030, degraded=True)
+        RateLimitDecision(False, 5, 0, 1_800_000_030, degraded=True)
     )
 
     response = await api_client.post("/v1/imports/text", json=_text_payload())
 
-    assert response.status_code == 202
+    assert response.status_code == 503
+    assert response.json()["errorCategory"] == "rate_limit_unavailable"
+    assert response.headers["Retry-After"]
+    async with app.state.session_factory() as session:
+        jobs = (await session.scalars(select(ImportJob))).all()
+    assert jobs == []
 
 
 @pytest.mark.asyncio

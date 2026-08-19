@@ -6,6 +6,8 @@
 | `CATALOG_REDIS_URL` | Catalog | no | Optional recipe-query cache Redis URL; defaults to `redis://localhost:6379` |
 | `CATALOG_REDIS_TIMEOUT_SECONDS` | Catalog | no | Shared Redis connect/command deadline in seconds; defaults to 1 and is bounded above by 10 |
 | `CATALOG_RECIPE_QUERY_CACHE_TTL_SECONDS` | Catalog | no | Recipe-query cache TTL in seconds; defaults to 1,800 and is bounded from 60 to 86,400 |
+| `CATALOG_MUTATION_BURST_REQUESTS` | Catalog | no | Maximum authenticated Catalog mutations accepted in one burst window; defaults to 30 |
+| `CATALOG_MUTATION_BURST_WINDOW_SECONDS` | Catalog | no | Catalog mutation burst-window duration; defaults to 60 seconds |
 | `CATALOG_MEDIA_BUCKET` | Catalog | no | Private GCS bucket for one cover image per recipe; empty disables media uploads and delivery with `503 media_unavailable` |
 | `CATALOG_MEDIA_MAX_INPUT_BYTES` | Catalog | no | Maximum uploaded image size in bytes; defaults to 8,388,608 and cannot exceed that bound |
 | `CATALOG_MEDIA_MAX_PIXELS` | Catalog | no | Maximum decoded pixel count; defaults to 12,000,000 and cannot exceed that bound |

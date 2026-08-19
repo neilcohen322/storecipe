@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     redis_timeout_seconds: float = Field(default=1.0, gt=0, le=10)
     recipe_query_cache_ttl_seconds: int = Field(default=1800, ge=60, le=86_400)
+    mutation_burst_requests: int = Field(default=30, ge=1, le=1_000)
+    mutation_burst_window_seconds: int = Field(default=60, ge=1, le=86_400)
     media_bucket: str = ""
     media_max_input_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=8 * 1024 * 1024)
     media_max_pixels: int = Field(default=12_000_000, ge=1, le=12_000_000)
