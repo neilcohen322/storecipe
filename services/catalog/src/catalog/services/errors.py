@@ -19,9 +19,13 @@ from catalog.errors import (
 
 __all__ = [
     "CatalogError",
+    "CoverImageNotFound",
     "IdempotencyConflict",
+    "ImageTooLarge",
     "InvalidCursor",
     "InvalidFilter",
+    "InvalidImage",
+    "MediaUnavailable",
     "MutationRateLimited",
     "MutationRateLimitUnavailable",
     "RecipeNotFound",
@@ -75,3 +79,31 @@ class MutationRateLimitUnavailable(CatalogError):
     def __init__(self, headers: dict[str, str]) -> None:
         self.headers = headers
         super().__init__("Catalog mutation admission is temporarily unavailable.")
+
+
+class ImageTooLarge(CatalogError):
+    """Decoded or stored image exceeds the hard resource bound."""
+
+    def __init__(self) -> None:
+        super().__init__("Choose an image smaller than 8 MB.")
+
+
+class InvalidImage(CatalogError):
+    """The upload is not a supported static JPEG, PNG, or WebP image."""
+
+    def __init__(self) -> None:
+        super().__init__("Choose a valid JPEG, PNG, or WebP image.")
+
+
+class CoverImageNotFound(CatalogError):
+    """The owned recipe has no cover image."""
+
+    def __init__(self) -> None:
+        super().__init__("Cover image not found.")
+
+
+class MediaUnavailable(CatalogError):
+    """Private object storage is disabled or temporarily inconsistent."""
+
+    def __init__(self) -> None:
+        super().__init__("Images are temporarily unavailable. Your recipe is safe.")

@@ -4,9 +4,13 @@ import pytest
 from pydantic import ValidationError
 
 from ingestion.import_models import (
+    MAX_INGREDIENT_LINE_CHARS,
+    MAX_INGREDIENT_LINES,
+    MAX_INGREDIENT_TOTAL_BYTES,
+    DeterministicRecipeCandidate,
     FetchError,
     FetchFailureCode,
-    IngredientCandidate,
+    IngredientNormalizationItem,
     RecipeImportCandidate,
 )
 
@@ -41,9 +45,10 @@ def test_candidate_preserves_hebrew_and_english(
         title=title,
         source_url="https://example.com/מתכון",
         ingredients=[
-            IngredientCandidate(
+            IngredientNormalizationItem(
                 raw_text=raw_text,
                 name=ingredient_name,
+                canonical_name="flour" if ingredient_name in {"קמח", "flour"} else ingredient_name,
             )
         ],
         instructions=[instruction],
@@ -61,7 +66,9 @@ def test_candidate_enforces_catalog_title_limit() -> None:
         RecipeImportCandidate(
             title="x" * 201,
             source_url="https://example.com/recipe",
-            ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+            ingredients=[
+                IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
+            ],
             instructions=["Mix"],
         )
 
@@ -69,7 +76,9 @@ def test_candidate_enforces_catalog_title_limit() -> None:
 def test_text_import_candidate_allows_missing_source_url() -> None:
     candidate = RecipeImportCandidate(
         title="Family soup",
-        ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+        ingredients=[
+            IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
+        ],
         instructions=["Simmer."],
     )
 
@@ -82,7 +91,9 @@ def test_candidate_rejects_integers_beyond_postgres_int4() -> None:
             title="Big yield",
             source_url="https://example.com/recipe",
             servings=9_999_999_999,
-            ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+            ingredients=[
+                IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
+            ],
             instructions=["Mix"],
         )
 
@@ -115,7 +126,9 @@ def test_candidate_rejects_source_url_beyond_column_width() -> None:
         RecipeImportCandidate(
             title="Long URL",
             source_url=long_url,
-            ingredients=[IngredientCandidate(raw_text="salt", name="salt")],
+            ingredients=[
+                IngredientNormalizationItem(raw_text="salt", name="salt", canonical_name="salt")
+            ],
             instructions=["Mix"],
         )
 
@@ -131,3 +144,36 @@ def test_fetch_error_exposes_stable_code_and_safe_context() -> None:
     assert error.url == "https://example.com/private"
     assert error.status == 403
     assert str(error) == "access_denied"
+
+
+def test_deterministic_candidate_rejects_too_many_ingredient_lines() -> None:
+    with pytest.raises(ValidationError):
+        DeterministicRecipeCandidate(
+            title="Overflow",
+            ingredients=[{"raw_text": "salt"} for _ in range(MAX_INGREDIENT_LINES + 1)],
+            instructions=["Mix"],
+        )
+
+
+def test_deterministic_candidate_rejects_overlong_ingredient_line() -> None:
+    with pytest.raises(ValidationError):
+        DeterministicRecipeCandidate(
+            title="Overflow",
+            ingredients=[{"raw_text": "x" * (MAX_INGREDIENT_LINE_CHARS + 1)}],
+            instructions=["Mix"],
+        )
+
+
+def test_deterministic_candidate_rejects_total_utf8_byte_cap() -> None:
+    line = "א" * MAX_INGREDIENT_LINE_CHARS
+    line_bytes = len(line.encode("utf-8"))
+    overflow_count = MAX_INGREDIENT_TOTAL_BYTES // line_bytes + 1
+    assert len(line) <= MAX_INGREDIENT_LINE_CHARS
+    assert line_bytes * (overflow_count - 1) <= MAX_INGREDIENT_TOTAL_BYTES
+    assert line_bytes * overflow_count > MAX_INGREDIENT_TOTAL_BYTES
+    with pytest.raises(ValidationError):
+        DeterministicRecipeCandidate(
+            title="Overflow",
+            ingredients=[{"raw_text": line} for _ in range(overflow_count)],
+            instructions=["Mix"],
+        )

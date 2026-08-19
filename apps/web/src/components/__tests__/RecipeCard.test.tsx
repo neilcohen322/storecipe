@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { Platform, StyleSheet } from "react-native";
 
 import type { Recipe } from "../../api/catalog";
@@ -32,6 +32,7 @@ const recipe: Recipe = {
   instructions: [],
   tags: ["weeknight", "pasta"],
   rating: 4,
+  coverImage: null,
 };
 
 test("opens a recipe from an accessible stable card with deterministic theme media", async () => {
@@ -46,6 +47,18 @@ test("opens a recipe from an accessible stable card with deterministic theme med
   expect(initialMediaStyle).toEqual(expect.arrayContaining([expect.objectContaining({ backgroundColor: "#b7791f" })]));
   expect(StyleSheet.flatten(initialMediaStyle)).toEqual(expect.objectContaining({ minHeight: 140, width: "100%" }));
   expect(first.getByText("25 min · 4/5")).toBeTruthy();
+});
+
+test("loads a private cover when metadata and a loader are present", async () => {
+  globalThis.URL.createObjectURL = jest.fn(() => "blob:cover-card") as typeof URL.createObjectURL;
+  globalThis.URL.revokeObjectURL = jest.fn() as typeof URL.revokeObjectURL;
+  const loadCoverImage = jest.fn().mockResolvedValue({ blob: new Blob(["RIFF"]), etag: "a".repeat(64), notModified: false });
+  const covered = {
+    ...recipe,
+    coverImage: { url: "/v1/recipes/recipe-1/cover-image", etag: "a".repeat(64), byteSize: 8, contentType: "image/webp" as const },
+  };
+  const screen = await render(<RecipeCard item={covered} onOpen={jest.fn()} view="card" loadCoverImage={loadCoverImage} />);
+  await waitFor(() => expect(screen.getByLabelText("Cover image for Lemon pasta")).toBeTruthy());
 });
 
 test("uses the Pressable activation path without a custom keyboard handler", async () => {

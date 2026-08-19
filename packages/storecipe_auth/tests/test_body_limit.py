@@ -136,3 +136,23 @@ async def test_413_echoes_inbound_request_id_in_body_and_header() -> None:
     body = json.loads(send.messages[1]["body"])
     assert headers[b"x-request-id"] == b"req-413"
     assert body["request_id"] == "req-413"
+
+
+@pytest.mark.asyncio
+async def test_skipped_path_suffix_does_not_enforce_limit() -> None:
+    limiter = RequestBodyLimitMiddleware(
+        _ok_app,
+        max_bytes=8,
+        problem_type_base=PROBLEM_TYPE_BASE,
+        skip_path_suffixes=("/cover-image",),
+    )
+    receive = ScriptedReceive([{"type": "http.request", "body": b"0123456789", "more_body": False}])
+    send = RecordingSend()
+
+    await limiter(
+        _scope(content_length=b"100", path="/v1/recipes/abc/cover-image"),
+        receive,
+        send,
+    )
+
+    assert send.messages[0]["status"] == 200

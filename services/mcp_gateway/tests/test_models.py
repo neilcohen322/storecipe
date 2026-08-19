@@ -6,7 +6,10 @@ import yaml
 from pydantic import TypeAdapter, ValidationError
 
 from storecipe_mcp.models import (
+    CatalogRecipeCreate,
     IdempotencyKey,
+    IngredientCreate,
+    IngredientDraft,
     RatingView,
     RecipeCreate,
     RecipeCreateIdempotencyKey,
@@ -28,9 +31,7 @@ def _recipe_payload() -> dict[str, object]:
         "prepMinutes": 10,
         "cookMinutes": 20,
         "totalMinutes": 30,
-        "ingredients": [
-            {"rawText": "2 tomatoes", "name": "tomato", "quantity": 2, "unit": "piece"}
-        ],
+        "ingredients": [{"rawText": "2 tomatoes"}],
         "instructions": ["Chop the tomatoes", "Simmer until soft"],
         "tags": ["soup"],
     }
@@ -46,7 +47,13 @@ def _recipe_view_payload() -> dict[str, object]:
         "cookMinutes": 20,
         "totalMinutes": 30,
         "ingredients": [
-            {"rawText": "2 tomatoes", "name": "tomato", "quantity": 2, "unit": "piece"}
+            {
+                "rawText": "2 tomatoes",
+                "name": "tomato",
+                "canonicalName": "tomato",
+                "quantity": 2,
+                "unit": "piece",
+            }
         ],
         "instructions": ["Chop the tomatoes", "Simmer until soft"],
         "tags": ["soup"],
@@ -62,6 +69,72 @@ def test_recipe_create_uses_camel_case_contract_and_openapi_bounds() -> None:
     wire_payload = recipe.model_dump(mode="json", by_alias=True)
     assert wire_payload["sourceUrl"] == "https://example.com/tomato-soup"
     assert wire_payload["ingredients"][0]["rawText"] == "2 tomatoes"
+    assert "name" not in wire_payload["ingredients"][0]
+
+
+def test_recipe_create_ingredient_drafts_reject_structured_fields() -> None:
+    with pytest.raises(ValidationError):
+        RecipeCreate.model_validate(
+            {
+                **_recipe_payload(),
+                "ingredients": [
+                    {
+                        "rawText": "2 tomatoes",
+                        "name": "tomato",
+                        "quantity": 2,
+                        "unit": "piece",
+                    }
+                ],
+            }
+        )
+
+
+def test_catalog_recipe_create_includes_canonical_name_on_ingredients() -> None:
+    payload = CatalogRecipeCreate.model_validate(
+        {
+            **_recipe_payload(),
+            "ingredients": [
+                {
+                    "rawText": "2 tomatoes",
+                    "name": "tomato",
+                    "canonicalName": "tomato",
+                    "quantity": 2,
+                    "unit": "piece",
+                }
+            ],
+        }
+    )
+
+    wire_payload = payload.model_dump(mode="json", by_alias=True)
+    assert wire_payload["ingredients"][0]["canonicalName"] == "tomato"
+
+
+def test_ingredient_create_requires_canonical_name() -> None:
+    IngredientCreate.model_validate(
+        {
+            "rawText": "2 tomatoes",
+            "name": "tomato",
+            "canonicalName": "tomato",
+            "quantity": 2,
+            "unit": "piece",
+        }
+    )
+    with pytest.raises(ValidationError):
+        IngredientCreate.model_validate(
+            {"rawText": "2 tomatoes", "name": "tomato", "quantity": 2, "unit": "piece"}
+        )
+
+
+def test_public_recipe_create_ingredients_differ_from_catalog_openapi_ingredient() -> None:
+    with CONTRACT_PATH.open(encoding="utf-8") as contract_file:
+        contract = yaml.safe_load(contract_file)
+    catalog_ingredient_schema = contract["components"]["schemas"]["Ingredient"]
+    public_ingredient_schema = IngredientDraft.model_json_schema(by_alias=True)
+
+    assert catalog_ingredient_schema["required"] == ["rawText", "name", "canonicalName"]
+    assert public_ingredient_schema["required"] == ["rawText"]
+    assert "name" not in public_ingredient_schema["properties"]
+    assert "canonicalName" not in public_ingredient_schema["properties"]
 
 
 def test_recipe_create_source_url_matches_catalog_httpurl_and_openapi_contract() -> None:
@@ -118,10 +191,10 @@ def test_recipe_create_rejects_openapi_invalid_values(payload: dict[str, object]
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"ingredients": [{"rawText": "onion", "name": "onion"}] * 257},
+        {"ingredients": [{"rawText": "onion"}] * 257},
         {"instructions": ["Cook."] * 257},
         {"tags": ["tag"] * 65},
-        {"ingredients": [{"rawText": "x" * 4097, "name": "onion"}]},
+        {"ingredients": [{"rawText": "x" * 4097}]},
         {"instructions": ["y" * 4097]},
         {"servings": 2_147_483_648},
     ],
@@ -235,8 +308,9 @@ def test_recipe_view_and_query_page_match_camel_case_response_contract() -> None
         ("sourceUrl", "ftp://example.com/recipe"),
         ("servings", 0),
         ("prepMinutes", -1),
-        ("ingredients", [{"rawText": "", "name": "tomato"}]),
-        ("ingredients", [{"rawText": "tomato", "name": "x" * 201}]),
+        ("ingredients", [{"rawText": "", "name": "tomato", "canonicalName": "tomato"}]),
+        ("ingredients", [{"rawText": "tomato", "name": "x" * 201, "canonicalName": "tomato"}]),
+        ("ingredients", [{"rawText": "tomato", "name": "tomato", "canonicalName": ""}]),
         ("instructions", [""]),
         ("rating", 6),
     ],
@@ -251,7 +325,7 @@ def test_recipe_view_rejects_openapi_invalid_values(field_name: str, value: obje
 
 def test_recipe_view_accepts_legacy_ingredient_text_beyond_create_bounds() -> None:
     payload = _recipe_view_payload()
-    payload["ingredients"] = [{"rawText": "x" * 4097, "name": "onion"}]
+    payload["ingredients"] = [{"rawText": "x" * 4097, "name": "onion", "canonicalName": "onion"}]
     recipe = RecipeView.model_validate(payload)
     assert recipe.ingredients[0].raw_text == "x" * 4097
 
@@ -291,8 +365,8 @@ def test_facet_selection_item_preserves_padded_requested_name() -> None:
     item = RecipeFacetSelectionItem.model_validate(
         {
             "requestedName": "  tomato  ",
-            "normalizedName": "tomato",
-            "observed": True,
+            "resolvedName": "tomato",
+            "status": "observed",
         }
     )
     assert item.requested_name == "  tomato  "

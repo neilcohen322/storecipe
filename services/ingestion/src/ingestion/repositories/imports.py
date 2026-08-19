@@ -437,6 +437,7 @@ class ImportRepository:
         *,
         request_deadline_at: datetime,
         operation_id: UUID | None = None,
+        stage: ImportStage = ImportStage.MODEL_EXTRACTING,
     ) -> ProviderAttempt | None:
         """Reserve one provider operation, reusing an unresolved operation on redelivery."""
 
@@ -448,7 +449,7 @@ class ImportRepository:
         if (
             job.cancel_requested_at is not None
             or job.status is not ImportStatus.PROCESSING
-            or job.stage is not ImportStage.MODEL_EXTRACTING
+            or job.stage is not stage
         ):
             return None
         unresolved = await self.session.scalar(
@@ -478,7 +479,7 @@ class ImportRepository:
             .where(
                 *self._fence_predicates(token, now),
                 ImportJob.status == ImportStatus.PROCESSING,
-                ImportJob.stage == ImportStage.MODEL_EXTRACTING,
+                ImportJob.stage == stage,
                 ImportJob.provider_count == job.provider_count,
             )
             .values(provider_count=ImportJob.provider_count + 1)
@@ -491,7 +492,11 @@ class ImportRepository:
         return attempt
 
     async def adopt_provider_attempt(
-        self, token: "LeaseToken", operation_id: UUID
+        self,
+        token: "LeaseToken",
+        operation_id: UUID,
+        *,
+        stage: ImportStage = ImportStage.MODEL_EXTRACTING,
     ) -> ProviderAttempt | None:
         """Fence a previously reserved provider operation immediately before I/O."""
 
@@ -502,7 +507,7 @@ class ImportRepository:
         assert job is not None
         if (
             job.status is not ImportStatus.PROCESSING
-            or job.stage is not ImportStage.MODEL_EXTRACTING
+            or job.stage is not stage
             or job.cancel_requested_at is not None
         ):
             return None
@@ -688,6 +693,8 @@ class ImportRepository:
         token: "LeaseToken",
         operation_id: UUID,
         payload_cipher: PayloadCipher,
+        *,
+        stage: ImportStage = ImportStage.MODEL_EXTRACTING,
     ) -> bool:
         """Adopt a durable operation result while retaining the live job fence."""
 
@@ -698,7 +705,7 @@ class ImportRepository:
         assert job is not None
         if (
             job.status is not ImportStatus.PROCESSING
-            or job.stage is not ImportStage.MODEL_EXTRACTING
+            or job.stage is not stage
             or job.cancel_requested_at is not None
         ):
             return False

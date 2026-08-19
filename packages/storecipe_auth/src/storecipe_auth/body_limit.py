@@ -20,13 +20,26 @@ REQUEST_TOO_LARGE_CATEGORY = "request_too_large"
 class RequestBodyLimitMiddleware:
     """Reject oversized HTTP bodies with a stable 413 problem response."""
 
-    def __init__(self, app: Any, max_bytes: int, problem_type_base: str) -> None:
+    def __init__(
+        self,
+        app: Any,
+        max_bytes: int,
+        problem_type_base: str,
+        skip_path_suffixes: tuple[str, ...] = (),
+    ) -> None:
         self.app = app
         self.max_bytes = max_bytes
         self.problem_type_base = problem_type_base
+        self.skip_path_suffixes = skip_path_suffixes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if isinstance(path, str) and any(
+            path.endswith(suffix) for suffix in self.skip_path_suffixes
+        ):
             await self.app(scope, receive, send)
             return
         advertised = _content_length(scope)

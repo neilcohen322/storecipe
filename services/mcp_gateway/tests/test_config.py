@@ -10,6 +10,7 @@ def test_settings_expose_gateway_defaults() -> None:
     assert settings.service_name == "mcp-gateway"
     assert settings.listen_port == 8002
     assert settings.catalog_api_url == "http://catalog-api:8000"
+    assert settings.ingestion_api_url == "http://ingestion-api:8001"
     assert settings.mcp_resource_url == "http://localhost:8002/mcp"
     assert settings.connect_timeout_seconds == 5.0
     assert settings.pool_timeout_seconds == 5.0
@@ -24,6 +25,14 @@ def test_settings_expose_gateway_defaults() -> None:
 def test_settings_reject_non_http_catalog_urls(catalog_api_url: str) -> None:
     with pytest.raises(ValidationError, match="HTTP"):
         Settings(catalog_api_url=catalog_api_url)
+
+
+@pytest.mark.parametrize(
+    "ingestion_api_url", ["ftp://ingestion.test", "file:///tmp/ingestion", "ingestion.test"]
+)
+def test_settings_reject_non_http_ingestion_urls(ingestion_api_url: str) -> None:
+    with pytest.raises(ValidationError, match="HTTP"):
+        Settings(ingestion_api_url=ingestion_api_url)
 
 
 @pytest.mark.parametrize(
@@ -45,6 +54,12 @@ def test_settings_reject_catalog_base_url_userinfo_path_query_and_fragment(
 def test_settings_accept_catalog_base_url_with_optional_root_slash() -> None:
     assert Settings(catalog_api_url="https://catalog.test/").catalog_api_url == (
         "https://catalog.test/"
+    )
+
+
+def test_settings_accept_ingestion_base_url_with_optional_root_slash() -> None:
+    assert Settings(ingestion_api_url="https://ingestion.test/").ingestion_api_url == (
+        "https://ingestion.test/"
     )
 
 
@@ -79,6 +94,7 @@ def test_settings_bound_each_catalog_timeout(field_name: str, value: float) -> N
 
 def test_settings_load_mcp_environment_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_CATALOG_API_URL", "https://catalog.example")
+    monkeypatch.setenv("MCP_INGESTION_API_URL", "https://ingestion.example")
     monkeypatch.setenv("MCP_LISTEN_PORT", "9002")
     monkeypatch.setenv("MCP_RESOURCE_URL", "https://mcp.example/mcp")
     monkeypatch.setenv("MCP_CONNECT_TIMEOUT_SECONDS", "1.5")
@@ -94,6 +110,7 @@ def test_settings_load_mcp_environment_aliases(monkeypatch: pytest.MonkeyPatch) 
     settings = Settings()
 
     assert settings.catalog_api_url == "https://catalog.example"
+    assert settings.ingestion_api_url == "https://ingestion.example"
     assert settings.listen_port == 9002
     assert settings.mcp_resource_url == "https://mcp.example/mcp"
     assert settings.connect_timeout_seconds == 1.5
@@ -163,6 +180,7 @@ def test_gateway_owned_environment_names_require_mcp_namespace(
 ) -> None:
     for name in (
         "MCP_CATALOG_API_URL",
+        "MCP_INGESTION_API_URL",
         "MCP_LISTEN_PORT",
         "MCP_CONNECT_TIMEOUT_SECONDS",
         "MCP_POOL_TIMEOUT_SECONDS",
@@ -181,6 +199,7 @@ def test_gateway_owned_environment_names_require_mcp_namespace(
     settings = Settings()
 
     assert settings.catalog_api_url == "http://catalog-api:8000"
+    assert settings.ingestion_api_url == "http://ingestion-api:8001"
     assert settings.listen_port == 8002
     assert settings.connect_timeout_seconds == 5.0
     assert settings.pool_timeout_seconds == 5.0

@@ -38,6 +38,7 @@ def _recipe_load_options() -> tuple[Any, ...]:
         selectinload(Recipe.instructions),
         selectinload(Recipe.recipe_tags).selectinload(RecipeTag.tag),
         selectinload(Recipe.ratings),
+        selectinload(Recipe.cover_image),
     )
 
 
@@ -49,10 +50,10 @@ def _ingredient_match_count(
     normalized_names: list[str],
 ) -> ColumnElement[Any]:
     return (
-        select(func.count(func.distinct(Ingredient.normalized_name)))
+        select(func.count(func.distinct(Ingredient.canonical_name)))
         .where(
             Ingredient.recipe_id == Recipe.id,
-            Ingredient.normalized_name.in_(normalized_names),
+            Ingredient.canonical_name.in_(normalized_names),
         )
         .correlate(Recipe)
         .scalar_subquery()

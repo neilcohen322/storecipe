@@ -1,8 +1,25 @@
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 
-import { ApiNetworkError, ApiUnauthorizedError } from "../../api/client";
+import { ApiError, ApiNetworkError, ApiUnauthorizedError } from "../../api/client";
 import type { Recipe } from "../../api/catalog";
 import { RecipeDetailScreen } from "../RecipeDetailScreen";
+import { pickRecipeCoverImage } from "../../media/imagePicker";
+
+jest.mock("../../media/imagePicker", () => ({
+  pickRecipeCoverImage: jest.fn(),
+  blobFromPickerUri: jest.fn(async () => new Blob(["RIFF"])),
+  pickerStatusMessage: (status: string) => {
+    if (status === "too_large") return "Choose an image smaller than 8 MB.";
+    if (status === "unsupported") return "Choose a valid JPEG, PNG, or WebP image.";
+    return null;
+  },
+  coverImageErrorMessage: (error: { status?: number }) => {
+    if (error?.status === 413) return "Choose an image smaller than 8 MB.";
+    if (error?.status === 422) return "Choose a valid JPEG, PNG, or WebP image.";
+    if (error?.status === 503) return "Images are temporarily unavailable. Your recipe is safe.";
+    return "We couldn't upload the image. Please try again.";
+  },
+}));
 
 jest.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -14,12 +31,23 @@ jest.mock("../../theme/ThemeProvider", () => ({
 
 const recipe: Recipe = {
   id: "recipe-1", title: "Lemon pasta", sourceUrl: null, servings: 4, prepMinutes: 10, cookMinutes: 15, totalMinutes: 25,
-  ingredients: [{ rawText: "200g spaghetti", name: "spaghetti" }, { rawText: "1 lemon", name: "lemon" }],
-  instructions: ["Boil the pasta.", "Toss with lemon."], tags: ["quick", "pasta"], rating: 3,
+  ingredients: [
+    { rawText: "200g spaghetti", name: "spaghetti", canonicalName: "spaghetti" },
+    { rawText: "1 lemon", name: "lemon", canonicalName: "lemon" },
+  ],
+  instructions: ["Boil the pasta.", "Toss with lemon."], tags: ["quick", "pasta"], rating: 3, coverImage: null,
 };
 const secondRecipe: Recipe = { ...recipe, id: "recipe-2", title: "Tomato risotto", rating: 2 };
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; }); return { promise, resolve, reject }; }
-function catalogWith(getRecipe: jest.Mock, putRating = jest.fn()) { return { getRecipe, putRating } as unknown as React.ComponentProps<typeof RecipeDetailScreen>["catalog"]; }
+function catalogWith(getRecipe: jest.Mock, putRating = jest.fn(), extras: Record<string, jest.Mock> = {}) {
+  return {
+    getRecipe,
+    putRating,
+    getCoverImage: extras.getCoverImage ?? jest.fn().mockResolvedValue({ blob: null, etag: null, notModified: false }),
+    uploadCoverImage: extras.uploadCoverImage ?? jest.fn(),
+    deleteCoverImage: extras.deleteCoverImage ?? jest.fn(),
+  } as unknown as React.ComponentProps<typeof RecipeDetailScreen>["catalog"];
+}
 const actions = { onBack: jest.fn(), onUnauthorized: jest.fn() };
 const renderScreen = (getRecipe: jest.Mock, putRating?: jest.Mock, recipeId: unknown = "recipe-1") => render(<RecipeDetailScreen recipeId={recipeId} catalog={catalogWith(getRecipe, putRating)} {...actions} />);
 
@@ -129,4 +157,63 @@ test("does not let a rating response from the previous route affect the current 
   await act(async () => staleRating.reject(new ApiUnauthorizedError()));
   expect(screen.getByText("Tomato risotto")).toBeTruthy();
   expect(actions.onUnauthorized).not.toHaveBeenCalled();
+});
+
+test("adds, retries, and removes a cover image with safe copy", async () => {
+  const covered = {
+    ...recipe,
+    coverImage: { url: "/v1/recipes/recipe-1/cover-image", etag: "a".repeat(64), byteSize: 8, contentType: "image/webp" as const },
+  };
+  const uploadCoverImage = jest.fn()
+    .mockRejectedValueOnce(new ApiError("Images are temporarily unavailable. Your recipe is safe.", 503, "media_unavailable"))
+    .mockResolvedValueOnce(covered.coverImage);
+  const deleteCoverImage = jest.fn().mockResolvedValue(undefined);
+  (pickRecipeCoverImage as jest.Mock).mockResolvedValue({
+    status: "selected", uri: "blob:cover", mimeType: "image/jpeg", fileName: "cover.jpg", fileSize: 12,
+  });
+  const screen = await render(
+    <RecipeDetailScreen
+      recipeId="recipe-1"
+      catalog={catalogWith(jest.fn().mockResolvedValue(recipe), jest.fn(), { uploadCoverImage, deleteCoverImage })}
+      {...actions}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Add cover image" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Add cover image" }));
+  await waitFor(() => expect(screen.getByText("Images are temporarily unavailable. Your recipe is safe.")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Try image upload again" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Replace cover image" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Remove cover image" }));
+  await fireEvent.press(screen.getByRole("button", { name: "Confirm" }));
+  await waitFor(() => expect(deleteCoverImage).toHaveBeenCalledWith("recipe-1"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Add cover image" })).toBeTruthy());
+});
+
+test("keeps the current cover while a replacement fails and cancels removal", async () => {
+  const covered = {
+    ...recipe,
+    coverImage: { url: "/v1/recipes/recipe-1/cover-image", etag: "a".repeat(64), byteSize: 8, contentType: "image/webp" as const },
+  };
+  const uploadCoverImage = jest.fn()
+    .mockRejectedValueOnce(new ApiError("Choose an image smaller than 8 MB.", 413, "image_too_large"))
+    .mockRejectedValueOnce(new ApiError("Choose a valid JPEG, PNG, or WebP image.", 422, "invalid_image"));
+  (pickRecipeCoverImage as jest.Mock).mockResolvedValue({
+    status: "selected", uri: "blob:cover", mimeType: "image/jpeg", fileName: "cover.jpg", fileSize: 12,
+  });
+  const screen = await render(
+    <RecipeDetailScreen
+      recipeId="recipe-1"
+      catalog={catalogWith(jest.fn().mockResolvedValue(covered), jest.fn(), { uploadCoverImage })}
+      {...actions}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Replace cover image" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Replace cover image" }));
+  await waitFor(() => expect(screen.getByText("Choose an image smaller than 8 MB.")).toBeTruthy());
+  expect(screen.getByRole("button", { name: "Replace cover image" })).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: "Try image upload again" }));
+  await waitFor(() => expect(screen.getByText("Choose a valid JPEG, PNG, or WebP image.")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Remove cover image" }));
+  await fireEvent.press(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("button", { name: "Replace cover image" })).toBeTruthy();
 });

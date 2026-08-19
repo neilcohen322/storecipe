@@ -446,6 +446,7 @@ async def test_matching_idempotency_replay_returns_current_job(api_client: Async
         "createdRecipeId": None,
         "errorCategory": None,
         "cancellationRequested": False,
+        "hasCandidate": False,
     }
 
 
@@ -575,7 +576,17 @@ async def test_status_read_returns_owner_job(api_client: AsyncClient) -> None:
         "createdRecipeId": None,
         "errorCategory": None,
         "cancellationRequested": False,
+        "hasCandidate": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_queued_import_has_no_review_draft(api_client: AsyncClient) -> None:
+    created = await api_client.post("/v1/imports/text", json=_text_payload())
+
+    response = await api_client.get(f"/v1/imports/{created.json()['jobId']}/draft")
+
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

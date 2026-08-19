@@ -42,6 +42,16 @@ async def api_client() -> AsyncIterator[AsyncClient]:
     )
     app.state.source_lookup = MissingSourceLookup()
     app.state.import_burst_limiter = UnlimitedBurstLimiter()
+    app.state.ingredient_normalization_burst_limiter = UnlimitedBurstLimiter()
+    app.state.settings = Settings(
+        payload_active_key_id="test",
+        payload_keyring=f"test={keyring}",
+        ai_extraction_enabled=True,
+        openrouter_api_key="test-key",
+        ingredient_normalization_reservation_tokens=64_000,
+        ai_daily_token_limit=1_100_000,
+    )
+    app.state.ingredient_normalizer = None
     app.state.token_verifier = Auth0TokenVerifier(
         Settings(payload_active_key_id="test", payload_keyring=f"test={keyring}"),
         audience="https://api.storecipe.example",

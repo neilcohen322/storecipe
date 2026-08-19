@@ -25,7 +25,7 @@ class StubLimiter:
 def _payload() -> dict[str, object]:
     return {
         "title": "Soup",
-        "ingredients": [{"rawText": "1 onion", "name": "onion"}],
+        "ingredients": [{"rawText": "1 onion", "name": "onion", "canonicalName": "onion"}],
         "instructions": ["Cook."],
     }
 

@@ -1,8 +1,8 @@
 from decimal import Decimal
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 MAX_PG_INT = 2_147_483_647
 MAX_INGREDIENTS = 256
@@ -31,8 +31,18 @@ SourceFingerprint = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 class IngredientInput(ApiModel):
     raw_text: BoundedLine
     name: Annotated[str, Field(min_length=1, max_length=200)]
+    canonical_name: Annotated[str, Field(min_length=1, max_length=200)]
     quantity: Annotated[Decimal | None, Field(ge=0)] = None
     unit: Annotated[str | None, Field(min_length=1, max_length=64)] = None
+
+    @field_validator("canonical_name", mode="after")
+    @classmethod
+    def canonical_name_not_empty_after_normalization(cls, value: str) -> str:
+        from catalog.recipe_queries import normalize_query_text
+
+        if not normalize_query_text(value):
+            raise ValueError("canonical_name cannot be empty after normalization")
+        return value
 
 
 class RecipeCreate(ApiModel):
@@ -94,8 +104,16 @@ class RecipePatch(ApiModel):
 class IngredientView(ApiModel):
     raw_text: str
     name: str
+    canonical_name: str
     quantity: float | None
     unit: str | None
+
+
+class CoverImageView(ApiModel):
+    url: str
+    etag: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    byte_size: Annotated[int, Field(gt=0, le=1_572_864)]
+    content_type: Literal["image/webp"] = "image/webp"
 
 
 class RecipeView(ApiModel):
@@ -110,6 +128,7 @@ class RecipeView(ApiModel):
     instructions: list[str]
     tags: list[str]
     rating: int | None = None
+    cover_image: CoverImageView | None = None
 
 
 class RecipePage(ApiModel):

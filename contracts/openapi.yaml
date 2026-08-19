@@ -131,6 +131,65 @@ paths:
         "404": {$ref: "#/components/responses/NotFound"}
         "429": {$ref: "#/components/responses/CatalogRateLimited"}
         "503": {$ref: "#/components/responses/RateLimitUnavailable"}
+  /v1/recipes/{recipeId}/cover-image:
+    parameters:
+      - {$ref: "#/components/parameters/RecipeId"}
+    get:
+      operationId: getRecipeCoverImage
+      description: Requires `recipes:read`. Returns the owner's private WebP cover, or 404 when the owned recipe has no cover.
+      parameters:
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: {type: string}
+      responses:
+        "200":
+          description: Private static WebP cover
+          headers:
+            ETag: {schema: {type: string}}
+            Cache-Control: {schema: {type: string}}
+            X-Content-Type-Options: {schema: {type: string}}
+          content:
+            image/webp:
+              schema: {type: string, format: binary}
+        "304": {description: Cover is unchanged}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/CoverImageNotFound"}
+        "503": {$ref: "#/components/responses/MediaUnavailable"}
+    put:
+      operationId: putRecipeCoverImage
+      description: Requires `recipes:write`. Replaces the owner's single cover after bounded server-side normalization.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image: {type: string, format: binary}
+      responses:
+        "200":
+          description: Cover metadata
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CoverImage"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "413": {$ref: "#/components/responses/ImageTooLarge"}
+        "422": {$ref: "#/components/responses/InvalidImage"}
+        "503": {$ref: "#/components/responses/MediaUnavailable"}
+    delete:
+      operationId: deleteRecipeCoverImage
+      description: Requires `recipes:write`. Idempotent for an owned recipe with no current cover.
+      responses:
+        "204": {description: Cover removed or already absent}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/MediaUnavailable"}
   /v1/recipes/{recipeId}/rating:
     parameters:
       - {$ref: "#/components/parameters/RecipeId"}
@@ -310,6 +369,59 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
+  /v1/imports/{jobId}/draft:
+    parameters:
+      - {name: jobId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getImportDraft
+      description: >-
+        Requires `recipes:read`. Returns the extracted recipe retained for a
+        `review_required` job owned by the caller. Missing jobs, other owners,
+        and jobs without a retained extract are reported as not found.
+      responses:
+        "200":
+          description: Extracted recipe draft
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportReviewDraft"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /v1/ingredient-normalizations:
+    post:
+      operationId: normalizeIngredients
+      description: >-
+        Requires `recipes:write` and a required `Idempotency-Key`. Accepts 1–256 raw
+        ingredient lines with per-line and total UTF-8 byte caps. Replays the exact
+        encrypted successful result for the same owner/key/request hash.
+      parameters:
+        - {$ref: "#/components/parameters/IngredientNormalizationIdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/IngredientNormalizationRequest"}
+      responses:
+        "200":
+          description: New or exactly replayed successful normalization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/IngredientNormalizationResponse"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/IdempotencyConflict"}
+        "422": {$ref: "#/components/responses/ValidationError"}
+        "429": {$ref: "#/components/responses/IngredientNormalizationRateLimited"}
+        "502":
+          description: Provider output violated the strict normalization contract.
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "503":
+          description: Provider/configuration unavailable or unresolved provider ambiguity.
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
 components:
   securitySchemes:
     bearerAuth:
@@ -332,6 +444,11 @@ components:
       in: header
       required: true
       schema: {type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$'}
+    IngredientNormalizationIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 255}
   responses:
     Unauthorized:
       description: Missing or invalid access token
@@ -410,6 +527,54 @@ components:
       content:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
+    ImageTooLarge:
+      description: The uploaded image exceeds the 8 MiB, 12 megapixel, or 1.5 MiB stored-object bound.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/image_too_large
+            title: Content Too Large
+            status: 413
+            detail: Choose an image smaller than 8 MB.
+            request_id: 01JEXAMPLEIMAGETOOLARGE
+            errorCategory: image_too_large
+    InvalidImage:
+      description: The upload is not a supported static JPEG, PNG, or WebP image.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/invalid_image
+            title: Unprocessable Entity
+            status: 422
+            detail: Choose a valid JPEG, PNG, or WebP image.
+            request_id: 01JEXAMPLEINVALIDIMAGE
+            errorCategory: invalid_image
+    CoverImageNotFound:
+      description: The owned recipe has no cover image.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/cover_image_not_found
+            title: Not Found
+            status: 404
+            detail: Cover image not found.
+            request_id: 01JEXAMPLECOVERMISSING
+            errorCategory: cover_image_not_found
+    MediaUnavailable:
+      description: Private object storage is disabled or temporarily inconsistent; the recipe is unchanged.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/media_unavailable
+            title: Service Unavailable
+            status: 503
+            detail: Images are temporarily unavailable. Your recipe is safe.
+            request_id: 01JEXAMPLEMEDIAUNAVAIL
+            errorCategory: media_unavailable
     ImportBurstExceeded:
       description: Import submission burst limit exceeded; retry after the indicated interval.
       headers:
@@ -426,6 +591,22 @@ components:
           schema: {$ref: "#/components/schemas/Problem"}
     CatalogRateLimited:
       description: Authenticated Catalog mutation burst limit exceeded; retry after the indicated interval.
+      headers:
+        Retry-After:
+          schema: {type: integer, minimum: 1}
+        RateLimit-Limit:
+          schema: {type: integer, minimum: 1}
+        RateLimit-Remaining:
+          schema: {type: integer, minimum: 0}
+        RateLimit-Reset:
+          schema: {type: integer, minimum: 0}
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    IngredientNormalizationRateLimited:
+      description: >-
+        Ingredient normalization burst limit, provider rate limit, or daily AI budget
+        exhaustion; retry after the indicated interval when headers are present.
       headers:
         Retry-After:
           schema: {type: integer, minimum: 1}
@@ -517,9 +698,17 @@ components:
           type: array
           maxItems: 64
           items: {type: string, minLength: 1, maxLength: 64}
+    CoverImage:
+      type: object
+      required: [url, etag, byteSize, contentType]
+      properties:
+        url: {type: string, minLength: 1}
+        etag: {type: string, pattern: '^[0-9a-f]{64}$'}
+        byteSize: {type: integer, exclusiveMinimum: 0, maximum: 1572864}
+        contentType: {type: string, enum: [image/webp]}
     Recipe:
       type: object
-      required: [id, title, sourceUrl, servings, prepMinutes, cookMinutes, totalMinutes, ingredients, instructions, tags, rating]
+      required: [id, title, sourceUrl, servings, prepMinutes, cookMinutes, totalMinutes, ingredients, instructions, tags, rating, coverImage]
       properties:
         id: {type: string, format: uuid}
         title: {type: string, minLength: 1, maxLength: 200}
@@ -532,12 +721,17 @@ components:
         instructions: {type: array, items: {type: string, minLength: 1}}
         tags: {type: array, items: {type: string}}
         rating: {type: [integer, "null"], minimum: 1, maximum: 5}
+        coverImage:
+          anyOf:
+            - {$ref: "#/components/schemas/CoverImage"}
+            - {type: "null"}
     Ingredient:
       type: object
-      required: [rawText, name]
+      required: [rawText, name, canonicalName]
       properties:
         rawText: {type: string, minLength: 1, maxLength: 4096}
         name: {type: string, minLength: 1, maxLength: 200}
+        canonicalName: {type: string, minLength: 1, maxLength: 200}
         quantity: {type: [number, "null"], minimum: 0}
         unit: {type: [string, "null"], minLength: 1, maxLength: 64}
     RecipeQueryPage:
@@ -604,11 +798,11 @@ components:
           items: {type: string, minLength: 1, maxLength: 64}
     RecipeFacetSelection:
       type: object
-      required: [requestedName, normalizedName, observed]
+      required: [requestedName, resolvedName, status]
       properties:
         requestedName: {type: string}
-        normalizedName: {type: string}
-        observed: {type: boolean}
+        resolvedName: {type: [string, "null"]}
+        status: {type: string, enum: [observed, unavailable, ambiguous]}
     RecipeFacetSelectionsResponse:
       type: object
       required: [ingredients, tags]
@@ -641,7 +835,7 @@ components:
         text: {type: string, minLength: 1, maxLength: 262144}
     ImportJob:
       type: object
-      required: [id, status, attemptCount, createdRecipeId, errorCategory, cancellationRequested]
+      required: [id, status, attemptCount, createdRecipeId, errorCategory, cancellationRequested, hasCandidate]
       properties:
         id: {type: string, format: uuid}
         status: {enum: [queued, processing, completed, review_required, failed, cancelled, timed_out]}
@@ -649,6 +843,56 @@ components:
         createdRecipeId: {type: [string, "null"], format: uuid}
         errorCategory: {type: [string, "null"]}
         cancellationRequested: {type: boolean}
+        hasCandidate: {type: boolean}
+    ImportReviewDraft:
+      type: object
+      required: [ingredients, instructions]
+      properties:
+        title: {type: [string, "null"]}
+        sourceUrl: {type: [string, "null"]}
+        servings: {type: [integer, "null"]}
+        prepMinutes: {type: [integer, "null"]}
+        cookMinutes: {type: [integer, "null"]}
+        totalMinutes: {type: [integer, "null"]}
+        ingredients:
+          type: array
+          items: {type: string}
+        instructions:
+          type: array
+          items: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+    IngredientNormalizationRequest:
+      type: object
+      required: [ingredients]
+      properties:
+        ingredients:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items:
+            type: object
+            required: [rawText]
+            properties:
+              rawText: {type: string, minLength: 1, maxLength: 4096}
+    IngredientNormalizationResponse:
+      type: object
+      required: [ingredients]
+      properties:
+        ingredients:
+          type: array
+          minItems: 1
+          items: {$ref: "#/components/schemas/NormalizedIngredient"}
+    NormalizedIngredient:
+      type: object
+      required: [rawText, name, canonicalName]
+      properties:
+        rawText: {type: string, minLength: 1}
+        name: {type: string, minLength: 1, maxLength: 200}
+        canonicalName: {type: string, minLength: 1, maxLength: 200}
+        quantity: {type: [number, "null"], minimum: 0}
+        unit: {type: [string, "null"], minLength: 1, maxLength: 64}
     Problem:
       type: object
       required: [type, title, status, request_id]

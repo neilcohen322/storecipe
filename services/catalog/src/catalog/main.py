@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from catalog.auth import build_token_verifier
 from catalog.config import get_settings
+from catalog.cover_upload_limit import CoverUploadBodyLimitMiddleware
 from catalog.database import create_engine, create_session_factory
 from catalog.problems import PROBLEM_TYPE_BASE, install_problem_details, problem_response
 from catalog.rate_limits import RedisBurstLimiter
@@ -16,12 +18,17 @@ from catalog.routes.health import router as health_router
 from catalog.routes.internal_recipes import router as internal_recipes_router
 from catalog.routes.ratings import router as ratings_router
 from catalog.routes.recipe_facets import router as recipe_facets_router
+from catalog.routes.recipe_images import router as recipe_images_router
 from catalog.routes.recipes import router as recipes_router
 from catalog.services.errors import (
     CatalogError,
+    CoverImageNotFound,
     IdempotencyConflict,
+    ImageTooLarge,
     InvalidCursor,
     InvalidFilter,
+    InvalidImage,
+    MediaUnavailable,
     MutationRateLimited,
     MutationRateLimitUnavailable,
     RecipeNotFound,
@@ -36,9 +43,9 @@ token_verifier = build_token_verifier(settings)
 
 
 def _status_for(exc: CatalogError) -> int:
-    if isinstance(exc, RecipeNotFound):
+    if isinstance(exc, RecipeNotFound | CoverImageNotFound):
         return status.HTTP_404_NOT_FOUND
-    if isinstance(exc, UnstableCatalogSnapshot | MutationRateLimitUnavailable):
+    if isinstance(exc, MediaUnavailable | UnstableCatalogSnapshot | MutationRateLimitUnavailable):
         return status.HTTP_503_SERVICE_UNAVAILABLE
     if isinstance(exc, MutationRateLimited):
         return status.HTTP_429_TOO_MANY_REQUESTS
@@ -46,7 +53,9 @@ def _status_for(exc: CatalogError) -> int:
         return status.HTTP_409_CONFLICT
     if isinstance(exc, IdempotencyConflict):
         return status.HTTP_409_CONFLICT
-    if isinstance(exc, InvalidCursor | InvalidFilter):
+    if isinstance(exc, ImageTooLarge):
+        return status.HTTP_413_CONTENT_TOO_LARGE
+    if isinstance(exc, InvalidCursor | InvalidFilter | InvalidImage):
         return status.HTTP_422_UNPROCESSABLE_CONTENT
     return status.HTTP_400_BAD_REQUEST
 
@@ -67,6 +76,14 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
         if isinstance(exc, MutationRateLimited)
         else f"{PROBLEM_TYPE_BASE}/rate-limit-unavailable"
         if isinstance(exc, MutationRateLimitUnavailable)
+        else f"{PROBLEM_TYPE_BASE}/image_too_large"
+        if isinstance(exc, ImageTooLarge)
+        else f"{PROBLEM_TYPE_BASE}/invalid_image"
+        if isinstance(exc, InvalidImage)
+        else f"{PROBLEM_TYPE_BASE}/cover_image_not_found"
+        if isinstance(exc, CoverImageNotFound)
+        else f"{PROBLEM_TYPE_BASE}/media_unavailable"
+        if isinstance(exc, MediaUnavailable)
         else None
     )
     extra: dict[str, object] | None = None
@@ -83,6 +100,14 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
     elif isinstance(exc, MutationRateLimitUnavailable):
         extra = {"errorCategory": "rate_limit_unavailable"}
         headers = exc.headers
+    elif isinstance(exc, ImageTooLarge):
+        extra = {"errorCategory": "image_too_large"}
+    elif isinstance(exc, InvalidImage):
+        extra = {"errorCategory": "invalid_image"}
+    elif isinstance(exc, CoverImageNotFound):
+        extra = {"errorCategory": "cover_image_not_found"}
+    elif isinstance(exc, MediaUnavailable):
+        extra = {"errorCategory": "media_unavailable"}
     return problem_response(
         request,
         _status_for(exc),
@@ -118,6 +143,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         window_seconds=runtime_settings.mutation_burst_window_seconds,
         timeout_seconds=runtime_settings.redis_timeout_seconds,
     )
+    if runtime_settings.media_bucket:
+        from catalog.media.gcs_store import GcsRecipeImageStore
+
+        app.state.recipe_image_store = GcsRecipeImageStore(runtime_settings.media_bucket)
+    else:
+        app.state.recipe_image_store = None
+    app.state.image_processing_semaphore = asyncio.Semaphore(1)
     try:
         yield
     finally:
@@ -149,9 +181,12 @@ async def reject_oversized_query(request: Request, call_next: RequestResponseEnd
     return await call_next(request)
 
 
+# Inside CORS and request-id so 413s keep X-Request-ID; before routing/auth/multipart.
+app.add_middleware(CoverUploadBodyLimitMiddleware)
 install_problem_details(app)
 app.add_exception_handler(CatalogError, catalog_error)
 app.include_router(recipes_router)
+app.include_router(recipe_images_router)
 app.include_router(recipe_facets_router)
 app.include_router(ratings_router)
 app.include_router(internal_recipes_router)
@@ -160,6 +195,7 @@ app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=CATALOG_MAX_REQUEST_BYTES,
     problem_type_base=PROBLEM_TYPE_BASE,
+    skip_path_suffixes=("/cover-image",),
 )
 # Outermost so browser preflight OPTIONS succeeds before auth/route handling.
 app.add_middleware(
@@ -167,4 +203,5 @@ app.add_middleware(
     allow_origins=settings.cors_origin_list,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["ETag"],
 )

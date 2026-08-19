@@ -30,6 +30,10 @@ class Settings(BaseSettings):
         default="http://catalog-api:8000",
         validation_alias=AliasChoices("MCP_CATALOG_API_URL"),
     )
+    ingestion_api_url: str = Field(
+        default="http://ingestion-api:8001",
+        validation_alias=AliasChoices("MCP_INGESTION_API_URL"),
+    )
     catalog_max_response_bytes: int = Field(
         default=2_097_152,
         ge=65_536,
@@ -107,9 +111,9 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MCP_OBO_EXPIRY_MARGIN_SECONDS"),
     )
 
-    @field_validator("catalog_api_url")
+    @field_validator("catalog_api_url", "ingestion_api_url")
     @classmethod
-    def _require_catalog_origin(cls, value: str) -> str:
+    def _require_service_origin(cls, value: str) -> str:
         parsed = urlsplit(value)
         if (
             not value
@@ -121,7 +125,7 @@ class Settings(BaseSettings):
             or parsed.query
             or parsed.fragment
         ):
-            raise ValueError("MCP_CATALOG_API_URL must be a root HTTP(S) URL without userinfo")
+            raise ValueError("must be a root HTTP(S) URL without userinfo")
         return value
 
     @field_validator("mcp_resource_url", "auth0_issuer", "auth0_jwks_url", "obo_token_url")

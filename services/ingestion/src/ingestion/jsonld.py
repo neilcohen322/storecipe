@@ -10,11 +10,12 @@ from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
 from ingestion.import_models import (
+    DeterministicRecipeCandidate,
     FetchedDocument,
     IngredientCandidate,
     ParseError,
     ParseFailureCode,
-    RecipeImportCandidate,
+    RawIngredientLine,
     ReviewRecipeCandidate,
 )
 
@@ -171,6 +172,16 @@ def _servings(value: object) -> int | None:
     return next(iter(found)) if len(found) == 1 else None
 
 
+def _raw_ingredient_lines(value: object) -> list[RawIngredientLine]:
+    values = value if isinstance(value, list) else [value]
+    ingredients: list[RawIngredientLine] = []
+    for item in values:
+        raw = _clean_text(item)
+        if raw:
+            ingredients.append(RawIngredientLine(raw_text=raw))
+    return ingredients
+
+
 def _ingredients(value: object) -> list[IngredientCandidate]:
     values = value if isinstance(value, list) else [value]
     ingredients: list[IngredientCandidate] = []
@@ -231,17 +242,17 @@ def _tags(node: dict[str, Any]) -> list[str]:
     return result
 
 
-def _candidate(node: dict[str, Any], source_url: str | None) -> RecipeImportCandidate | None:
+def _candidate(node: dict[str, Any], source_url: str | None) -> DeterministicRecipeCandidate | None:
     title = _clean_text(node.get("name")) or _clean_text(node.get("headline"))
     # Build every Pydantic model inside the guard so any residual validation
     # failure (including per-ingredient) degrades the node to ineligible rather
     # than raising out of the parser.
     try:
-        ingredients = _ingredients(node.get("recipeIngredient"))
+        ingredients = _raw_ingredient_lines(node.get("recipeIngredient"))
         instructions = _instructions(node.get("recipeInstructions"))
         if title is None or not ingredients or not instructions:
             return None
-        return RecipeImportCandidate(
+        return DeterministicRecipeCandidate(
             title=title[:200],
             source_url=source_url,
             servings=_servings(node.get("recipeYield")),
@@ -289,7 +300,7 @@ def _review_candidate(node: dict[str, Any], source_url: str | None) -> ReviewRec
         return None
 
 
-def _optional_score(candidate: RecipeImportCandidate) -> int:
+def _optional_score(candidate: DeterministicRecipeCandidate) -> int:
     return sum(
         value is not None
         for value in (
@@ -301,12 +312,12 @@ def _optional_score(candidate: RecipeImportCandidate) -> int:
     ) + bool(candidate.tags)
 
 
-def parse_recipe_jsonld(document: FetchedDocument) -> RecipeImportCandidate:
+def parse_recipe_jsonld(document: FetchedDocument) -> DeterministicRecipeCandidate:
     discovered = discover_recipe_nodes(document.html)
     if not discovered:
         raise ParseError(ParseFailureCode.NO_RECIPE_FOUND)
 
-    eligible: list[tuple[DiscoveredRecipe, RecipeImportCandidate]] = []
+    eligible: list[tuple[DiscoveredRecipe, DeterministicRecipeCandidate]] = []
     reviewable: list[tuple[DiscoveredRecipe, ReviewRecipeCandidate]] = []
     for item in discovered:
         candidate = _candidate(item.node, document.final_url)

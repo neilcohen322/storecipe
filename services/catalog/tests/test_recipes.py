@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from catalog.auth import Principal, get_principal
 from catalog.database import get_session
 from catalog.main import app
-from catalog.models import Base, Ingredient, Recipe, User
+from catalog.models import Base, Ingredient, Recipe, RecipeImage, User
+from catalog.recipe_views import to_recipe_view
 
 
 @pytest_asyncio.fixture
@@ -57,12 +58,47 @@ def recipe_payload() -> dict[str, object]:
         "cookMinutes": 25,
         "totalMinutes": 35,
         "ingredients": [
-            {"rawText": "400 g chickpeas", "name": "chickpeas", "quantity": 400, "unit": "g"},
-            {"rawText": "1 onion", "name": "onion", "quantity": 1},
+            {
+                "rawText": "400 g chickpeas",
+                "name": "chickpeas",
+                "canonicalName": "chickpeas",
+                "quantity": 400,
+                "unit": "g",
+            },
+            {"rawText": "1 onion", "name": "onion", "canonicalName": "onion", "quantity": 1},
         ],
         "instructions": ["Cook the onion.", "Add the chickpeas."],
         "tags": ["Dinner", "spicy", "dinner"],
     }
+
+
+def recipe_with_cover() -> Recipe:
+    recipe_id = UUID("11111111-1111-1111-1111-111111111111")
+    recipe = Recipe(id=recipe_id, user_id=uuid4(), title="Cover soup")
+    recipe.ingredients = []
+    recipe.instructions = []
+    recipe.recipe_tags = []
+    recipe.ratings = []
+    recipe.cover_image = RecipeImage(
+        recipe_id=recipe_id,
+        object_key="recipe-images/hidden/object.webp",
+        object_generation="17",
+        content_type="image/webp",
+        byte_size=1234,
+        sha256="a" * 64,
+    )
+    return recipe
+
+
+def test_recipe_view_exposes_stable_cover_metadata() -> None:
+    view = to_recipe_view(recipe_with_cover(), rating=None)
+    assert view.cover_image is not None
+    assert view.cover_image.url == f"/v1/recipes/{view.id}/cover-image"
+    assert view.cover_image.etag == "a" * 64
+    assert view.cover_image.byte_size == 1234
+    dumped = view.model_dump()
+    assert "object_key" not in dumped
+    assert "bucket" not in str(dumped).lower()
 
 
 @pytest.mark.asyncio
@@ -291,6 +327,7 @@ async def test_recipe_ingredient_normalized_name_on_create(api_client: AsyncClie
                 {
                     "rawText": "  Cafe\u0301   Beans ",
                     "name": "  Cafe\u0301   Beans ",
+                    "canonicalName": "  Cafe\u0301   Beans ",
                 }
             ],
         },
@@ -318,6 +355,7 @@ async def test_recipe_crud_round_trip(api_client: AsyncClient) -> None:
                 {
                     "rawText": "  Cafe\u0301   Beans ",
                     "name": "  Cafe\u0301   Beans ",
+                    "canonicalName": "  Cafe\u0301   Beans ",
                     "quantity": 400,
                     "unit": "g",
                 }
@@ -356,6 +394,7 @@ async def test_recipe_crud_round_trip(api_client: AsyncClient) -> None:
                 {
                     "rawText": "  Cafe\u0301   Beans ",
                     "name": "  Cafe\u0301   Beans ",
+                    "canonicalName": "  Cafe\u0301   Beans ",
                     "quantity": 250,
                     "unit": "g",
                 }
@@ -497,3 +536,141 @@ async def test_internal_source_lookup_requires_m2m_scope_and_tracks_recipe_delet
     assert (await api_client.post("/internal/recipes/source-lookup", json=payload)).json() == {
         "recipeId": None
     }
+
+
+@pytest.mark.asyncio
+async def test_recipe_create_rejects_missing_or_blank_canonical_name(
+    api_client: AsyncClient,
+) -> None:
+    base = recipe_payload()
+    missing = {**base, "ingredients": [{"rawText": "1 onion", "name": "onion", "quantity": 1}]}
+    blank = {
+        **base,
+        "ingredients": [{"rawText": "1 onion", "name": "onion", "canonicalName": "   "}],
+    }
+
+    for index, payload in enumerate((missing, blank)):
+        response = await api_client.post(
+            "/v1/recipes",
+            headers={"Idempotency-Key": f"canonical-required-{index}"},
+            json=payload,
+        )
+        assert response.status_code == 422
+        assert response.headers["content-type"] == "application/problem+json"
+
+
+@pytest.mark.asyncio
+async def test_recipe_create_persists_unicode_normalized_canonical_name(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "canonical-unicode-key"},
+        json={
+            **recipe_payload(),
+            "ingredients": [
+                {
+                    "rawText": "1 cup Cafe\u0301",
+                    "name": "Cafe\u0301",
+                    "canonicalName": "Cafe\u0301",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201
+    recipe_id = UUID(response.json()["id"])
+
+    async with app.state.catalog_test_session_factory() as session:
+        ingredient = await session.scalar(
+            select(Ingredient).where(Ingredient.recipe_id == recipe_id)
+        )
+        assert ingredient is not None
+        assert ingredient.canonical_name == "café"
+
+
+@pytest.mark.asyncio
+async def test_recipe_create_preserves_source_name_distinct_from_canonical_name(
+    api_client: AsyncClient,
+) -> None:
+    response = await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "canonical-hebrew-key"},
+        json={
+            **recipe_payload(),
+            "ingredients": [
+                {
+                    "rawText": "1 ביצה",
+                    "name": "ביצה",
+                    "canonicalName": "egg",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["ingredients"][0]["name"] == "ביצה"
+    assert body["ingredients"][0]["canonicalName"] == "egg"
+
+    async with app.state.catalog_test_session_factory() as session:
+        ingredient = await session.scalar(
+            select(Ingredient).where(Ingredient.recipe_id == UUID(body["id"]))
+        )
+        assert ingredient is not None
+        assert ingredient.name == "ביצה"
+        assert ingredient.canonical_name == "egg"
+        assert ingredient.normalized_name == "ביצה"
+
+
+@pytest.mark.asyncio
+async def test_recipe_views_return_canonical_name(api_client: AsyncClient) -> None:
+    created = (
+        await api_client.post(
+            "/v1/recipes",
+            headers={"Idempotency-Key": "canonical-view-key"},
+            json=recipe_payload(),
+        )
+    ).json()
+
+    assert all("canonicalName" in ingredient for ingredient in created["ingredients"])
+
+    listed = await api_client.get("/v1/recipes")
+    assert listed.status_code == 200
+    assert all(
+        "canonicalName" in ingredient
+        for item in listed.json()["items"]
+        for ingredient in item["ingredients"]
+    )
+
+    fetched = await api_client.get(f"/v1/recipes/{created['id']}")
+    assert fetched.status_code == 200
+    assert all("canonicalName" in ingredient for ingredient in fetched.json()["ingredients"])
+
+
+@pytest.mark.asyncio
+async def test_recipe_patch_replacing_ingredients_requires_canonical_name(
+    api_client: AsyncClient,
+) -> None:
+    created = (
+        await api_client.post(
+            "/v1/recipes",
+            headers={"Idempotency-Key": "canonical-patch-key"},
+            json=recipe_payload(),
+        )
+    ).json()
+
+    missing = await api_client.patch(
+        f"/v1/recipes/{created['id']}",
+        json={"ingredients": [{"rawText": "1 lime", "name": "lime"}]},
+    )
+    assert missing.status_code == 422
+
+    updated = await api_client.patch(
+        f"/v1/recipes/{created['id']}",
+        json={
+            "ingredients": [
+                {"rawText": "1 lime", "name": "lime", "canonicalName": "lime"},
+            ]
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["ingredients"][0]["canonicalName"] == "lime"

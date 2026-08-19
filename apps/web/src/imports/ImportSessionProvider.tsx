@@ -1,6 +1,6 @@
 import { createContext, type PropsWithChildren, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { ApiUnauthorizedError } from "../api/client";
+import { ApiError, ApiUnauthorizedError } from "../api/client";
 import type { ImportJob, createIngestionApi } from "../api/ingestion";
 import { randomUuid } from "../utils/randomUuid";
 import { canRetryImport, createImportPoller, type ImportPoller } from "../utils/importPolling";
@@ -8,7 +8,13 @@ import { canRetryImport, createImportPoller, type ImportPoller } from "../utils/
 export type ImportSource = { mode: "url" | "text"; value: string };
 type NormalizedImportSource = ImportSource & { fingerprint: string };
 type ImportAttempt = { source: NormalizedImportSource; key: string | null; jobId: string | null };
-export type ImportTerminalSummary = { status: Extract<ImportJob["status"], "completed" | "review_required" | "failed" | "cancelled" | "timed_out">; canRetry: boolean };
+export type ImportTerminalSummary = {
+  status: Extract<ImportJob["status"], "completed" | "review_required" | "failed" | "cancelled" | "timed_out">;
+  canRetry: boolean;
+  jobId: string;
+  errorCategory: string | null;
+  hasCandidate: boolean;
+};
 
 export type ImportSession = {
   activeJob: ImportJob | null;
@@ -26,8 +32,20 @@ function normalizeSource(source: ImportSource): NormalizedImportSource {
   return { mode: source.mode, value, fingerprint: `${source.mode}:${value}` };
 }
 
+function startImportErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.errorCategory === "recipe_source_exists") {
+      return "This URL is already saved in your library.";
+    }
+    if (error.errorCategory === "active_url_import_exists") {
+      return "This URL is already being imported.";
+    }
+  }
+  return "We couldn't start this import. Please try again.";
+}
+
 function queuedJob(jobId: string): ImportJob {
-  return { id: jobId, status: "queued", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false };
+  return { id: jobId, status: "queued", attemptCount: 0, createdRecipeId: null, errorCategory: null, cancellationRequested: false, hasCandidate: false };
 }
 
 export function ImportSessionProvider({ children, ingestion, onUnauthorized }: PropsWithChildren<{ ingestion: ReturnType<typeof createIngestionApi>; onUnauthorized(): void }>) {
@@ -53,7 +71,13 @@ export function ImportSessionProvider({ children, ingestion, onUnauthorized }: P
         const previous = attemptRef.current;
         if (previous) attemptRef.current = { ...previous, key: null, jobId: null };
         setActiveJob(null);
-        setTerminalSummary({ status: job.status as ImportTerminalSummary["status"], canRetry: canRetryImport(job) });
+        setTerminalSummary({
+          status: job.status as ImportTerminalSummary["status"],
+          canRetry: canRetryImport(job),
+          jobId: job.id,
+          errorCategory: job.errorCategory,
+          hasCandidate: job.hasCandidate,
+        });
         setIsStarting(false);
       },
       onUnauthorized: () => onUnauthorizedRef.current(),
@@ -99,7 +123,7 @@ export function ImportSessionProvider({ children, ingestion, onUnauthorized }: P
       if (value instanceof ApiUnauthorizedError) {
         onUnauthorizedRef.current();
       } else {
-        setError("We couldn't start this import. Please try again.");
+        setError(startImportErrorMessage(value));
       }
     } finally {
       startingRef.current = false;

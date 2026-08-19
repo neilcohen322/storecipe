@@ -11,11 +11,18 @@ from ingestion.auth import Principal, require_scopes
 from ingestion.crypto import PayloadCipher
 from ingestion.problems import PROBLEM_TYPE_BASE, problem_response
 from ingestion.rate_limits import BurstLimiter, RateLimitDecision
-from ingestion.schemas import ImportAccepted, ImportJobView, TextImportRequest, UrlImportRequest
+from ingestion.schemas import (
+    ImportAccepted,
+    ImportJobView,
+    ImportReviewDraft,
+    TextImportRequest,
+    UrlImportRequest,
+)
 from ingestion.services.imports import (
     ActiveUrlImportExists,
     ExistingRecipeSource,
     IdempotencyConflict,
+    ImportDraftUnavailable,
     ImportNotCancellable,
     ImportNotFound,
     ImportService,
@@ -61,6 +68,7 @@ def _view(job: Any) -> ImportJobView:
         created_recipe_id=job.catalog_recipe_id,
         error_category=job.safe_error_category,
         cancellation_requested=job.cancel_requested_at is not None,
+        has_candidate=job.candidate_content_hash is not None,
     )
 
 
@@ -212,6 +220,22 @@ async def get_import(
             detail="Import job not found.",
         ) from exc
     return _view(job)
+
+
+@router.get("/{job_id}/draft", response_model=ImportReviewDraft)
+async def get_import_draft(
+    job_id: UUID,
+    request: Request,
+    principal: ReadPrincipal,
+    session: Annotated[Any, Depends(get_session)],
+) -> ImportReviewDraft:
+    try:
+        return await _service(request, session).get_review_draft(principal.subject, job_id)
+    except (ImportNotFound, ImportDraftUnavailable) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Import draft not found.",
+        ) from exc
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)

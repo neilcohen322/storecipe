@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Annotated, Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -13,8 +13,12 @@ import storecipe_mcp.auth as mcp_auth
 from storecipe_mcp.auth import McpInboundTokenVerifier
 from storecipe_mcp.catalog_client import CatalogClient
 from storecipe_mcp.config import Settings
-from storecipe_mcp.errors import CatalogClientError
+from storecipe_mcp.errors import CatalogClientError, IngestionClientError
+from storecipe_mcp.ingestion_client import IngestionClient
 from storecipe_mcp.models import (
+    CatalogRecipeCreate,
+    IngredientCreate,
+    IngredientNormalizationRequest,
     RatingView,
     RecipeCreate,
     RecipeCreateIdempotencyKey,
@@ -29,6 +33,7 @@ from storecipe_mcp.models import (
 from storecipe_mcp.obo_client import OboTokenProvider
 
 CatalogClientProvider = Callable[[], CatalogClient]
+IngestionClientProvider = Callable[[], IngestionClient]
 OboTokenProviderFactory = Callable[[], OboTokenProvider]
 
 _READ_SCOPE = "recipes:read"
@@ -65,11 +70,18 @@ class GatewayFastMCP(FastMCP[Any]):
         try:
             return await super().call_tool(name, arguments)
         except Exception as exc:
-            catalog_error = _find_catalog_error(exc)
+            catalog_error = _find_client_error(exc, CatalogClientError)
             if catalog_error is not None:
                 return _catalog_error_result(
                     self._storecipe_settings,
                     catalog_error,
+                    required_scope=required_scope,
+                )
+            ingestion_error = _find_client_error(exc, IngestionClientError)
+            if ingestion_error is not None:
+                return _ingestion_error_result(
+                    self._storecipe_settings,
+                    ingestion_error,
                     required_scope=required_scope,
                 )
             return _error_result(_UNEXPECTED_ERROR_MESSAGE)
@@ -80,6 +92,7 @@ def create_mcp_server(
     verifier: McpInboundTokenVerifier,
     *,
     catalog_client_provider: CatalogClientProvider,
+    ingestion_client_provider: IngestionClientProvider,
     obo_provider_factory: OboTokenProviderFactory,
 ) -> GatewayFastMCP:
     """Build the gateway MCP server and register its six public tools."""
@@ -174,14 +187,51 @@ def create_mcp_server(
     ) -> RecipeView:
         """Create a recipe with durable idempotency; sourceUrl is metadata only."""
 
+        catalog = catalog_client_provider()
+        ingestion = ingestion_client_provider()
+        mcp_token = _verified_mcp_token()
+        obo_provider = obo_provider_factory()
+        api_token = await obo_provider.get_api_token(mcp_token)
+
+        normalization_request = IngredientNormalizationRequest(ingredients=recipe.ingredients)
+        normalized = await _call_ingestion_with_auth_retry(
+            ingestion.normalize_ingredients,
+            normalization_request,
+            idempotency_key,
+            api_token=api_token,
+            mcp_token=mcp_token,
+            obo_provider=obo_provider,
+        )
+
+        catalog_payload = CatalogRecipeCreate(
+            title=recipe.title,
+            source_url=recipe.source_url,
+            servings=recipe.servings,
+            prep_minutes=recipe.prep_minutes,
+            cook_minutes=recipe.cook_minutes,
+            total_minutes=recipe.total_minutes,
+            ingredients=[
+                IngredientCreate(
+                    raw_text=item.raw_text,
+                    name=item.name,
+                    canonical_name=item.canonical_name,
+                    quantity=item.quantity,
+                    unit=item.unit,
+                )
+                for item in normalized.ingredients
+            ],
+            instructions=recipe.instructions,
+            tags=recipe.tags,
+        )
         return cast(
             RecipeView,
-            await _call_catalog(
-                catalog_client_provider,
-                obo_provider_factory,
-                "create_recipe",
-                recipe,
+            await _call_catalog_with_auth_retry(
+                catalog.create_recipe,
+                catalog_payload,
                 idempotency_key,
+                api_token=api_token,
+                mcp_token=mcp_token,
+                obo_provider=obo_provider,
             ),
         )
 
@@ -224,8 +274,8 @@ def create_mcp_server(
         """List ingredient, tag, time, and rating values currently present in this user's library.
 
         Use ingredientQ and tagQ to search. Follow next cursors only for the current search.
-        query_recipes still accepts arbitrary normalized names; unobserved names typically
-        match nothing.
+        query_recipes still accepts canonical ingredient names; unavailable or ambiguous
+        names typically match nothing.
         """
 
         return cast(
@@ -250,9 +300,10 @@ def create_mcp_server(
     async def resolve_recipe_query_selections(
         request: RecipeFacetSelectionsRequest,
     ) -> RecipeFacetSelectionsResponse:
-        """Ask whether active filters are still observed and obtain Catalog canonical names.
+        """Ask whether active filters resolve and obtain Catalog canonical names.
 
-        Do not infer membership from a browse page.
+        Do not infer membership from a browse page. Ambiguous ingredient aliases are never
+        rewritten automatically.
         """
 
         return cast(
@@ -286,9 +337,42 @@ async def _call_catalog(
     obo_provider = obo_provider_factory()
     api_token = await obo_provider.get_api_token(mcp_token)
     method = getattr(catalog, method_name)
+    return await _call_catalog_with_auth_retry(
+        method,
+        *args,
+        api_token=api_token,
+        mcp_token=mcp_token,
+        obo_provider=obo_provider,
+    )
+
+
+async def _call_catalog_with_auth_retry(
+    method: Callable[..., Awaitable[Any]],
+    *args: Any,
+    api_token: str,
+    mcp_token: str,
+    obo_provider: OboTokenProvider,
+) -> Any:
     try:
         return await method(*args, api_token)
     except CatalogClientError as error:
+        if error.category != "authentication_required":
+            raise
+        await obo_provider.invalidate(mcp_token)
+        refreshed_token = await obo_provider.get_api_token(mcp_token)
+        return await method(*args, refreshed_token)
+
+
+async def _call_ingestion_with_auth_retry(
+    method: Callable[..., Awaitable[Any]],
+    *args: Any,
+    api_token: str,
+    mcp_token: str,
+    obo_provider: OboTokenProvider,
+) -> Any:
+    try:
+        return await method(*args, api_token)
+    except IngestionClientError as error:
         if error.category != "authentication_required":
             raise
         await obo_provider.invalidate(mcp_token)
@@ -359,6 +443,44 @@ def _catalog_error_result(
     return _error_result(messages.get(error.category, messages["temporary_catalog_failure"]))
 
 
+def _ingestion_error_result(
+    settings: Settings,
+    error: IngestionClientError,
+    *,
+    required_scope: str | None,
+) -> CallToolResult:
+    if error.category == "authentication_required":
+        scope_values: tuple[str, ...] = (required_scope,) if required_scope is not None else ()
+        challenge = mcp_auth.oauth_challenge(
+            settings,
+            required_scopes=scope_values,
+            error="invalid_token",
+            error_description=_AUTH_ERROR_DESCRIPTION,
+        )
+        return _error_result("Authentication is required.", challenge=challenge)
+
+    if error.category == "insufficient_scope":
+        scope_value = error.required_scope or required_scope
+        if scope_value is not None:
+            challenge = mcp_auth.oauth_challenge(
+                settings,
+                required_scopes=(scope_value,),
+                error="insufficient_scope",
+                error_description=_SCOPE_ERROR_DESCRIPTION,
+            )
+            return _error_result("Additional authorization is required.", challenge=challenge)
+        return _error_result("Additional authorization is required.")
+
+    messages = {
+        "invalid_input": "The request is invalid.",
+        "idempotency_conflict": "The idempotency key conflicts with an existing normalization.",
+        "ingestion_rate_limited": "Ingredient normalization is rate limited. Try again later.",
+        "ingredient_normalization_invalid_output": "Ingredient normalization failed.",
+        "temporary_ingestion_failure": "Ingredient normalization is temporarily unavailable.",
+    }
+    return _error_result(messages.get(error.category, messages["temporary_ingestion_failure"]))
+
+
 def _error_result(message: str, *, challenge: str | None = None) -> CallToolResult:
     meta = {"mcp/www_authenticate": [challenge]} if challenge is not None else None
     return CallToolResult(
@@ -368,7 +490,10 @@ def _error_result(message: str, *, challenge: str | None = None) -> CallToolResu
     )
 
 
-def _find_catalog_error(exc: BaseException) -> CatalogClientError | None:
+def _find_client_error[ErrorT: CatalogClientError | IngestionClientError](
+    exc: BaseException,
+    error_type: type[ErrorT],
+) -> ErrorT | None:
     pending: list[BaseException] = [exc]
     seen: set[int] = set()
     while pending:
@@ -377,7 +502,7 @@ def _find_catalog_error(exc: BaseException) -> CatalogClientError | None:
         if current_id in seen:
             continue
         seen.add(current_id)
-        if isinstance(current, CatalogClientError):
+        if isinstance(current, error_type):
             return current
         if current.__cause__ is not None:
             pending.append(current.__cause__)

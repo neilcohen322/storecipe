@@ -7,7 +7,17 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "storecipe",
-    "plugins": [["expo-router", { "root": "./app" }]],
+    "plugins": [
+      ["expo-router", { "root": "./app" }],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Storecipe to choose a recipe cover image.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
+    ],
     "experiments": {
       "typedRoutes": true
     },

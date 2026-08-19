@@ -18,6 +18,7 @@ from ingestion.rate_limits import RedisBurstLimiter
 from ingestion.repositories.imports import ImportRepository
 from ingestion.routes.health import router as health_router
 from ingestion.routes.imports import router as imports_router
+from ingestion.routes.ingredient_normalizations import router as ingredient_normalizations_router
 from storecipe_auth.body_limit import INGESTION_MAX_REQUEST_BYTES, RequestBodyLimitMiddleware
 
 
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.payload_cipher = cipher
+    app.state.settings = settings
     app.state.import_deadline_seconds = getattr(settings, "import_deadline_seconds", 900)
     app.state.token_verifier = build_token_verifier(settings)
     app.state.source_lookup = build_catalog_client(settings)
@@ -61,6 +63,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         amount=getattr(settings, "import_burst_requests", 5),
         window_seconds=getattr(settings, "import_burst_window_seconds", 60),
     )
+    app.state.ingredient_normalization_burst_limiter = RedisBurstLimiter.from_redis_url(
+        settings.redis_url,
+        amount=getattr(settings, "import_burst_requests", 5),
+        window_seconds=getattr(settings, "import_burst_window_seconds", 60),
+    )
+    if settings.ai_extraction_enabled and settings.openrouter_api_key.get_secret_value():
+        from ingestion.ingredient_normalizer import (
+            OpenRouterIngredientNormalizer,
+            build_normalization_transport,
+        )
+
+        app.state.ingredient_normalizer = OpenRouterIngredientNormalizer(
+            build_normalization_transport(
+                api_key=settings.openrouter_api_key.get_secret_value(),
+                model=settings.openrouter_model,
+            )
+        )
+    else:
+        app.state.ingredient_normalizer = None
     try:
         yield
     finally:
@@ -68,9 +89,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await app.state.import_burst_limiter.close()
         finally:
             try:
-                await app.state.redis.aclose()
+                await app.state.ingredient_normalization_burst_limiter.close()
             finally:
-                await app.state.engine.dispose()
+                try:
+                    await app.state.redis.aclose()
+                finally:
+                    await app.state.engine.dispose()
 
 
 app = FastAPI(
@@ -82,6 +106,7 @@ app = FastAPI(
 install_problem_details(app)
 app.include_router(health_router)
 app.include_router(imports_router)
+app.include_router(ingredient_normalizations_router)
 app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=INGESTION_MAX_REQUEST_BYTES,

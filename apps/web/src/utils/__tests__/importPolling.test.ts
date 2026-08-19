@@ -28,9 +28,12 @@ test.each([
   [{ status: "failed", errorCategory: "provider_transport" }, true],
   [{ status: "failed", errorCategory: "catalog_transport" }, true],
   [{ status: "timed_out", errorCategory: "import_deadline_exceeded" }, true],
+  [{ status: "review_required", errorCategory: "provider_invalid_output" }, true],
+  [{ status: "review_required", errorCategory: "daily_ai_budget_exceeded" }, true],
   [{ status: "failed", errorCategory: "validation_error" }, false],
   [{ status: "cancelled", errorCategory: null }, false],
   [{ status: "review_required", errorCategory: null }, false],
+  [{ status: "review_required", errorCategory: "incomplete_extraction" }, false],
   [{ status: "completed", errorCategory: null }, false],
   [{ status: "failed", errorCategory: null }, false],
   [{ status: "failed", errorCategory: "unknown_future_value" }, false],
@@ -78,7 +81,7 @@ function createFakeTimers() {
 
 test("does not overlap polls while a request is in flight", async () => {
   const timers = createFakeTimers();
-  let resolveImport: ((value: { id: string; status: "queued"; errorCategory: null; attemptCount: number; createdRecipeId: null; cancellationRequested: boolean }) => void) | null =
+  let resolveImport: ((value: { id: string; status: "queued"; errorCategory: null; attemptCount: number; createdRecipeId: null; cancellationRequested: boolean; hasCandidate: boolean }) => void) | null =
     null;
   let calls = 0;
 
@@ -104,7 +107,7 @@ test("does not overlap polls while a request is in flight", async () => {
   expect(calls).toBe(1);
   expect(timers.pendingCount()).toBe(0);
 
-  resolveImport!({ id: "job-1", status: "queued", errorCategory: null, attemptCount: 0, createdRecipeId: null, cancellationRequested: false });
+  resolveImport!({ id: "job-1", status: "queued", errorCategory: null, attemptCount: 0, createdRecipeId: null, cancellationRequested: false, hasCandidate: false });
   await new Promise<void>((resolve) => {
     queueMicrotask(() => queueMicrotask(resolve));
   });
@@ -118,7 +121,7 @@ test("does not overlap polls while a request is in flight", async () => {
 
 test("stop during in-flight poll prevents status updates and further timers", async () => {
   const timers = createFakeTimers();
-  let resolveImport: ((value: { id: string; status: "queued"; errorCategory: null; attemptCount: number; createdRecipeId: null; cancellationRequested: boolean }) => void) | null =
+  let resolveImport: ((value: { id: string; status: "queued"; errorCategory: null; attemptCount: number; createdRecipeId: null; cancellationRequested: boolean; hasCandidate: boolean }) => void) | null =
     null;
   const statuses: string[] = [];
 
@@ -141,7 +144,7 @@ test("stop during in-flight poll prevents status updates and further timers", as
   poller.start("job-1");
   expect(statuses).toEqual(["queued"]);
   poller.stop();
-  resolveImport!({ id: "job-1", status: "queued", errorCategory: null, attemptCount: 0, createdRecipeId: null, cancellationRequested: false });
+  resolveImport!({ id: "job-1", status: "queued", errorCategory: null, attemptCount: 0, createdRecipeId: null, cancellationRequested: false, hasCandidate: false });
   await Promise.resolve();
 
   expect(statuses).toEqual(["queued"]);
@@ -167,6 +170,7 @@ test("resumes polling the same job after a transient non-auth error", async () =
         attemptCount: 0,
         createdRecipeId: null,
         cancellationRequested: false,
+        hasCandidate: false,
       };
     },
     isActive: () => true,

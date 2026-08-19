@@ -7,7 +7,7 @@ from pathlib import Path
 GATEWAY_ROOT = Path(__file__).resolve().parents[1]
 GATEWAY_SOURCE_DIR = GATEWAY_ROOT / "src" / "storecipe_mcp"
 GATEWAY_PROJECT_FILE = GATEWAY_ROOT / "pyproject.toml"
-FORBIDDEN_IMPORT_ROOTS = {"catalog", "sqlalchemy", "asyncpg", "redis"}
+FORBIDDEN_IMPORT_ROOTS = {"catalog", "ingestion", "sqlalchemy", "asyncpg", "redis"}
 
 
 def _imported_modules(source: str) -> set[str]:

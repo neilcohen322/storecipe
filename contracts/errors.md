@@ -153,4 +153,39 @@ MCP mutations inherit this Catalog limiter after OBO exchange.
 Catalog and MCP reject request bodies larger than 1 MiB with `413 Payload Too Large`
 and `errorCategory: request_too_large`. Ingestion rejects bodies larger than 320 KiB
 the same way. The limit is enforced while reading the body; a `Content-Length` header
-is not trusted on its own.
+is not trusted on its own. Catalog `PUT /v1/recipes/{recipeId}/cover-image` is exempt
+and uses the cover-image size bound instead.
+
+## Ingredient normalization
+
+`POST /v1/ingredient-normalizations` requires `recipes:write` and a required
+`Idempotency-Key`. It returns `200 OK` for a new or exactly replayed successful
+result, `409 Conflict` when the key is reused for a different request hash,
+`422 Unprocessable Entity` for bounds/validation failures, `502 Bad Gateway` when
+provider output violates the strict schema or invariants, `429 Too Many Requests`
+for burst, provider, or daily-budget exhaustion, and `503 Service Unavailable`
+when configuration is unavailable or a provider attempt is unresolved.
+
+Safe problem categories include `idempotency_conflict`,
+`ingredient_normalization_burst_exceeded`,
+`ingredient_normalization_rate_limited`, `daily_ai_budget_exceeded`,
+`ingredient_normalization_invalid_output`, `ingredient_normalization_unavailable`,
+and `ingredient_normalization_unresolved`. Responses never echo raw ingredient
+text, model content, or internal provider details.
+
+## Recipe cover images
+
+Owner-uploaded covers are private Catalog media. GCS object keys, bucket names,
+generations, decoder exceptions, and original filenames never appear in problem
+details.
+
+| Outcome | HTTP | `errorCategory` | Safe detail |
+|---|---|---|---|
+| Input, decoded, or stored size exceeds the bound | `413` | `image_too_large` | Choose an image smaller than 8 MB. |
+| Unsupported, animated, malformed, or non-image content | `422` | `invalid_image` | Choose a valid JPEG, PNG, or WebP image. |
+| Owned recipe has no cover | `404` | `cover_image_not_found` | Cover image not found. |
+| Storage disabled or temporarily inconsistent | `503` | `media_unavailable` | Images are temporarily unavailable. Your recipe is safe. |
+
+An unknown recipe or a recipe owned by someone else keeps the existing recipe-not-found
+response so cover routes do not reveal cross-user existence. A media failure never
+deletes or invalidates a stored recipe.

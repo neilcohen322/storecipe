@@ -3,8 +3,30 @@ import type { createApiClient } from "./client";
 export type Ingredient = {
   rawText: string;
   name: string;
+  canonicalName: string;
   quantity?: number | null;
   unit?: string | null;
+};
+
+export type RecipeCreateIngredient = {
+  rawText: string;
+  name: string;
+  canonicalName: string;
+  quantity?: number | null;
+  unit?: string | null;
+};
+
+export type CoverImage = {
+  url: string;
+  etag: string;
+  byteSize: number;
+  contentType: "image/webp";
+};
+
+export type CoverImageResponse = {
+  blob: Blob | null;
+  etag: string | null;
+  notModified: boolean;
 };
 
 export type Recipe = {
@@ -19,6 +41,7 @@ export type Recipe = {
   instructions: string[];
   tags: string[];
   rating: number | null;
+  coverImage: CoverImage | null;
 };
 
 export type RecipeCreate = {
@@ -28,7 +51,7 @@ export type RecipeCreate = {
   prepMinutes?: number | null;
   cookMinutes?: number | null;
   totalMinutes?: number | null;
-  ingredients: Ingredient[];
+  ingredients: RecipeCreateIngredient[];
   instructions: string[];
   tags?: string[];
 };
@@ -97,8 +120,8 @@ export type RecipeFacetBrowseParams = {
 
 export type RecipeFacetSelection = {
   requestedName: string;
-  normalizedName: string;
-  observed: boolean;
+  resolvedName: string | null;
+  status: "observed" | "unavailable" | "ambiguous";
 };
 
 export type RecipeFacetSelectionsRequest = {
@@ -165,6 +188,30 @@ export function buildRecipeFacetPath(params?: RecipeFacetBrowseParams): string {
   return query ? `/v1/recipe-facets?${query}` : "/v1/recipe-facets";
 }
 
+export function parseCoverImage(value: unknown): CoverImage | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const cover = value as { url?: unknown; etag?: unknown; byteSize?: unknown; contentType?: unknown };
+  if (typeof cover.url !== "string" || typeof cover.etag !== "string" || typeof cover.byteSize !== "number") {
+    return null;
+  }
+  return {
+    url: cover.url,
+    etag: cover.etag,
+    byteSize: cover.byteSize,
+    contentType: "image/webp",
+  };
+}
+
+function parseRecipe(value: unknown): Recipe {
+  const recipe = value as Recipe;
+  return {
+    ...recipe,
+    coverImage: parseCoverImage((value as { coverImage?: unknown }).coverImage),
+  };
+}
+
 export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
   const listRecipes = async (params?: ListRecipesParams, options: ListRecipesOptions = {}): Promise<RecipeQueryPage> => {
     const page = await client.getJson<unknown>(buildRecipeQueryPath(params), options);
@@ -172,13 +219,13 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
       throw new Error("Invalid recipe library response");
     }
     return {
-      items: (page as { items: Recipe[] }).items,
+      items: ((page as { items: unknown[] }).items).map(parseRecipe),
       nextCursor: typeof (page as { nextCursor?: unknown }).nextCursor === "string" ? (page as { nextCursor: string }).nextCursor : null,
     };
   };
 
-  const getRecipe = (id: string): Promise<Recipe> =>
-    client.getJson<Recipe>(`/v1/recipes/${id}`);
+  const getRecipe = async (id: string): Promise<Recipe> =>
+    parseRecipe(await client.getJson<unknown>(`/v1/recipes/${id}`));
 
   const createRecipe = async (
     body: RecipeCreate,
@@ -192,7 +239,7 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
       },
       body: JSON.stringify(body),
     });
-    return (await response.json()) as Recipe;
+    return parseRecipe(await response.json());
   };
 
   const putRating = async (
@@ -205,6 +252,43 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
       body: JSON.stringify({ value }),
     });
     return (await response.json()) as Rating;
+  };
+
+  const uploadCoverImage = async (recipeId: string, image: Blob): Promise<CoverImage> => {
+    const body = new FormData();
+    body.append("image", image);
+    const response = await client.request(`/v1/recipes/${recipeId}/cover-image`, {
+      method: "PUT",
+      body,
+    });
+    return parseCoverImage(await response.json()) as CoverImage;
+  };
+
+  const getCoverImage = async (
+    recipeId: string,
+    options: { etag?: string; signal?: AbortSignal } = {},
+  ): Promise<CoverImageResponse> => {
+    const headers = new Headers();
+    if (options.etag) {
+      const tag = options.etag.startsWith('"') ? options.etag : `"${options.etag}"`;
+      headers.set("If-None-Match", tag);
+    }
+    const response = await client.request(`/v1/recipes/${recipeId}/cover-image`, {
+      method: "GET",
+      headers,
+      signal: options.signal,
+      allowStatuses: [304],
+    });
+    if (response.status === 304) {
+      return { blob: null, etag: options.etag ?? null, notModified: true };
+    }
+    const etagHeader = response.headers.get("ETag");
+    const etag = etagHeader ? etagHeader.replaceAll('"', "") : null;
+    return { blob: await response.blob(), etag, notModified: false };
+  };
+
+  const deleteCoverImage = async (recipeId: string): Promise<void> => {
+    await client.request(`/v1/recipes/${recipeId}/cover-image`, { method: "DELETE" });
   };
 
   const listRecipeFacets = async (
@@ -231,5 +315,15 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
     return (await response.json()) as RecipeFacetSelectionsResponse;
   };
 
-  return { listRecipes, getRecipe, createRecipe, putRating, listRecipeFacets, resolveRecipeFacetSelections };
+  return {
+    listRecipes,
+    getRecipe,
+    createRecipe,
+    putRating,
+    uploadCoverImage,
+    getCoverImage,
+    deleteCoverImage,
+    listRecipeFacets,
+    resolveRecipeFacetSelections,
+  };
 }

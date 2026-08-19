@@ -25,20 +25,36 @@ from ingestion.ai_extractor import (
     OpenRouterUsage,
     build_extraction_messages,
     build_response_format,
+    prepare_extraction_source,
     serialize_openrouter_request,
 )
 from ingestion.catalog_client import CatalogError
 from ingestion.crypto import PayloadCipher
 from ingestion.import_models import (
+    DeterministicRecipeCandidate,
     FetchedDocument,
     FetchError,
     FetchFailureCode,
+    IngredientNormalizationItem,
     ParseError,
     ParseFailureCode,
     RecipeImportCandidate,
     ReviewRecipeCandidate,
+    review_draft_from_deterministic,
 )
-from ingestion.models import AttemptState, ImportInputKind, ImportJob, ImportStage, ImportStatus
+from ingestion.ingredient_normalizer import (
+    IngredientNormalizationError,
+    IngredientNormalizationFailureCode,
+    IngredientNormalizationResult,
+)
+from ingestion.models import (
+    AttemptState,
+    ImportInputKind,
+    ImportJob,
+    ImportStage,
+    ImportStatus,
+    LlmOperationKind,
+)
 from ingestion.orchestration import LeaseToken, StaleLease
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.imports import MAX_PIPELINE_PAYLOAD_BYTES, ImportRepository
@@ -70,7 +86,7 @@ class Fetcher(Protocol):
 
 
 class DeterministicExtractor(Protocol):
-    async def extract(self, document: FetchedDocument) -> RecipeImportCandidate: ...
+    async def extract(self, document: FetchedDocument) -> DeterministicRecipeCandidate: ...
 
 
 class ModelExtractor(Protocol):
@@ -89,12 +105,17 @@ class CatalogGateway(Protocol):
     ) -> UUID: ...
 
 
+class PipelineIngredientNormalizer(Protocol):
+    async def normalize(self, raw_lines: list[str]) -> IngredientNormalizationResult: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ImportAdapters:
     fetcher: Fetcher
     deterministic: DeterministicExtractor
     model: ModelExtractor | None
     catalog: CatalogGateway | None
+    normalizer: PipelineIngredientNormalizer | None = None
     variant_registry: ServerRenderedVariantRegistry = field(
         default_factory=ServerRenderedVariantRegistry.empty
     )
@@ -119,11 +140,13 @@ class ImportPipeline:
         *,
         budgets: AiBudgetRepository | None = None,
         budget_policy: AiBudgetPolicy | None = None,
+        normalization_budget_policy: AiBudgetPolicy | None = None,
     ) -> None:
         self._repository = repository
         self._payload_cipher = payload_cipher
         self._budgets = budgets
         self._budget_policy = budget_policy
+        self._normalization_budget_policy = normalization_budget_policy
 
     async def run(self, job_id: UUID, lease_token: LeaseToken, adapters: ImportAdapters) -> None:
         if job_id != lease_token.job_id:
@@ -356,6 +379,23 @@ class ImportPipeline:
             )
             await self._commit()
             return
+        succeeded = await self._repository.get_succeeded_provider_attempt(job_id)
+        if succeeded is not None:
+            success_adopted = await self._repository.adopt_provider_success(
+                token,
+                succeeded.operation_id,
+                self._payload_cipher,
+                stage=ImportStage.EXTRACTING,
+            )
+            if not success_adopted:
+                await self._repository.finish_terminal(
+                    token,
+                    ImportStatus.FAILED,
+                    error_category="provider_checkpoint_missing",
+                    diagnostic_reference=None,
+                )
+            await self._commit()
+            return
         document = await self._load_document(job_id, token, emit_variant_checkpoint_event=True)
         await self._commit()
         if classify_access_challenge(document) is not None:
@@ -435,15 +475,299 @@ class ImportPipeline:
                     )
             await self._commit()
             return
-        payload = self._serialize_candidate(result)
-        checkpoint_hash = await self._repository.store_pipeline_payload(
-            token, "candidate", payload, self._payload_cipher
+        await self._normalize_and_checkpoint_deterministic(job_id, token, adapters, result)
+
+    async def _normalize_and_checkpoint_deterministic(
+        self,
+        job_id: UUID,
+        token: LeaseToken,
+        adapters: ImportAdapters,
+        deterministic: DeterministicRecipeCandidate,
+    ) -> None:
+        job = await self._repository.get_job_for_lease(token)
+        normalizer = adapters.normalizer
+        if normalizer is None:
+            await self._finish_review_required_with_draft(
+                token, deterministic, "ingredient_normalization_disabled"
+            )
+            return
+        if self._budgets is None or self._normalization_budget_policy is None:
+            await self._finish_review_required_with_draft(
+                token, deterministic, "budget_not_configured"
+            )
+            return
+        if await self._finish_terminal_on_access_challenge(job_id, token) is not None:
+            return
+        now = datetime.now(UTC)
+        request_deadline = now + timedelta(seconds=PROVIDER_ATTEMPT_SECONDS)
+        if job.deadline_at is not None:
+            job_deadline = job.deadline_at
+            if job_deadline.tzinfo is None:
+                request_deadline = request_deadline.replace(tzinfo=None)
+            request_deadline = min(request_deadline, job_deadline)
+        attempt = await self._repository.reserve_provider_attempt(
+            token,
+            request_deadline_at=request_deadline,
+            stage=ImportStage.EXTRACTING,
         )
-        if await self._repository.record_candidate_checkpoint(token, checkpoint_hash):
-            await self._repository.advance_stage(
-                token, ImportStage.VALIDATING, checkpoint_content_hash=None
+        if attempt is None:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category="provider_attempt_limit",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="normalization.failed",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.EXTRACTING.value,
+                    error_category="provider_attempt_limit",
+                    status=ImportStatus.FAILED.value,
+                ),
+            )
+            return
+        policy = self._normalization_budget_policy
+        try:
+            reservation = await self._budgets.reserve(
+                owner_subject=job.owner_subject,
+                provider_operation_id=attempt.operation_id,
+                operation_kind=LlmOperationKind.INGREDIENT_NORMALIZATION,
+                job_id=None,
+                request_deadline_at=attempt.request_deadline_at,
+                provider_name=policy.provider_name,
+                model_name=policy.model_name,
+                prompt_version=policy.prompt_version,
+                reservation_tokens=policy.reservation_tokens,
+                daily_limit=policy.daily_limit,
+            )
+        except BudgetExceeded:
+            await self._repository.session.rollback()
+            await self._repository.get_job_for_lease(token)
+            await self._finish_review_required_with_draft(
+                token, deterministic, "daily_ai_budget_exceeded"
+            )
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="budget.exhausted",
+                    job_id=str(token.job_id),
+                    dispatch_generation=token.generation,
+                    stage=ImportStage.EXTRACTING.value,
+                    error_category="daily_ai_budget_exceeded",
+                    status=ImportStatus.REVIEW_REQUIRED.value,
+                ),
+            )
+            return
+        if attempt.state is AttemptState.IN_FLIGHT:
+            if self._deadline_elapsed(attempt.request_deadline_at, now):
+                await self._repository.mark_provider_attempt_ambiguous(
+                    token,
+                    attempt.operation_id,
+                    outcome_category="provider_attempt_unresolved",
+                )
+                await self._budgets.mark_ambiguous(reservation.invocation_id)
+                if attempt.ordinal < 2:
+                    await self._repository.schedule_retry(
+                        token,
+                        now + timedelta(seconds=RETRY_DELAY_SECONDS),
+                        error_category="provider_attempt_unresolved",
+                    )
+                else:
+                    await self._repository.finish_terminal(
+                        token,
+                        ImportStatus.FAILED,
+                        error_category="provider_attempt_unresolved",
+                        diagnostic_reference=None,
+                    )
+            await self._commit()
+            if self._deadline_elapsed(attempt.request_deadline_at, now):
+                emit_import_event(
+                    logger,
+                    ImportEvent(
+                        name="normalization.ambiguous",
+                        job_id=str(token.job_id),
+                        dispatch_generation=token.generation,
+                        stage=ImportStage.EXTRACTING.value,
+                        attempt=attempt.ordinal,
+                        error_category="provider_attempt_unresolved",
+                        status=(
+                            ImportStatus.QUEUED.value
+                            if attempt.ordinal < 2
+                            else ImportStatus.FAILED.value
+                        ),
+                    ),
+                )
+            return
+        await self._commit()
+        provider_attempt = await self._repository.adopt_provider_attempt(
+            token, attempt.operation_id, stage=ImportStage.EXTRACTING
+        )
+        if provider_attempt is None:
+            await self._budgets.fail(
+                reservation.invocation_id, safe_error_category="provider_request_not_started"
+            )
+            await self._commit()
+            return
+        raw_lines = [line.raw_text for line in deterministic.ingredients]
+        try:
+            outcome = await normalizer.normalize(raw_lines)
+        except (TimeoutError, IngredientNormalizationError, aiohttp.ClientError) as error:
+            await self._handle_normalization_failure(
+                token, provider_attempt, reservation.invocation_id, error, deterministic
+            )
+            return
+        normalized_items = outcome.items
+        usage = outcome.usage
+        model_name = outcome.model
+        latency_ms = outcome.latency_ms
+        normalized = self._recipe_import_candidate_from_deterministic(
+            deterministic, normalized_items
+        )
+        payload = self._serialize_candidate(normalized)
+        recorded = await self._repository.record_provider_success(
+            provider_attempt.operation_id,
+            candidate_payload=payload,
+            payload_cipher=self._payload_cipher,
+            provider_name=policy.provider_name,
+            model_name=model_name,
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
+            cost_microunits=self._cost_microunits(usage.cost),
+        )
+        if not recorded:
+            await self._repository.session.rollback()
+            return
+        if self._usage_is_consistent(usage):
+            await self._budgets.succeed(
+                reservation.invocation_id,
+                input_tokens=usage.prompt_tokens,
+                output_tokens=usage.completion_tokens,
+                cost_microunits=self._cost_microunits(usage.cost),
+                latency_ms=latency_ms,
+            )
+        else:
+            await self._budgets.fail(
+                reservation.invocation_id, safe_error_category="provider_invalid_output"
             )
         await self._commit()
+        emit_import_event(
+            logger,
+            ImportEvent(
+                name="normalization.succeeded",
+                job_id=str(token.job_id),
+                dispatch_generation=token.generation,
+                stage=ImportStage.EXTRACTING.value,
+                attempt=provider_attempt.ordinal,
+                status=ImportStatus.PROCESSING.value,
+            ),
+        )
+        await self._repository.adopt_provider_success(
+            token,
+            provider_attempt.operation_id,
+            self._payload_cipher,
+            stage=ImportStage.EXTRACTING,
+        )
+        await self._commit()
+
+    @staticmethod
+    def _recipe_import_candidate_from_deterministic(
+        deterministic: DeterministicRecipeCandidate,
+        normalized_items: list[IngredientNormalizationItem],
+    ) -> RecipeImportCandidate:
+        return RecipeImportCandidate(
+            title=deterministic.title,
+            source_url=deterministic.source_url,
+            servings=deterministic.servings,
+            prep_minutes=deterministic.prep_minutes,
+            cook_minutes=deterministic.cook_minutes,
+            total_minutes=deterministic.total_minutes,
+            ingredients=normalized_items,
+            instructions=deterministic.instructions,
+            tags=deterministic.tags,
+        )
+
+    async def _handle_normalization_failure(
+        self,
+        token: LeaseToken,
+        attempt: object,
+        invocation_id: UUID,
+        error: Exception,
+        deterministic: DeterministicRecipeCandidate,
+    ) -> None:
+        from ingestion.models import ProviderAttempt
+
+        assert isinstance(attempt, ProviderAttempt)
+        assert self._budgets is not None
+        category, retryable = self._normalization_failure(error)
+        review_required = category in {
+            "provider_invalid_output",
+            "ingredient_normalization_disabled",
+            "budget_not_configured",
+        }
+        await self._repository.fail_provider_attempt(
+            token, attempt.operation_id, outcome_category=category
+        )
+        if (
+            isinstance(error, IngredientNormalizationError)
+            and error.usage is not None
+            and self._usage_is_consistent(error.usage)
+        ):
+            await self._budgets.succeed(
+                invocation_id,
+                input_tokens=error.usage.prompt_tokens,
+                output_tokens=error.usage.completion_tokens,
+                cost_microunits=self._cost_microunits(error.usage.cost),
+                latency_ms=error.latency_ms or 0,
+            )
+        elif self._normalization_definitely_no_usage(error):
+            await self._budgets.fail(invocation_id, safe_error_category=category)
+        else:
+            await self._budgets.mark_ambiguous(invocation_id)
+        if retryable and attempt.ordinal < 2:
+            await self._repository.schedule_retry(
+                token,
+                datetime.now(UTC) + timedelta(seconds=RETRY_DELAY_SECONDS),
+                error_category=category,
+            )
+            await self._commit()
+        elif review_required:
+            await self._finish_review_required_with_draft(token, deterministic, category)
+        else:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category=category,
+                diagnostic_reference=None,
+            )
+            await self._commit()
+        emit_import_event(
+            logger,
+            ImportEvent(
+                name=(
+                    "normalization.retry_scheduled"
+                    if retryable and attempt.ordinal < 2
+                    else "normalization.failed"
+                ),
+                job_id=str(token.job_id),
+                dispatch_generation=token.generation,
+                stage=ImportStage.EXTRACTING.value,
+                attempt=attempt.ordinal,
+                error_category=category,
+                status=(
+                    ImportStatus.QUEUED.value
+                    if retryable and attempt.ordinal < 2
+                    else (
+                        ImportStatus.REVIEW_REQUIRED.value
+                        if review_required
+                        else ImportStatus.FAILED.value
+                    )
+                ),
+            ),
+        )
 
     async def _try_variant_document(
         self,
@@ -619,8 +943,11 @@ class ImportPipeline:
             return
         try:
             reservation = await self._budgets.reserve(
-                job=job,
-                provider_attempt=attempt,
+                owner_subject=job.owner_subject,
+                provider_operation_id=attempt.operation_id,
+                operation_kind=LlmOperationKind.IMPORT_EXTRACTION,
+                job_id=job.id,
+                request_deadline_at=attempt.request_deadline_at,
                 provider_name=self._budget_policy.provider_name,
                 model_name=self._budget_policy.model_name,
                 prompt_version=self._budget_policy.prompt_version,
@@ -712,7 +1039,9 @@ class ImportPipeline:
             return
         try:
             result = await extractor.extract(
-                source_text=self._capped_model_source(document.html),
+                source_text=self._capped_model_source(
+                    prepare_extraction_source(document.html, content_type=document.content_type)
+                ),
                 trusted_source_url=document.final_url,
             )
         except (TimeoutError, AiExtractionError, aiohttp.ClientError) as error:
@@ -1126,6 +1455,35 @@ class ImportPipeline:
     async def _commit(self) -> None:
         await self._repository.session.commit()
 
+    async def _finish_review_required_with_draft(
+        self,
+        token: LeaseToken,
+        deterministic: DeterministicRecipeCandidate,
+        error_category: str,
+    ) -> None:
+        try:
+            payload = self._serialize_candidate(review_draft_from_deterministic(deterministic))
+            checkpoint_hash = await self._repository.store_pipeline_payload(
+                token, "candidate", payload, self._payload_cipher
+            )
+            await self._repository.record_candidate_checkpoint(token, checkpoint_hash)
+        except ValueError:
+            await self._repository.finish_terminal(
+                token,
+                ImportStatus.FAILED,
+                error_category="candidate_payload_too_large",
+                diagnostic_reference=None,
+            )
+            await self._commit()
+            return
+        await self._repository.finish_terminal(
+            token,
+            ImportStatus.REVIEW_REQUIRED,
+            error_category=error_category,
+            diagnostic_reference=None,
+        )
+        await self._commit()
+
     @staticmethod
     def _serialize_document(document: FetchedDocument) -> bytes:
         return json.dumps(asdict(document), separators=(",", ":"), ensure_ascii=False).encode(
@@ -1134,7 +1492,7 @@ class ImportPipeline:
 
     @staticmethod
     def _serialize_candidate(
-        candidate: RecipeImportCandidate | ReviewRecipeCandidate,
+        candidate: RecipeImportCandidate | DeterministicRecipeCandidate | ReviewRecipeCandidate,
     ) -> bytes:
         payload = candidate.model_dump_json().encode("utf-8")
         if len(payload) > MAX_PIPELINE_PAYLOAD_BYTES:
@@ -1188,6 +1546,42 @@ class ImportPipeline:
         if deadline.tzinfo is None:
             now = now.replace(tzinfo=None)
         return deadline <= now
+
+    @staticmethod
+    def _normalization_failure(error: Exception) -> tuple[str, bool]:
+        if isinstance(error, TimeoutError):
+            return "provider_timeout", True
+        if isinstance(error, IngredientNormalizationError):
+            if error.code is IngredientNormalizationFailureCode.NOT_CONFIGURED:
+                return "ingredient_normalization_disabled", False
+            if error.code is IngredientNormalizationFailureCode.RATE_LIMITED:
+                return "provider_rate_limited", True
+            if error.code in {
+                IngredientNormalizationFailureCode.INVALID_PROVIDER_RESPONSE,
+                IngredientNormalizationFailureCode.SCHEMA_VALIDATION_FAILED,
+                IngredientNormalizationFailureCode.INVARIANT_VIOLATION,
+            }:
+                return "provider_invalid_output", False
+            if error.code is IngredientNormalizationFailureCode.PROVIDER_REQUEST_FAILED:
+                if error.status is None or 500 <= error.status < 600:
+                    return "provider_temporary", True
+                return "provider_request_failed", False
+            return "provider_request_failed", False
+        return "provider_transport", True
+
+    @staticmethod
+    def _normalization_definitely_no_usage(error: Exception) -> bool:
+        if not isinstance(error, IngredientNormalizationError):
+            return False
+        if not error.provider_request_started:
+            return True
+        return error.usage is None and (
+            error.code is IngredientNormalizationFailureCode.RATE_LIMITED
+            or (
+                error.code is IngredientNormalizationFailureCode.PROVIDER_REQUEST_FAILED
+                and error.status in {400, 401, 403, 404, 422}
+            )
+        )
 
     @staticmethod
     def _provider_failure(error: Exception) -> tuple[str, bool]:

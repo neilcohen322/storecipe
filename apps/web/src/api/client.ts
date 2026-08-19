@@ -2,6 +2,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly errorCategory: string | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -75,22 +76,26 @@ export type ApiClientBases = Record<ApiService, string>;
 
 export type ApiRequestOptions = RequestInit & {
   service?: ApiService;
+  allowStatuses?: number[];
 };
 
 function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
-async function errorDetail(response: Response): Promise<string | undefined> {
+async function errorProblem(response: Response): Promise<{ detail?: string; errorCategory: string | null }> {
   if (!response.headers.get("Content-Type")?.includes("application/problem+json")) {
-    return undefined;
+    return { errorCategory: null };
   }
 
   try {
-    const problem = (await response.json()) as { detail?: unknown };
-    return typeof problem.detail === "string" ? problem.detail : undefined;
+    const problem = (await response.json()) as { detail?: unknown; errorCategory?: unknown };
+    return {
+      detail: typeof problem.detail === "string" ? problem.detail : undefined,
+      errorCategory: typeof problem.errorCategory === "string" ? problem.errorCategory : null,
+    };
   } catch {
-    return undefined;
+    return { errorCategory: null };
   }
 }
 
@@ -100,8 +105,9 @@ export function createApiClient(
 ) {
   const request = async (
     path: string,
-    { service = "catalog", headers: requestHeaders, ...init }: ApiRequestOptions = {},
+    options: ApiRequestOptions = {},
   ): Promise<Response> => {
+    const { service = "catalog", headers: requestHeaders, allowStatuses = [], ...init } = options;
     let accessToken: string;
     try {
       accessToken = await getAccessToken();
@@ -126,12 +132,16 @@ export function createApiClient(
       throw new ApiNetworkError(err);
     }
 
-    if (!response.ok) {
-      const detail = await errorDetail(response);
+    if (!response.ok && !allowStatuses.includes(response.status)) {
+      const problem = await errorProblem(response);
       if (response.status === 401) {
-        throw new ApiUnauthorizedError(detail);
+        throw new ApiUnauthorizedError(problem.detail);
       }
-      throw new ApiError(detail ?? `API request failed with status ${response.status}`, response.status);
+      throw new ApiError(
+        problem.detail ?? `API request failed with status ${response.status}`,
+        response.status,
+        problem.errorCategory,
+      );
     }
 
     return response;

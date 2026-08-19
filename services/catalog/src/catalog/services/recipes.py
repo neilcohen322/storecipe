@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from catalog.media.store import ObjectStoreUnavailable, RecipeImageStore
 from catalog.models import (
     Ingredient,
     Instruction,
@@ -37,6 +38,7 @@ def _recipe_query() -> Select[tuple[Recipe]]:
         selectinload(Recipe.instructions),
         selectinload(Recipe.recipe_tags).selectinload(RecipeTag.tag),
         selectinload(Recipe.ratings),
+        selectinload(Recipe.cover_image),
     )
 
 
@@ -50,7 +52,8 @@ def _build_ingredients(ingredients: list[IngredientInput]) -> list[Ingredient]:
         Ingredient(
             position=position,
             normalized_name=normalize_query_text(ingredient.name),
-            **ingredient.model_dump(),
+            canonical_name=normalize_query_text(ingredient.canonical_name),
+            **ingredient.model_dump(exclude={"canonical_name"}),
         )
         for position, ingredient in enumerate(ingredients)
     ]
@@ -242,12 +245,26 @@ async def update_recipe(
     return _recipe_view(loaded, user.id)
 
 
-async def delete_recipe(session: AsyncSession, subject: str, recipe_id: UUID) -> None:
+async def delete_recipe(
+    session: AsyncSession,
+    subject: str,
+    recipe_id: UUID,
+    *,
+    store: RecipeImageStore | None = None,
+) -> None:
     user = await resolve_user(session, subject)
     recipe = await get_owned_recipe(session, user.id, recipe_id)
+    image_ref: tuple[str, str] | None = None
+    if recipe.cover_image is not None:
+        image_ref = (recipe.cover_image.object_key, recipe.cover_image.object_generation)
     await session.delete(recipe)
     await advance_catalog_version(session, user.id)
     await session.commit()
+    if store is not None and image_ref is not None:
+        try:
+            await store.delete(image_ref[0], generation=image_ref[1])
+        except ObjectStoreUnavailable:
+            return
 
 
 async def create_imported_recipe(

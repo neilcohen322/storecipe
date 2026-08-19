@@ -3,8 +3,8 @@ from functools import lru_cache
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ingestion.ai_extractor import DEFAULT_OPENROUTER_MODEL
 from ingestion.cors_origins import parse_cors_origins
+from ingestion.openrouter_transport import DEFAULT_OPENROUTER_MODEL
 from ingestion.server_rendered_variants import ServerRenderedVariantRegistry
 
 
@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     import_burst_window_seconds: int = Field(default=60, ge=1, le=86_400)
     ai_daily_token_limit: int = Field(default=1_100_000, ge=1)
     ai_invocation_reservation_tokens: int = Field(default=275_000, ge=1)
+    ingredient_normalization_reservation_tokens: int = Field(default=64_000, ge=1)
     server_rendered_variant_hosts_json: str = "{}"
 
     @property
@@ -110,6 +111,10 @@ class Settings(BaseSettings):
             raise ValueError("payload active key id is absent from the payload keyring")
         if self.ai_invocation_reservation_tokens > self.ai_daily_token_limit:
             raise ValueError("AI invocation reservation cannot exceed the daily token limit")
+        if self.ingredient_normalization_reservation_tokens > self.ai_daily_token_limit:
+            raise ValueError(
+                "ingredient normalization reservation cannot exceed the daily token limit"
+            )
         return self
 
     @field_validator("server_rendered_variant_hosts_json")

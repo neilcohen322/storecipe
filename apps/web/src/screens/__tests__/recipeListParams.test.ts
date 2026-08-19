@@ -59,18 +59,30 @@ test("omits inactive duration and rating params", () => {
   });
 });
 
-test("rewrites URL names to unique normalizedName values", () => {
+test("rewrites URL names to unique resolvedName values", () => {
   const params = normalizeRecipeListParams({ ingredient: ["Straße", "tomato"], tag: ["Weeknight"] });
   const next = applyCanonicalSelections(params, {
     ingredients: [
-      { requestedName: "Straße", normalizedName: "strasse", observed: true },
-      { requestedName: "tomato", normalizedName: "tomato", observed: true },
+      { requestedName: "Straße", resolvedName: "strasse", status: "observed" },
+      { requestedName: "tomato", resolvedName: "tomato", status: "observed" },
     ],
-    tags: [{ requestedName: "Weeknight", normalizedName: "weeknight", observed: true }],
+    tags: [{ requestedName: "Weeknight", resolvedName: "weeknight", status: "observed" }],
   });
   expect(next.ingredient).toEqual(["strasse", "tomato"]);
   expect(next.tag).toEqual(["weeknight"]);
   expect(sameStringList(next.ingredient ?? [], ["strasse", "tomato"])).toBe(true);
+});
+
+test("keeps unavailable and ambiguous URL tokens unchanged", () => {
+  const params = normalizeRecipeListParams({ ingredient: ["ghost", "ביצה"] });
+  const next = applyCanonicalSelections(params, {
+    ingredients: [
+      { requestedName: "ghost", resolvedName: null, status: "unavailable" },
+      { requestedName: "ביצה", resolvedName: null, status: "ambiguous" },
+    ],
+    tags: [],
+  });
+  expect(next.ingredient).toEqual(["ghost", "ביצה"]);
 });
 
 test("unrated clears minRating", () => {

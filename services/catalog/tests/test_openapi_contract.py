@@ -247,3 +247,22 @@ def test_recipe_facets_get_documents_browse_contract() -> None:
     example = response["content"]["application/problem+json"]["example"]
     assert example["type"].endswith("/stale_recipe_facet_cursor")
     assert example["errorCategory"] == "stale_recipe_facet_cursor"
+
+
+def test_openapi_declares_cover_endpoints() -> None:
+    path = _contract()["paths"]["/v1/recipes/{recipeId}/cover-image"]
+    assert set(path) >= {"get", "put", "delete"}
+    put_schema = path["put"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+    assert put_schema["properties"]["image"] == {"type": "string", "format": "binary"}
+    assert path["get"]["responses"]["200"]["content"]["image/webp"]["schema"] == {
+        "type": "string",
+        "format": "binary",
+    }
+    recipe = _contract()["components"]["schemas"]["Recipe"]
+    assert "coverImage" in recipe["required"]
+    assert recipe["properties"]["coverImage"] == {
+        "anyOf": [
+            {"$ref": "#/components/schemas/CoverImage"},
+            {"type": "null"},
+        ]
+    }

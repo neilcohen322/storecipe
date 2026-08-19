@@ -10,7 +10,8 @@ from storecipe_auth.body_limit import MCP_MAX_REQUEST_BYTES, RequestBodyLimitMid
 from storecipe_mcp.auth import McpInboundTokenVerifier
 from storecipe_mcp.catalog_client import CatalogClient
 from storecipe_mcp.config import Settings, get_settings
-from storecipe_mcp.errors import CatalogClientError
+from storecipe_mcp.errors import CatalogClientError, IngestionClientError
+from storecipe_mcp.ingestion_client import IngestionClient
 from storecipe_mcp.mcp_server import create_mcp_server
 from storecipe_mcp.obo_client import OboTokenProvider, build_obo_token_provider
 
@@ -30,17 +31,24 @@ def create_app(
     settings: Settings | None = None,
     readiness_probe: ReadinessProbe | None = None,
     catalog_transport: httpx.AsyncBaseTransport | None = None,
+    ingestion_transport: httpx.AsyncBaseTransport | None = None,
     obo_provider: OboTokenProvider | None = None,
 ) -> FastAPI:
     runtime_settings = settings or get_settings()
     mcp_token_verifier = McpInboundTokenVerifier(runtime_settings)
     runtime_catalog_client: CatalogClient | None = None
+    runtime_ingestion_client: IngestionClient | None = None
     runtime_obo_provider: OboTokenProvider | None = None
 
     def require_catalog_client() -> CatalogClient:
         if runtime_catalog_client is None:
             raise CatalogClientError("temporary_catalog_failure", retryable=True)
         return runtime_catalog_client
+
+    def require_ingestion_client() -> IngestionClient:
+        if runtime_ingestion_client is None:
+            raise IngestionClientError("temporary_ingestion_failure", retryable=True)
+        return runtime_ingestion_client
 
     def require_obo_provider() -> OboTokenProvider:
         if runtime_obo_provider is None:
@@ -52,13 +60,14 @@ def create_app(
         runtime_settings,
         mcp_token_verifier,
         catalog_client_provider=require_catalog_client,
+        ingestion_client_provider=require_ingestion_client,
         obo_provider_factory=require_obo_provider,
     )
     mcp_app = mcp_server.streamable_http_app()
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        nonlocal runtime_catalog_client, runtime_obo_provider
+        nonlocal runtime_catalog_client, runtime_ingestion_client, runtime_obo_provider
         application.state.settings = runtime_settings
         application.state.mcp_token_verifier = mcp_token_verifier
         application.state.mcp_server = mcp_server
@@ -82,38 +91,56 @@ def create_app(
             follow_redirects=False,
             transport=catalog_transport,
         ) as catalog_http:
-            async with httpx.AsyncClient(timeout=obo_timeout, follow_redirects=False) as obo_http:
-                catalog_client = CatalogClient(
-                    catalog_http,
-                    max_response_bytes=runtime_settings.catalog_max_response_bytes,
-                )
-                runtime_catalog_client = catalog_client
-                if obo_provider is not None:
-                    runtime_obo_provider = obo_provider
-                elif runtime_settings.obo_configured:
-                    runtime_obo_provider = build_obo_token_provider(runtime_settings, obo_http)
+            async with httpx.AsyncClient(
+                base_url=runtime_settings.ingestion_api_url,
+                timeout=timeout,
+                limits=limits,
+                follow_redirects=False,
+                transport=ingestion_transport,
+            ) as ingestion_http:
+                async with httpx.AsyncClient(
+                    timeout=obo_timeout, follow_redirects=False
+                ) as obo_http:
+                    catalog_client = CatalogClient(
+                        catalog_http,
+                        max_response_bytes=runtime_settings.catalog_max_response_bytes,
+                    )
+                    ingestion_client = IngestionClient(
+                        ingestion_http,
+                        max_response_bytes=runtime_settings.catalog_max_response_bytes,
+                    )
+                    runtime_catalog_client = catalog_client
+                    runtime_ingestion_client = ingestion_client
+                    if obo_provider is not None:
+                        runtime_obo_provider = obo_provider
+                    elif runtime_settings.obo_configured:
+                        runtime_obo_provider = build_obo_token_provider(runtime_settings, obo_http)
 
-                async def default_readiness() -> dict[str, str]:
-                    catalog_status = await catalog_client.readiness()
-                    dependencies = dict(catalog_status)
-                    if runtime_settings.obo_configured:
-                        dependencies["obo_config"] = (
-                            "ok" if runtime_obo_provider is not None else "unavailable"
-                        )
-                    else:
-                        dependencies["obo_config"] = (
-                            "ok" if runtime_obo_provider is not None else "not_required"
-                        )
-                    return dependencies
+                    async def default_readiness() -> dict[str, str]:
+                        catalog_status = await catalog_client.readiness()
+                        ingestion_status = await ingestion_client.readiness()
+                        dependencies = dict(catalog_status)
+                        dependencies.update(ingestion_status)
+                        if runtime_settings.obo_configured:
+                            dependencies["obo_config"] = (
+                                "ok" if runtime_obo_provider is not None else "unavailable"
+                            )
+                        else:
+                            dependencies["obo_config"] = (
+                                "ok" if runtime_obo_provider is not None else "not_required"
+                            )
+                        return dependencies
 
-                application.state.catalog_client = catalog_client
-                application.state.readiness_probe = readiness_probe or default_readiness
-                try:
-                    async with mcp_app.router.lifespan_context(mcp_app):
-                        yield
-                finally:
-                    runtime_catalog_client = None
-                    runtime_obo_provider = None
+                    application.state.catalog_client = catalog_client
+                    application.state.ingestion_client = ingestion_client
+                    application.state.readiness_probe = readiness_probe or default_readiness
+                    try:
+                        async with mcp_app.router.lifespan_context(mcp_app):
+                            yield
+                    finally:
+                        runtime_catalog_client = None
+                        runtime_ingestion_client = None
+                        runtime_obo_provider = None
 
     application = FastAPI(
         title="Storecipe MCP Gateway",

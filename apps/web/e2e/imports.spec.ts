@@ -19,3 +19,12 @@ test("validates an import and presents queued, processing, and completed states"
   await expect(page.getByText("Your recipe import is complete.")).toBeVisible({ timeout: 7_000 });
   await assertStablePageQuality(page, errors);
 });
+
+test("returns to the imports list from a direct new-import entry", async ({ page }) => {
+  const errors = captureConsoleErrors(page);
+  await page.goto("/imports/new");
+  await page.getByRole("button", { name: "Back to imports" }).click();
+  await expect(page).toHaveURL(/\/imports$/);
+  await expect(page.getByRole("heading", { name: "Imports", exact: true })).toBeVisible();
+  await assertStablePageQuality(page, errors);
+});

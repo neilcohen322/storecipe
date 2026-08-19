@@ -22,6 +22,7 @@ erDiagram
   RECIPE ||--o{ RECIPE_TAG : classified
   TAG ||--o{ RECIPE_TAG : applies
   RECIPE ||--o| RATING : receives
+  RECIPE ||--o| RECIPE_IMAGE : covers
   RECIPE ||--o| RECIPE_CREATION_IDEMPOTENCY : replays
   IMPORT_JOB ||--o| RECIPE : creates
 
@@ -48,6 +49,15 @@ erDiagram
     string payload_hash
     uuid recipe_id UK,FK
     datetime created_at
+  }
+  RECIPE_IMAGE {
+    uuid id PK
+    uuid recipe_id UK,FK
+    string object_key UK
+    string object_generation
+    string content_type "image/webp"
+    int byte_size "1..1572864"
+    string sha256
   }
   INGREDIENT {
     uuid id PK

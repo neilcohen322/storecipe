@@ -44,7 +44,7 @@ def _recipe_create(title: str = "Weeknight Soup") -> RecipeCreate:
     return RecipeCreate.model_validate(
         {
             "title": title,
-            "ingredients": [{"rawText": "1 cup water", "name": "water"}],
+            "ingredients": [{"rawText": "1 cup water", "name": "water", "canonicalName": "water"}],
             "instructions": ["Boil the water."],
             "tags": ["Quick"],
         }
@@ -59,7 +59,7 @@ def _imported_recipe_create(
             "title": "Imported soup",
             "sourceUrl": "https://example.com/soup",
             "sourceFingerprint": source_fingerprint,
-            "ingredients": [{"rawText": "1 cup water", "name": "water"}],
+            "ingredients": [{"rawText": "1 cup water", "name": "water", "canonicalName": "water"}],
             "instructions": ["Boil."],
             "ownerSubject": SUBJECT,
             "importJobId": str(import_job_id),
@@ -231,7 +231,7 @@ async def test_imported_recipe_is_idempotent(session: AsyncSession) -> None:
             "ownerSubject": SUBJECT,
             "importJobId": str(job_id),
             "sourceFingerprint": "c" * 64,
-            "ingredients": [{"rawText": "2 carrots", "name": "carrot"}],
+            "ingredients": [{"rawText": "2 carrots", "name": "carrot", "canonicalName": "carrot"}],
             "instructions": ["Simmer."],
             "tags": [],
         }

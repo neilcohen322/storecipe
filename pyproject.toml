@@ -41,6 +41,7 @@ markers = [
     "integration: requires an explicitly configured PostgreSQL integration database",
     "docker: requires the explicitly enabled local Docker integration stack",
     "redis: requires an explicitly configured Redis integration instance",
+    "gcs: requires an explicitly configured private GCS test bucket",
 ]
 
 [tool.ruff]
@@ -69,6 +70,10 @@ files = [
     "services/mcp_gateway/src",
 ]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "google.*"
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "celery.*"
