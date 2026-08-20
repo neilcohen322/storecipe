@@ -29,18 +29,7 @@ jest.mock("react-native-safe-area-context", () => ({
 
 jest.mock("../../theme/ThemeProvider", () => ({
   useTheme: () => ({
-    theme: {
-      colors: {
-        canvas: "#f7fff9", surface: "#fff", elevatedSurface: "#fff", text: "#10231c", mutedText: "#527060",
-        border: "#d0e5d6", accent: "#2d6a4f", accentHover: "#1b4332", accentContrast: "#fff", success: "#2d6a4f",
-        warning: "#b7791f", danger: "#b42318", focusRing: "#40916c", scrim: "rgba(0,0,0,.4)",
-      },
-      spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 },
-      sizing: { control: 44, icon: 24, touchTarget: 48 },
-      radii: { sm: 8, md: 12, lg: 16, pill: 999 },
-      type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 },
-      shadows: { raised: {} },
-    },
+    theme: jest.requireActual("../../theme/testTheme").createTestTheme(),
   }),
 }));
 
@@ -425,7 +414,7 @@ test("ignores duplicate load-more presses before a rerender and preserves the fi
   await fireEvent.press(screen.getByRole("button", { name: "Load more recipes" }));
   expect(listRecipes).toHaveBeenCalledTimes(2);
   await act(async () => next.resolve({ items: [recipe, secondRecipe], nextCursor: null }));
-  await waitFor(() => expect(screen.getByText("2 recipes loaded")).toBeTruthy());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Open Tomato risotto" })).toBeTruthy());
 });
 
 test("keeps a newer pagination guard active when a stale request finishes", () => {

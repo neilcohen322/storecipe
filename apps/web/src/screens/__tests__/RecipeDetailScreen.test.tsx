@@ -26,7 +26,7 @@ jest.mock("react-native-safe-area-context", () => ({
 }));
 
 jest.mock("../../theme/ThemeProvider", () => ({
-  useTheme: () => ({ theme: { colors: { canvas: "#f7fff9", surface: "#fff", elevatedSurface: "#fff", text: "#10231c", mutedText: "#527060", border: "#d0e5d6", accent: "#2d6a4f", accentHover: "#1b4332", accentContrast: "#fff", success: "#2d6a4f", warning: "#b7791f", danger: "#b42318", focusRing: "#40916c", scrim: "rgba(0,0,0,.4)" }, spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 }, sizing: { control: 44, icon: 24, touchTarget: 48 }, radii: { sm: 8, md: 12, lg: 16, pill: 999 }, type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 } } }),
+  useTheme: () => ({ theme: jest.requireActual("../../theme/testTheme").createTestTheme() }),
 }));
 
 const recipe: Recipe = {
@@ -67,15 +67,15 @@ test("shows a stable loading state then recipe media, metadata, semantic ingredi
   const screen = await renderScreen(jest.fn(() => loading.promise));
   expect(screen.getByLabelText("Loading recipe")).toBeTruthy();
   await act(async () => loading.resolve(recipe));
-  await waitFor(() => expect(screen.getByText("Lemon pasta")).toBeTruthy());
+  await waitFor(() => expect(screen.getByRole("header", { name: "Lemon pasta" })).toBeTruthy());
   expect(screen.getByTestId("recipe-detail-media")).toBeTruthy();
   expect(screen.getByText("Serves 4 · 25 min")).toBeTruthy();
   expect(screen.getByLabelText("Ingredients")).toBeTruthy();
   expect(screen.getByLabelText("200g spaghetti")).toBeTruthy();
   expect(screen.getByLabelText("1 lemon")).toBeTruthy();
   expect(screen.getByLabelText("Instructions")).toBeTruthy();
-  expect(screen.getByText("1. Boil the pasta.")).toBeTruthy();
-  expect(screen.getByText("2. Toss with lemon.")).toBeTruthy();
+  expect(screen.getByText("Boil the pasta.")).toBeTruthy();
+  expect(screen.getByText("Toss with lemon.")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Rate 3 out of 5" }).props.accessibilityState).toMatchObject({ selected: true });
 });
 

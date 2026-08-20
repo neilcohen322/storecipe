@@ -20,7 +20,7 @@ jest.mock("react-native-safe-area-context", () => ({
 }));
 
 jest.mock("../../theme/ThemeProvider", () => ({
-  useTheme: () => ({ theme: { colors: { canvas: "#fff", surface: "#fff", elevatedSurface: "#fff", text: "#111", mutedText: "#555", border: "#ddd", accent: "#080", accentHover: "#060", accentContrast: "#fff", success: "#080", warning: "#850", danger: "#b00", focusRing: "#080", scrim: "rgba(0,0,0,.4)" }, spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 }, sizing: { control: 44, icon: 24, touchTarget: 48 }, radii: { sm: 8, md: 12, lg: 16, pill: 999 }, type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 } } }),
+  useTheme: () => ({ theme: jest.requireActual("../../theme/testTheme").createTestTheme() }),
 }));
 
 const recipe: Recipe = { id: "recipe-1", title: "Soup", sourceUrl: null, servings: null, prepMinutes: null, cookMinutes: null, totalMinutes: null, ingredients: [], instructions: [], tags: [], rating: null, coverImage: null };

@@ -29,15 +29,7 @@ jest.mock("../../auth/AuthProvider", () => ({
 }));
 jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("../../theme/ThemeProvider", () => ({
-  useTheme: () => ({
-    theme: {
-      colors: { canvas: "#fff", surface: "#fff", elevatedSurface: "#fff", text: "#111", mutedText: "#555", border: "#ddd", accent: "#286", accentHover: "#174", accentContrast: "#fff", danger: "#b42318", warning: "#850", success: "#286", focusRing: "#286", scrim: "rgba(0,0,0,.4)" },
-      spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 },
-      sizing: { control: 44, icon: 24, touchTarget: 48 },
-      radii: { sm: 8, md: 12, lg: 16, pill: 999 },
-      type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 },
-    },
-  }),
+  useTheme: () => ({ theme: jest.requireActual("../../theme/testTheme").createTestTheme() }),
 }));
 jest.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) }));
 

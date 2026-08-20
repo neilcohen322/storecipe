@@ -25,8 +25,8 @@ export function BottomNavigation() {
   return <View testID="bottom-navigation" accessibilityRole={navigationRole} accessibilityLabel="Primary navigation" style={[styles.nav, { minHeight: COMPACT_NAVIGATION_HEIGHT, backgroundColor: theme.colors.elevatedSurface, borderColor: theme.colors.border, paddingBottom: insets.bottom }]}>{mobilePrimaryItems().map((item) => {
     const active = isActive(item, pathname);
     return <Pressable key={item.id} accessibilityRole="link" accessibilityLabel={item.label} accessibilityHint={active ? "Current page" : "Navigate to page"} accessibilityState={{ selected: active }} onPress={() => router.push(item.href)} style={[styles.item, { minWidth: COMPACT_NAVIGATION_HEIGHT, minHeight: COMPACT_NAVIGATION_HEIGHT }]}>
-      <Ionicons name={item.icon} size={theme.sizing.icon} color={active ? theme.colors.accent : theme.colors.mutedText} />
-      <Text style={{ color: active ? theme.colors.accent : theme.colors.mutedText, fontSize: theme.type.caption }}>{item.label}</Text>
+      <Ionicons name={item.icon} size={theme.sizing.icon} color={active ? theme.colors.brand : theme.colors.mutedText} />
+      <Text style={{ color: active ? theme.colors.brand : theme.colors.mutedText, fontSize: theme.type.caption }}>{item.label}</Text>
     </Pressable>;
   })}</View>;
 }

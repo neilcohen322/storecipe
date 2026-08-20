@@ -3,9 +3,10 @@ import { Platform, StyleSheet, Text, View } from "react-native";
 
 import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi, Recipe } from "../api/catalog";
-import { Button, ConfirmDialog, ErrorState, InlineNotice, LoadingState, OfflineBanner, PageHeader, RatingControl, RecipeMedia, Screen, Section } from "../components";
+import { Button, ConfirmDialog, ErrorState, InlineNotice, LoadingState, OfflineBanner, RatingControl, RecipeMedia, Screen, Section } from "../components";
 import type { CoverImageLoader } from "../components/AuthenticatedRecipeImage";
 import { blobFromPickerUri, coverImageErrorMessage, pickRecipeCoverImage, pickerStatusMessage } from "../media/imagePicker";
+import { useTheme } from "../theme/ThemeProvider";
 
 type DetailError = "none" | "notFound" | "offline" | "generic";
 type ViewAccessibilityRole = NonNullable<ComponentProps<typeof View>["accessibilityRole"]>;
@@ -35,6 +36,7 @@ function isNotFoundError(error: unknown): boolean {
 }
 
 export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }: RecipeDetailScreenProps) {
+  const { theme } = useTheme();
   const id = routeRecipeId(recipeId);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [loading, setLoading] = useState(Boolean(id));
@@ -161,7 +163,9 @@ export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }
       ? <><OfflineBanner message={"You\u2019re offline. Check your connection and try again."} /><Button label="Try again" onPress={() => void load()} /></>
       : <ErrorState title="We couldn't load this recipe. Please try again." action={<Button label="Try again" onPress={() => void load()} />} />;
 
-  return <Screen><Button label="Back to list" variant="secondary" onPress={onBack} />
+  const metadata = [recipe?.servings ? `Serves ${recipe.servings}` : null, recipe?.totalMinutes ? `${recipe.totalMinutes} min` : null].filter(Boolean).join(" · ");
+
+  return <Screen><Button label="Back to list" variant="quiet" onPress={onBack} />
     {loading ? <LoadingState label="Loading recipe" /> : error !== "none" && !recipe ? errorContent : recipe ? <View style={styles.detail}>
       <View testID="recipe-detail-media" style={styles.mediaSlot}>
         <RecipeMedia
@@ -205,14 +209,29 @@ export function RecipeDetailScreen({ recipeId, catalog, onBack, onUnauthorized }
         onConfirm={() => void handleRemoveCover()}
         onCancel={() => setConfirmRemove(false)}
       />
-      <PageHeader title={recipe.title} subtitle={[recipe.servings ? `Serves ${recipe.servings}` : null, recipe.totalMinutes ? `${recipe.totalMinutes} min` : null].filter(Boolean).join(" · ") || undefined} />
+      <Text accessibilityRole="header" style={[styles.heroTitle, { color: theme.colors.text, fontFamily: theme.type.fontFamily.heading }]}>{recipe.title}</Text>
+      {metadata ? <Text style={[styles.heroMeta, { color: theme.colors.mutedText }]}>{metadata}</Text> : null}
       <Section title="Rating"><Text>{recipe.rating ? `${recipe.rating} out of 5` : "Not rated"}</Text><RatingControl value={recipe.rating ?? 0} onChange={(value) => void setRating(value)} disabled={savingRating} />{ratingRetry ? <View style={styles.ratingError}><InlineNotice tone="error" message="We couldn't save your rating." /><Button label="Try rating again" variant="secondary" onPress={() => void setRating(ratingRetry)} /></View> : null}</Section>
       <View testID="recipe-detail-columns" style={styles.columns}>
-        <Section title="Ingredients" accessibilityRole="list" accessibilityLabel="Ingredients" style={styles.ingredients}>{recipe.ingredients.length ? recipe.ingredients.map((ingredient, index) => <View key={`${ingredient.rawText}-${index}`} {...webListItemProps} accessibilityLabel={ingredient.rawText}><Text style={styles.listItem}>{"\u2022"} {ingredient.rawText}</Text></View>) : <Text>None listed.</Text>}</Section>
-        <Section title="Instructions" accessibilityRole="list" accessibilityLabel="Instructions" style={styles.instructions}>{recipe.instructions.length ? recipe.instructions.map((step, index) => <View key={`${index}-${step.slice(0, 24)}`} {...webListItemProps}><Text style={styles.step}>{index + 1}. {step}</Text></View>) : <Text>None listed.</Text>}</Section>
+        <Section title="Ingredients" accessibilityRole="list" accessibilityLabel="Ingredients" style={[styles.ingredients, { borderLeftColor: theme.colors.accent }]}>{recipe.ingredients.length ? recipe.ingredients.map((ingredient, index) => <View key={`${ingredient.rawText}-${index}`} {...webListItemProps} accessibilityLabel={ingredient.rawText}><Text style={styles.listItem}>{"\u2022"} {ingredient.rawText}</Text></View>) : <Text>None listed.</Text>}</Section>
+        <Section title="Instructions" accessibilityRole="list" accessibilityLabel="Instructions" style={styles.instructions}>{recipe.instructions.length ? recipe.instructions.map((step, index) => <View key={`${index}-${step.slice(0, 24)}`} {...webListItemProps} style={styles.stepRow}><Text style={[styles.stepNumeral, { color: theme.colors.accent, fontFamily: theme.type.fontFamily.heading }]}>{index + 1}</Text><Text style={styles.step}>{step}</Text></View>) : <Text>None listed.</Text>}</Section>
       </View>
     </View> : null}
   </Screen>;
 }
 
-const styles = StyleSheet.create({ detail: { gap: 16 }, mediaSlot: { minHeight: 280, width: "100%" }, coverActions: { gap: 8 }, columns: { flexDirection: "row", flexWrap: "wrap", gap: 24 }, ingredients: { flexGrow: 1, flexBasis: 280 }, instructions: { flexGrow: 2, flexBasis: 520 }, listItem: { marginBottom: 8 }, step: { marginBottom: 12, lineHeight: 24 }, ratingError: { gap: 8 } });
+const styles = StyleSheet.create({
+  detail: { gap: 16 },
+  mediaSlot: { minHeight: 320, width: "100%", borderRadius: 16, overflow: "hidden" },
+  coverActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
+  heroTitle: { fontSize: 32, fontWeight: "700" },
+  heroMeta: { fontSize: 15 },
+  columns: { flexDirection: "row", flexWrap: "wrap", gap: 24 },
+  ingredients: { flexGrow: 1, flexBasis: 280, borderLeftWidth: 3, paddingLeft: 16 },
+  instructions: { flexGrow: 2, flexBasis: 520 },
+  listItem: { marginBottom: 8 },
+  stepRow: { flexDirection: "row", gap: 12, marginBottom: 12, alignItems: "flex-start" },
+  stepNumeral: { fontSize: 28, fontWeight: "700", minWidth: 28, lineHeight: 32 },
+  step: { flex: 1, lineHeight: 24, paddingTop: 4 },
+  ratingError: { gap: 8 },
+});

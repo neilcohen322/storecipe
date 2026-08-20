@@ -26,7 +26,7 @@ test("uses the system scheme on the first web render when no preference is store
   expect(storage.getSync).toHaveBeenCalledWith("storecipe.theme");
   expect(result.current.preference).toBe("system");
   expect(result.current.resolvedScheme).toBe("dark");
-  expect(result.current.theme.colors.canvas).toBe("#10231c");
+  expect(result.current.theme.colors.canvas).toBe("#1c1612");
 });
 
 test("uses a stored explicit preference on the first web render", async () => {
@@ -34,7 +34,7 @@ test("uses a stored explicit preference on the first web render", async () => {
 
   expect(result.current.preference).toBe("light");
   expect(result.current.resolvedScheme).toBe("light");
-  expect(result.current.theme.colors.canvas).toBe("#f7fff9");
+  expect(result.current.theme.colors.canvas).toBe("#f6f1ea");
 });
 
 test("persists an explicit preference change", async () => {
@@ -68,7 +68,7 @@ test("falls back to system mode for an invalid stored preference on the first we
 
   expect(result.current.preference).toBe("system");
   expect(result.current.resolvedScheme).toBe("dark");
-  expect(result.current.theme.colors.canvas).toBe("#10231c");
+  expect(result.current.theme.colors.canvas).toBe("#1c1612");
 });
 
 test("keeps native descendants behind the loading surface until storage hydration finishes", async () => {

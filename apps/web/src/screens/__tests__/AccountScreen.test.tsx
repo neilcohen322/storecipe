@@ -4,7 +4,7 @@ import { AccountScreen } from "../AccountScreen";
 
 jest.mock("../../components/ThemeControl", () => ({ ThemeControl: () => null }));
 jest.mock("../../theme/ThemeProvider", () => ({
-  useTheme: () => ({ theme: { colors: { canvas: "#fff", surface: "#fff", text: "#000", mutedText: "#555", border: "#ddd", danger: "#b42318" } } }),
+  useTheme: () => ({ theme: jest.requireActual("../../theme/testTheme").createTestTheme() }),
 }));
 
 test("shows Auth0 identity details and offers explicit logout", async () => {
