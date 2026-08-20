@@ -6,15 +6,7 @@ import { MoreScreen } from "../MoreScreen";
 jest.mock("@expo/vector-icons", () => ({ Ionicons: () => null }));
 jest.mock("../../components/ThemeControl", () => ({ ThemeControl: () => null }));
 jest.mock("../../theme/ThemeProvider", () => ({
-  useTheme: () => ({
-    theme: {
-      colors: { canvas: "#fff", surface: "#fff", text: "#111", mutedText: "#555", border: "#ddd", danger: "#b42318" },
-      spacing: { sm: 8, md: 16, lg: 24 },
-      radii: { md: 12 },
-      sizing: { icon: 24 },
-      type: { caption: 12, heading: 28 },
-    },
-  }),
+  useTheme: () => ({ theme: jest.requireActual("../../theme/testTheme").createTestTheme() }),
 }));
 
 test("renders every registry overflow entry without copying navigation labels", async () => {

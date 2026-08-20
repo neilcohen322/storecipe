@@ -57,19 +57,17 @@ export function AppShell({ children, viewportWidth }: PropsWithChildren<{ viewpo
     <View testID={`app-shell-${mode}`} style={[styles.desktop, { backgroundColor: theme.colors.canvas }]}>
       <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
       <View style={[styles.canvas, { paddingTop: insets.top + theme.spacing.md, paddingRight: insets.right + theme.spacing.lg, paddingBottom: insets.bottom + theme.spacing.lg, paddingLeft: theme.spacing.lg }]}>
-        <View style={styles.pageAction}>
-          {create && pathname !== create.href && (
-            <Pressable
-              testID="page-create-action"
-              accessibilityRole="link"
-              accessibilityLabel={create.label}
-              onPress={() => router.push(create.href)}
-              style={[styles.createAction, { backgroundColor: theme.colors.accent }]}
-            >
-              <Ionicons name={create.icon} size={theme.sizing.icon} color={theme.colors.accentContrast} />
-            </Pressable>
-          )}
-        </View>
+        {create && pathname !== create.href ? (
+          <Pressable
+            testID="page-create-action"
+            accessibilityRole="link"
+            accessibilityLabel={create.label}
+            onPress={() => router.push(create.href)}
+            style={[styles.createAction, { backgroundColor: theme.colors.accent }]}
+          >
+            <Ionicons name={create.icon} size={theme.sizing.icon} color={theme.colors.accentContrast} />
+          </Pressable>
+        ) : null}
         {content}
       </View>
     </View>
@@ -79,8 +77,7 @@ export function AppShell({ children, viewportWidth }: PropsWithChildren<{ viewpo
 const styles = StyleSheet.create({
   compact: { flex: 1, minHeight: 0 },
   desktop: { flex: 1, flexDirection: "row", minHeight: 0 },
-  canvas: { flex: 1, minHeight: 0, minWidth: 0, alignItems: "center" },
+  canvas: { flex: 1, minHeight: 0, minWidth: 0, alignItems: "center", position: "relative" },
   content: { flex: 1, width: "100%", maxWidth: 1120, minHeight: 0, minWidth: 0 },
-  pageAction: { width: "100%", maxWidth: 1120, alignItems: "flex-end", marginBottom: 16 },
-  createAction: { minWidth: 44, minHeight: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  createAction: { position: "absolute", top: 8, right: 8, zIndex: 2, minWidth: 44, minHeight: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
 });

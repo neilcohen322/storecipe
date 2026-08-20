@@ -1,10 +1,19 @@
 import type { ResolvedScheme, Theme, ThemeColors } from "./types";
 
+export const HEADING_FONT_FAMILY = "Fraunces_700Bold";
+
 const shared = {
   spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 },
   sizing: { control: 44, icon: 24, touchTarget: 48 },
   radii: { sm: 8, md: 12, lg: 16, pill: 999 },
-  type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 },
+  type: {
+    caption: 12,
+    body: 15,
+    subtitle: 18,
+    heading: 28,
+    display: 54,
+    fontFamily: { heading: HEADING_FONT_FAMILY },
+  },
   breakpoints: { compact: 0, medium: 768, expanded: 1200 },
   motion: { fast: 150, normal: 250, slow: 400 },
   shadows: {
@@ -15,12 +24,40 @@ const shared = {
 
 const palettes: Record<ResolvedScheme, ThemeColors> = {
   light: {
-    canvas: "#f7fff9", surface: "#ffffff", elevatedSurface: "#ffffff", text: "#10231c", mutedText: "#527060", border: "#d0e5d6",
-    accent: "#2d6a4f", accentHover: "#1b4332", accentContrast: "#ffffff", success: "#2d6a4f", warning: "#b7791f", danger: "#b42318", focusRing: "#40916c", scrim: "rgba(16, 35, 28, 0.48)",
+    canvas: "#f6f1ea",
+    surface: "#ffffff",
+    elevatedSurface: "#f3ece3",
+    text: "#1c1410",
+    mutedText: "#6b5748",
+    border: "#e4d8cc",
+    accent: "#c2410c",
+    accentHover: "#9a3412",
+    accentContrast: "#ffffff",
+    brand: "#2d6a4f",
+    success: "#2d6a4f",
+    warning: "#b7791f",
+    danger: "#b42318",
+    focusRing: "#9a3412",
+    scrim: "rgba(28, 20, 16, 0.48)",
+    overlayScrim: "rgba(16, 12, 8, 0.72)",
   },
   dark: {
-    canvas: "#10231c", surface: "#1a3329", elevatedSurface: "#244537", text: "#f7fff9", mutedText: "#b7d8c7", border: "#2d6a4f",
-    accent: "#52b788", accentHover: "#74c69d", accentContrast: "#10231c", success: "#74c69d", warning: "#f6bd60", danger: "#f4a3a3", focusRing: "#74c69d", scrim: "rgba(0, 0, 0, 0.56)",
+    canvas: "#1c1612",
+    surface: "#2a221c",
+    elevatedSurface: "#362c24",
+    text: "#f6f1ea",
+    mutedText: "#c4b5a5",
+    border: "#4a3c32",
+    accent: "#fb923c",
+    accentHover: "#ea580c",
+    accentContrast: "#1c1612",
+    brand: "#74c69d",
+    success: "#74c69d",
+    warning: "#f6bd60",
+    danger: "#f4a3a3",
+    focusRing: "#fdba74",
+    scrim: "rgba(0, 0, 0, 0.56)",
+    overlayScrim: "rgba(16, 12, 8, 0.72)",
   },
 };
 

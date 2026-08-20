@@ -64,6 +64,15 @@ describe("AppShell", () => {
     });
   });
 
+  it.each([768, 1440])("keeps the desktop sidebar compact at %s", async (width) => {
+    const { getByTestId } = await renderShell(width);
+    expect(StyleSheet.flatten(getByTestId("desktop-sidebar").props.style)).toEqual(expect.objectContaining({
+      width: 176,
+      flexGrow: 0,
+      flexShrink: 0,
+    }));
+  });
+
   it.each([768, 1440])("suppresses Create navigation and shows the desktop page action at %s", async (width) => {
     const { getByTestId } = await renderShell(width);
     expect(within(getByTestId("desktop-sidebar")).queryByRole("link", { name: "Create" })).toBeNull();

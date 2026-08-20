@@ -8,6 +8,8 @@ const dist = join(root, "dist");
 const blockedMarkers = [
   "storecipe-e2e-fixture-only-marker",
   "e2e-intercepted-api-token",
+  "fonts.google.com",
+  "fonts.gstatic.com",
 ];
 const environment = { ...process.env };
 delete environment.EXPO_PUBLIC_E2E_MODE;

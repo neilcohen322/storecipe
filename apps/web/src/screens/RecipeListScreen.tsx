@@ -12,7 +12,7 @@ import { RatingFilter } from "../components/RatingFilter";
 import { RecipeCard } from "../components/RecipeCard";
 import type { CoverImageLoader } from "../components/AuthenticatedRecipeImage";
 import { SortMenu } from "../components/SortMenu";
-import { Button, EmptyState, ErrorState, Field, InlineNotice, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Skeleton } from "../components";
+import { Button, EmptyState, ErrorState, InlineNotice, OfflineBanner, PageHeader, ResponsiveGrid, Screen, Skeleton } from "../components";
 import type { LayoutMode } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
 import {
@@ -246,31 +246,25 @@ export function RecipeListScreen({
   return (
     <>
     <Screen accessibilityElementsHidden={filtersOpen || sortOpen} importantForAccessibility={filtersOpen || sortOpen ? "no-hide-descendants" : "auto"}>
-      <PageHeader title="Recipes" subtitle={items.length ? `${items.length} recipes loaded` : undefined} />
+      <PageHeader title="Recipes" />
       <View style={styles.toolbar}>
-        <View style={styles.searchField}>
-          <Field
-            label="Search recipes"
-            hint="Search titles and recipe text"
-            control={
-              <TextInput
-                value={searchDraft}
-                onChangeText={setSearchDraft}
-                onSubmitEditing={submitSearch}
-                returnKeyType="search"
-                placeholder="Tomato soup"
-                placeholderTextColor={placeholder}
-              />
-            }
-          />
-        </View>
+        <TextInput
+          accessibilityLabel="Search recipes"
+          value={searchDraft}
+          onChangeText={setSearchDraft}
+          onSubmitEditing={submitSearch}
+          returnKeyType="search"
+          placeholder="Tomato soup"
+          placeholderTextColor={placeholder}
+          style={[styles.searchField, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, color: theme.colors.text, fontSize: theme.type.body }]}
+        />
         <Button label="Search" onPress={submitSearch} />
         <Button ref={filtersTriggerRef} label={filtersLabel} onPress={openFilters} />
         <Button ref={sortTriggerRef} label="Sort" onPress={() => setSortOpen(true)} />
-      </View>
-      <View style={[styles.chipRow, styles.viewToggle]}>
-        <Button label="Card view" variant={view === "card" ? "primary" : "secondary"} onPress={() => setView("card")} />
-        <Button label="List view" variant={view === "list" ? "primary" : "secondary"} onPress={() => setView("list")} />
+        <View style={styles.viewToggle}>
+          <Button label="Card view" variant={view === "card" ? "secondary" : "quiet"} accessibilityState={{ selected: view === "card" }} style={view === "card" ? { backgroundColor: theme.colors.elevatedSurface, borderColor: theme.colors.brand } : undefined} onPress={() => setView("card")} />
+          <Button label="List view" variant={view === "list" ? "secondary" : "quiet"} accessibilityState={{ selected: view === "list" }} style={view === "list" ? { backgroundColor: theme.colors.elevatedSurface, borderColor: theme.colors.brand } : undefined} onPress={() => setView("list")} />
+        </View>
       </View>
       {loading && items.length === 0
         ? <ResponsiveGrid>{[0, 1, 2].map((slot) => <View key={slot} testID="recipe-card-skeleton"><Skeleton height={220} /></View>)}</ResponsiveGrid>
@@ -357,8 +351,7 @@ export function RecipeListScreen({
 }
 
 const styles = StyleSheet.create({
-  toolbar: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", gap: 8, marginBottom: 12 },
-  searchField: { flexGrow: 1, flexBasis: 220, minWidth: 0 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
-  viewToggle: { marginBottom: 16 },
+  toolbar: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 16 },
+  searchField: { flexGrow: 1, flexBasis: 220, minWidth: 0, minHeight: 44, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12 },
+  viewToggle: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 });

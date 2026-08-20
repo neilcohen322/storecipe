@@ -74,16 +74,16 @@ export function Screen({ children, ...props }: ComponentProps<typeof ScrollView>
     </ScrollView>
   );
 }
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) { const { theme } = useTheme(); return <View style={styles.pageHeader}><View style={{ flex: 1 }}><Text accessibilityRole="header" style={[styles.heading, { color: theme.colors.text, fontSize: theme.type.heading }]}>{title}</Text>{subtitle && <Text style={[styles.hint, { color: theme.colors.mutedText }]}>{subtitle}</Text>}</View>{actions}</View>; }
+export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) { const { theme } = useTheme(); return <View style={styles.pageHeader}><View style={{ flex: 1 }}><Text accessibilityRole="header" style={[styles.heading, { color: theme.colors.text, fontSize: theme.type.heading, fontFamily: theme.type.fontFamily.heading }]}>{title}</Text>{subtitle && <Text style={[styles.hint, { color: theme.colors.mutedText }]}>{subtitle}</Text>}</View>{actions}</View>; }
 export function Section({ title, children, accessibilityRole, accessibilityLabel, style, ...props }: ComponentProps<typeof View> & { title?: string }) {
   const { theme } = useTheme();
-  const heading = title ? <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.colors.text }]}>{title}</Text> : null;
+  const heading = title ? <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.colors.text, fontFamily: theme.type.fontFamily.heading }]}>{title}</Text> : null;
   if (accessibilityRole === "list" && heading) {
     return <View {...props} style={[{ marginBottom: theme.spacing.lg }, style]}>{heading}<View accessibilityRole={accessibilityRole} accessibilityLabel={accessibilityLabel}>{children}</View></View>;
   }
   return <View {...props} accessibilityRole={accessibilityRole} accessibilityLabel={accessibilityLabel} style={[{ marginBottom: theme.spacing.lg }, style]}>{heading}{children}</View>;
 }
-export function ResponsiveGrid({ children, minItemWidth = 260, ...props }: ComponentProps<typeof View> & { minItemWidth?: number }) {
+export function ResponsiveGrid({ children, minItemWidth = 240, ...props }: ComponentProps<typeof View> & { minItemWidth?: number }) {
   return (
     <View {...props} style={[styles.grid, props.style]}>
       {React.Children.map(children, (child) => (

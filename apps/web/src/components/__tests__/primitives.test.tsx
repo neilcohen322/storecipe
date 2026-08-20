@@ -8,7 +8,7 @@ jest.mock("react-native-safe-area-context", () => ({
 
 jest.mock("../../theme/ThemeProvider", () => ({
   ThemeProvider: ({ children }: { children: React.ReactNode }) => children,
-  useTheme: () => ({ theme: { colors: { canvas: "#f7fff9", surface: "#fff", elevatedSurface: "#fff", text: "#10231c", mutedText: "#527060", border: "#d0e5d6", accent: "#2d6a4f", accentHover: "#1b4332", accentContrast: "#fff", success: "#2d6a4f", warning: "#b7791f", danger: "#b42318", focusRing: "#40916c", scrim: "rgba(0,0,0,.4)" }, spacing: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, "2xl": 48 }, sizing: { control: 44, icon: 24, touchTarget: 48 }, radii: { sm: 8, md: 12, lg: 16, pill: 999 }, type: { caption: 12, body: 15, subtitle: 18, heading: 28, display: 54 } } }),
+  useTheme: () => ({ theme: jest.requireActual("../../theme/testTheme").createTestTheme() }),
 }));
 import { ThemeProvider } from "../../theme/ThemeProvider";
 import {
@@ -53,7 +53,7 @@ describe("accessible token-driven primitives", () => {
   });
 
   it("provides layout, status, and deterministic recipe media primitives", async () => {
-    const { getByTestId } = await renderWithTheme(<>
+    const { getByTestId, getByRole } = await renderWithTheme(<>
       <Screen><PageHeader title="Recipes" /><Section title="Latest"><ResponsiveGrid><Text>Card</Text></ResponsiveGrid></Section></Screen>
       <InlineNotice message="Saved" /><EmptyState title="Nothing here" /><LoadingState label="Loading recipes" />
       <ErrorState title="Failed" /><OfflineBanner /><StatusBadge status="success" /><ImportProgress status="review_required" />
@@ -61,6 +61,7 @@ describe("accessible token-driven primitives", () => {
     </>);
     expect(getByTestId("import-progress", { includeHiddenElements: true })).toBeTruthy();
     expect(getByTestId("recipe-media", { includeHiddenElements: true }).props.accessibilityLabel).toMatch(/Pasta/);
+    expect(StyleSheet.flatten(getByRole("header", { name: "Recipes", includeHiddenElements: true }).props.style).fontFamily).toBe("Fraunces_700Bold");
   });
 
   it("keeps section headings outside semantic lists", async () => {
@@ -110,7 +111,7 @@ describe("accessible token-driven primitives", () => {
       expect(StyleSheet.flatten(item.props.style)).toEqual(expect.objectContaining({
         flexGrow: 1,
         flexShrink: 1,
-        flexBasis: 260,
+        flexBasis: 240,
         maxWidth: "100%",
       }));
     }
@@ -127,7 +128,7 @@ describe("accessible token-driven primitives", () => {
     expect(getByText("Please try again.")).toBeTruthy();
     expect(getByRole("button", { name: "Try again" })).toBeTruthy();
     expect(style.borderWidth).toBeGreaterThanOrEqual(1);
-    expect(style.backgroundColor).toBe("#fff");
+    expect(style.backgroundColor).toBe("#ffffff");
     expect(style.width).toBe("100%");
   });
 
@@ -135,7 +136,7 @@ describe("accessible token-driven primitives", () => {
     const { getByRole } = await renderWithTheme(<Button label="List view" variant="secondary" />);
     const button = getByRole("button", { name: "List view" });
     await fireEvent(button, "hoverIn");
-    expect(StyleSheet.flatten(button.props.style).backgroundColor).toBe("#fff");
+    expect(StyleSheet.flatten(button.props.style).backgroundColor).toBe("#ffffff");
   });
 
   it("shows focus rings for keyboard focus but not pointer focus", async () => {
