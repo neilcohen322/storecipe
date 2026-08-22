@@ -45,3 +45,15 @@ def test_budget_has_three_actual_spend_thresholds() -> None:
     for threshold in ("0.5", "0.8", "1.0"):
         assert f"threshold_percent = {threshold}" in text
     assert text.count('spend_basis       = "CURRENT_SPEND"') == 3
+
+
+def test_terraform_identity_can_attach_runtime_service_account() -> None:
+    iam = (PRODUCTION / "iam.tf").read_text(encoding="utf-8")
+    compute = (PRODUCTION / "compute.tf").read_text(encoding="utf-8")
+    assert 'resource "google_service_account_iam_member" "terraform_runtime_user"' in iam
+    assert 'role               = "roles/iam.serviceAccountUser"' in iam
+    assert (
+        'member             = "serviceAccount:storecipe-terraform@${var.project_id}'
+        '.iam.gserviceaccount.com"'
+    ) in iam
+    assert "google_service_account_iam_member.terraform_runtime_user" in compute

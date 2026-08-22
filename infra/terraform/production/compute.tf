@@ -65,7 +65,10 @@ resource "google_compute_instance" "production" {
     }
   }
 
-  depends_on = [google_project_service.production]
+  depends_on = [
+    google_project_service.production,
+    google_service_account_iam_member.terraform_runtime_user,
+  ]
 }
 
 resource "google_compute_attached_disk" "data" {

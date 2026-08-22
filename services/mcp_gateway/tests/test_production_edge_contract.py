@@ -2,6 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[3]
 PRODUCTION_CADDY = ROOT / "infra" / "production" / "Caddyfile"
+PRODUCTION_COMPOSE = ROOT / "infra" / "production" / "compose.yaml"
 WEB_DOCKERFILE = ROOT / "infra" / "production" / "Dockerfile.web"
 
 
@@ -29,6 +30,16 @@ def test_edge_redacts_auth_cookie_and_query_material() -> None:
     assert "request>headers>Authorization delete" in caddy
     assert "request>headers>Cookie delete" in caddy
     assert "request>uri replace REDACTED" in caddy
+
+
+def test_edge_health_is_local_http_without_claiming_public_acme_host() -> None:
+    caddy = PRODUCTION_CADDY.read_text(encoding="utf-8")
+    compose = PRODUCTION_COMPOSE.read_text(encoding="utf-8")
+    assert "http://127.0.0.1, http://localhost {" in caddy
+    assert "respond 200" in caddy
+    assert caddy.index("http://127.0.0.1, http://localhost {") < caddy.index("{$PUBLIC_HOST} {")
+    assert '"http://127.0.0.1/"' in compose
+    assert '"http://localhost/"' not in compose
 
 
 def test_web_image_has_public_inputs_and_no_secret_build_arg() -> None:

@@ -4,6 +4,12 @@
 	}
 }
 
+# Container healthchecks hit Host 127.0.0.1/localhost. The named public site
+# would 308 those requests to HTTPS PUBLIC_HOST, which fails from inside Docker.
+http://127.0.0.1, http://localhost {
+	respond 200
+}
+
 {$PUBLIC_HOST} {
 	encode zstd gzip
 

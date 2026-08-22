@@ -73,9 +73,11 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
       - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
         with:
           version: ">= 545.0.0"
+          project_id: ${{ vars.GCP_PROJECT_ID }}
       - name: Build public deployment bundle
         run: |
           set -euo pipefail
@@ -89,14 +91,17 @@ jobs:
         env:
           VM: ${{ vars.GCP_VM_NAME }}
           ZONE: ${{ vars.GCP_ZONE }}
+          CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
+          [[ -n "${CLOUDSDK_CORE_PROJECT:-}" ]] || { echo "GCP_PROJECT_ID is required" >&2; exit 1; }
           gcloud compute scp --quiet --tunnel-through-iap --zone "$ZONE" \
             storecipe-deployment.tgz release/release-manifest.json "$VM:~/"
       - name: Run backup-first host deployment through IAP
         env:
           VM: ${{ vars.GCP_VM_NAME }}
           ZONE: ${{ vars.GCP_ZONE }}
+          CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
           gcloud compute ssh "$VM" --quiet --tunnel-through-iap --zone "$ZONE" --command '

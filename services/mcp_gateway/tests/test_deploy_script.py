@@ -46,6 +46,15 @@ def test_deploy_captures_previous_images_and_never_downgrades_database() -> None
     assert " downgrade " not in text
 
 
+def test_deploy_retries_local_https_while_caddy_obtains_certificate() -> None:
+    text = DEPLOY.read_text(encoding="utf-8")
+    function = text[text.index("wait_for_local_https()") : text.index("wait_for_service_health()")]
+    assert "SECONDS + 180" in function
+    assert "sleep 5" in function
+    assert '--resolve "$PUBLIC_HOST:443:127.0.0.1"' in function
+    assert 'run_step "local Host routing" wait_for_local_https' in text
+
+
 def test_compose_has_explicit_one_off_migration_services() -> None:
     data = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     catalog = data["services"]["catalog-migrate"]

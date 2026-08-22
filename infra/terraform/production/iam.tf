@@ -62,3 +62,11 @@ resource "google_service_account_iam_member" "deploy_runtime_user" {
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.deploy.email}"
 }
+
+# Compute refuses to attach a service account unless the caller has actAs on it.
+# serviceAccountAdmin does not include that permission.
+resource "google_service_account_iam_member" "terraform_runtime_user" {
+  service_account_id = google_service_account.runtime.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:storecipe-terraform@${var.project_id}.iam.gserviceaccount.com"
+}

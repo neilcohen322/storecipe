@@ -68,6 +68,20 @@ wait_for_healthy() {
   return 1
 }
 
+wait_for_local_https() {
+  local deadline=$((SECONDS + 180))
+  while (( SECONDS < deadline )); do
+    if curl --fail --silent --resolve "$PUBLIC_HOST:443:127.0.0.1" \
+      "https://$PUBLIC_HOST/" --output /dev/null; then
+      return 0
+    fi
+    sleep 5
+  done
+  echo "Local HTTPS routing for $PUBLIC_HOST is not ready" >&2
+  curl --fail --show-error --resolve "$PUBLIC_HOST:443:127.0.0.1" \
+    "https://$PUBLIC_HOST/" --output /dev/null
+}
+
 wait_for_service_health() {
   local service=$1 deadline=$((SECONDS + 120)) container status
   while (( SECONDS < deadline )); do
@@ -216,7 +230,7 @@ run_step "Ingestion migration" compose --profile migration run --rm --no-deps in
 STACK_CHANGED=1
 run_step "start target release" compose up -d --remove-orphans
 run_step "container readiness" wait_for_healthy
-run_step "local Host routing" curl --fail --silent --show-error --resolve "$PUBLIC_HOST:443:127.0.0.1" "https://$PUBLIC_HOST/" --output /dev/null
+run_step "local Host routing" wait_for_local_https
 run_step "public TLS and authorization smoke" python3 "$ROOT_DIR/scripts/deploy/smoke_public.py" \
   --origin "$PUBLIC_ORIGIN" --mcp-resource "$MCP_RESOURCE_URL"
 
