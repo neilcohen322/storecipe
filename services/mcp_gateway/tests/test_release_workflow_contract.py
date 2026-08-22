@@ -14,6 +14,18 @@ def test_release_follows_green_master_and_supports_manual_republish() -> None:
     assert "git merge-base --is-ancestor" in text
 
 
+def test_automatic_release_waits_for_public_production_contract() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    for variable in (
+        "PUBLIC_ORIGIN",
+        "AUTH0_DOMAIN",
+        "AUTH0_PUBLIC_CLIENT_ID",
+        "AUTH0_API_AUDIENCE",
+        "MCP_RESOURCE_URL",
+    ):
+        assert f"vars.{variable} != ''" in text
+
+
 def test_release_has_minimal_permissions_and_pinned_actions() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "contents: read" in text

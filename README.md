@@ -165,6 +165,49 @@ downgrades Alembic: migrations must remain compatible with the immediately prece
 application release. On the first deployment it starts only PostgreSQL and Redis,
 backs up the initialized empty database, and then performs the first migrations.
 
+Generate the real Secret Manager payload only after GCP, the hostname, and Auth0 exist.
+The helper reads three external secrets from process-only environment variables,
+generates database passwords and a 32-byte payload key, rejects placeholders and
+shell-sensitive values, and refuses to write inside the repository:
+
+```powershell
+$env:STORECIPE_INPUT_MCP_OBO_CLIENT_SECRET = '<PASSWORD_MANAGER_VALUE>'
+$env:STORECIPE_INPUT_CATALOG_M2M_CLIENT_SECRET = '<PASSWORD_MANAGER_VALUE>'
+$env:STORECIPE_INPUT_OPENROUTER_API_KEY = '<PASSWORD_MANAGER_VALUE>'
+
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy/build_runtime_bundle.ps1 `
+  -OutputPath "$env:USERPROFILE\storecipe-runtime.env" `
+  -PublicOrigin 'https://<PRODUCTION_HOST>' `
+  -Auth0Domain '<AUTH0_DOMAIN>' `
+  -McpOboClientId '<MCP_OBO_CLIENT_ID>' `
+  -CatalogM2mClientId '<CATALOG_M2M_CLIENT_ID>' `
+  -MediaBucket '<GCP_MEDIA_BUCKET>' `
+  -BackupBucket '<GCP_BACKUP_BUCKET>'
+```
+
+Upload the file directly with `gcloud secrets versions add`, verify the version is
+enabled, then securely remove it and clear the three process environment variables.
+The helper prints status only, never generated or supplied values.
+
+The local verifier checks production Compose, Caddy, Terraform, shell syntax, and all
+four production images with synthetic public values. It never contacts production
+unless explicitly enabled:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify.ps1
+
+# Only after production exists:
+$env:RUN_PRODUCTION_LIVE_CHECKS = '1'
+$env:PUBLIC_ORIGIN = 'https://<PRODUCTION_HOST>'
+$env:AUTH0_ISSUER = 'https://<AUTH0_DOMAIN>/'
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify.ps1
+```
+
+For production OAuth/MCP evidence, `scripts/smoke-mcp-auth.ps1` checks challenges,
+metadata, audience isolation, delegated identity, and optional six-tool evidence. It
+reports only issuer hostnames, audience labels, approved scopes, expiry buckets,
+`act` presence, and whether subjects match—never tokens, subjects, names, or emails.
+
 ### Server-rendered variant smoke (operator opt-in)
 
 The checked-in `INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON={}` value is intentionally

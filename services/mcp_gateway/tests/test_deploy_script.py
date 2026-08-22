@@ -18,6 +18,8 @@ def test_deploy_is_locked_and_validates_before_mutating() -> None:
     assert "swapon --show" in text
     assert "gcloud secrets versions access latest" in text
     assert 'chmod 0600 "$RUNTIME_ENV"' in text
+    assert "unsupported or shell-sensitive syntax" in text
+    assert "grep -Eqv" in text
     assert "docker compose" in text and "config --quiet" in text
 
 

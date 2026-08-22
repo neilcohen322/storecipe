@@ -29,6 +29,37 @@ Invoke-Step 'gateway deployment contract' { uv run pytest services/mcp_gateway/t
 Invoke-Step 'gateway health contract' { uv run pytest services/mcp_gateway/tests/test_health.py -q }
 # The gateway health contract covers /health/ready and /health/live.
 Invoke-Step 'openapi contract' { uv run openapi-spec-validator contracts/openapi.yaml }
+Invoke-Step 'production MCP helper self-test' {
+    powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-mcp-auth.ps1 -SelfTest
+}
+
+function Invoke-ProductionComposeConfig {
+    $composeText = Get-Content -Raw ./infra/production/compose.yaml
+    $requiredNames = [regex]::Matches($composeText, '\$\{([A-Z0-9_]+):\?') |
+        ForEach-Object { $_.Groups[1].Value } |
+        Sort-Object -Unique
+    $saved = @{}
+    try {
+        foreach ($name in $requiredNames) {
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            [Environment]::SetEnvironmentVariable($name, 'contract-value', 'Process')
+        }
+        $env:PUBLIC_HOST = 'storecipe.example'
+        $env:PUBLIC_ORIGIN = 'https://storecipe.example'
+        $env:AUTH0_ISSUER = 'https://tenant.example.auth0.com/'
+        $env:AUTH0_AUDIENCE = 'https://storecipe.example/api'
+        $env:MCP_RESOURCE_URL = 'https://storecipe.example/mcp'
+        $env:STORECIPE_WEB_IMAGE = 'ghcr.io/example/web@sha256:' + ('a' * 64)
+        $env:STORECIPE_CATALOG_IMAGE = 'ghcr.io/example/catalog@sha256:' + ('b' * 64)
+        $env:STORECIPE_INGESTION_IMAGE = 'ghcr.io/example/ingestion@sha256:' + ('c' * 64)
+        $env:STORECIPE_MCP_IMAGE = 'ghcr.io/example/mcp@sha256:' + ('d' * 64)
+        docker compose -f ./infra/production/compose.yaml --profile migration config --quiet
+    } finally {
+        foreach ($name in $requiredNames) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+        }
+    }
+}
 
 if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-Host 'UNVERIFIED: Docker Compose checks require the docker CLI.'
@@ -38,9 +69,61 @@ if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
     if ($LASTEXITCODE -ne 0) {
         Write-Host 'UNVERIFIED: Docker daemon is unavailable; image builds skipped.'
     } else {
+        Invoke-Step 'production Compose config' { Invoke-ProductionComposeConfig }
+        Invoke-Step 'production Caddy config' {
+            $caddyPath = (Resolve-Path ./infra/production/Caddyfile).Path
+            docker run --rm -e PUBLIC_HOST=storecipe.example `
+                --mount "type=bind,source=$caddyPath,target=/etc/caddy/Caddyfile,readonly" `
+                caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
+        }
+        Invoke-Step 'deployment shell syntax' {
+            $repoPath = (Resolve-Path .).Path
+            docker run --rm --mount "type=bind,source=$repoPath,target=/repo,readonly" `
+                bash:5.3 bash -n /repo/scripts/deploy/deploy.sh /repo/scripts/deploy/backup.sh `
+                /repo/scripts/deploy/restore_verify.sh /repo/scripts/deploy/run_with_runtime_env.sh
+        }
+        Invoke-Step 'Terraform formatting' {
+            $repoPath = (Resolve-Path .).Path
+            docker run --rm --mount "type=bind,source=$repoPath,target=/repo" -w /repo `
+                hashicorp/terraform:1.15 fmt -check -recursive infra/terraform
+        }
+        foreach ($root in @('bootstrap', 'production')) {
+            Invoke-Step "Terraform $root init/validate" {
+                $repoPath = (Resolve-Path .).Path
+                docker run --rm --mount "type=bind,source=$repoPath,target=/repo" `
+                    -w "/repo/infra/terraform/$root" hashicorp/terraform:1.15 `
+                    init -backend=false
+                if ($LASTEXITCODE -eq 0) {
+                    docker run --rm --mount "type=bind,source=$repoPath,target=/repo" `
+                        -w "/repo/infra/terraform/$root" hashicorp/terraform:1.15 validate
+                }
+            }
+        }
         Invoke-Step 'docker compose build catalog-api' { docker compose build catalog-api }
         Invoke-Step 'docker compose build ingestion-api' { docker compose build ingestion-api }
         Invoke-Step 'docker compose build mcp-gateway' { docker compose build mcp-gateway }
+        Invoke-Step 'production web image build' {
+            docker build -f ./infra/production/Dockerfile.web `
+                --build-arg EXPO_PUBLIC_AUTH0_DOMAIN=tenant.example.auth0.com `
+                --build-arg EXPO_PUBLIC_AUTH0_CLIENT_ID=verify-public-client `
+                --build-arg EXPO_PUBLIC_AUTH0_AUDIENCE=https://storecipe.example/api `
+                --build-arg EXPO_PUBLIC_CATALOG_API_URL=https://storecipe.example `
+                --build-arg EXPO_PUBLIC_INGESTION_API_URL=https://storecipe.example `
+                -t storecipe-web:verify .
+        }
+    }
+}
+
+if ($env:RUN_PRODUCTION_LIVE_CHECKS -ne '1') {
+    Write-Host 'UNVERIFIED: Live production checks require RUN_PRODUCTION_LIVE_CHECKS=1.'
+} else {
+    if ([string]::IsNullOrWhiteSpace($env:PUBLIC_ORIGIN) -or
+        [string]::IsNullOrWhiteSpace($env:AUTH0_ISSUER)) {
+        throw 'PUBLIC_ORIGIN and AUTH0_ISSUER are required for live production checks.'
+    }
+    Invoke-Step 'live production OAuth/MCP smoke' {
+        powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-mcp-auth.ps1 `
+            -Live -PublicOrigin $env:PUBLIC_ORIGIN -Auth0Issuer $env:AUTH0_ISSUER
     }
 }
 

@@ -144,6 +144,10 @@ source /etc/storecipe-host.conf
 install -d -m 0750 -o root -g root /run/storecipe /opt/storecipe/releases
 gcloud secrets versions access latest --secret "$RUNTIME_SECRET_NAME" > "$RUNTIME_ENV"
 chmod 0600 "$RUNTIME_ENV"
+if grep -Eqv '^(|#[^[:cntrl:]]*|[A-Z][A-Z0-9_]*=[A-Za-z0-9_./:@,+={}\[\]-]*)$' "$RUNTIME_ENV"; then
+  echo "Runtime bundle contains unsupported or shell-sensitive syntax" >&2
+  exit 1
+fi
 
 required_names=(
   GCP_BACKUP_BUCKET POSTGRES_ADMIN_USER POSTGRES_ADMIN_PASSWORD CATALOG_DB_PASSWORD

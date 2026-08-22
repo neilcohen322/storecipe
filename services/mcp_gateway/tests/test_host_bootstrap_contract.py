@@ -4,6 +4,7 @@ ROOT = Path(__file__).parents[3]
 INSTALL = ROOT / "scripts" / "deploy" / "install_host.sh"
 STARTUP = ROOT / "infra" / "terraform" / "production" / "templates" / "startup.sh.tftpl"
 RUNTIME_OPERATION = ROOT / "scripts" / "deploy" / "run_with_runtime_env.sh"
+BOOTSTRAP_TLS = ROOT / "scripts" / "deploy" / "start_bootstrap_tls.sh"
 
 
 def test_host_uses_retained_data_disk_for_docker_and_two_gb_swap() -> None:
@@ -31,6 +32,8 @@ def test_scheduled_operations_fetch_and_remove_runtime_secret() -> None:
     assert "trap cleanup EXIT" in text
     assert 'rm -f "$RUNTIME_ENV"' in text
     assert 'echo "$POSTGRES_ADMIN_PASSWORD"' not in text
+    assert "shell-sensitive syntax" in text
+    assert "grep -Eqv" in text
 
 
 def test_startup_metadata_contains_identifiers_but_no_secret_payload() -> None:
@@ -39,3 +42,13 @@ def test_startup_metadata_contains_identifiers_but_no_secret_payload() -> None:
     assert "secret_data" not in text
     assert "PASSWORD=" not in text
     assert "BEGIN PRIVATE" not in text
+
+
+def test_bootstrap_tls_is_hostname_bounded_and_reuses_production_caddy_data() -> None:
+    text = BOOTSTRAP_TLS.read_text(encoding="utf-8")
+    assert "start_bootstrap_tls.sh must run as root" in text
+    assert "^[a-z0-9]" in text
+    assert "-p 80:80 -p 443:443" in text
+    assert "storecipe-production_caddy-data:/data" in text
+    assert "caddy:2.11.4-alpine" in text
+    assert "Certificate issuance is asynchronous" in text

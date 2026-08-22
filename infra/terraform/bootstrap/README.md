@@ -9,12 +9,15 @@ bucket, database, service-account key, or secret payload.
 2. Run `terraform init`, `terraform fmt -check`, `terraform validate`,
    `terraform plan -out bootstrap.tfplan`, and inspect `terraform show bootstrap.tfplan`.
 3. Apply only the inspected file with `terraform apply bootstrap.tfplan`.
-4. Add this backend block to `versions.tf` using the `state_bucket` output:
+4. Copy `backend.tf.example` to the ignored `backend.tf` and replace
+   `REPLACE_WITH_BOOTSTRAP_STATE_BUCKET` with the `state_bucket` output. The result is:
 
    ```hcl
-   backend "gcs" {
-     bucket = "OUTPUT_STATE_BUCKET"
-     prefix = "bootstrap"
+   terraform {
+     backend "gcs" {
+       bucket = "OUTPUT_STATE_BUCKET"
+       prefix = "bootstrap"
+     }
    }
    ```
 

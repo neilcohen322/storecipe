@@ -20,6 +20,10 @@ trap cleanup EXIT
 
 gcloud secrets versions access latest --secret "$RUNTIME_SECRET_NAME" > "$RUNTIME_ENV"
 chmod 0600 "$RUNTIME_ENV"
+if grep -Eqv '^(|#[^[:cntrl:]]*|[A-Z][A-Z0-9_]*=[A-Za-z0-9_./:@,+={}\[\]-]*)$' "$RUNTIME_ENV"; then
+  echo "Runtime bundle contains unsupported or shell-sensitive syntax" >&2
+  exit 1
+fi
 for name in GCP_BACKUP_BUCKET POSTGRES_ADMIN_USER POSTGRES_ADMIN_PASSWORD; do
   grep -qE "^$name=.+" "$RUNTIME_ENV" || {
     echo "Runtime bundle is missing required variable: $name" >&2

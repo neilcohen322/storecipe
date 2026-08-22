@@ -24,9 +24,14 @@ permissions:
 jobs:
   publish:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'master')
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'master')) &&
+      vars.PUBLIC_ORIGIN != '' &&
+      vars.AUTH0_DOMAIN != '' &&
+      vars.AUTH0_PUBLIC_CLIENT_ID != '' &&
+      vars.AUTH0_API_AUDIENCE != '' &&
+      vars.MCP_RESOURCE_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
