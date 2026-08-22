@@ -10,7 +10,6 @@ import os
 import ssl
 from typing import Any
 
-
 EXPECTED_SCOPES = ["recipes:read", "recipes:write", "ratings:write"]
 
 
@@ -71,7 +70,10 @@ def main() -> None:
         "/mcp",
         401,
         method="POST",
-        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
         body=b"{}",
     )
 
@@ -80,7 +82,7 @@ def main() -> None:
         if "Bearer" not in challenge or "resource_metadata=" not in challenge:
             raise RuntimeError(f"{label} did not return an OAuth resource-metadata challenge")
         print(f"PASS {label} WWW-Authenticate metadata challenge")
-    expected_mcp_metadata = f'{origin}/.well-known/oauth-protected-resource/mcp'
+    expected_mcp_metadata = f"{origin}/.well-known/oauth-protected-resource/mcp"
     if f'resource_metadata="{expected_mcp_metadata}"' not in mcp_headers["www-authenticate"]:
         raise RuntimeError("MCP OAuth challenge points at unexpected resource metadata")
 

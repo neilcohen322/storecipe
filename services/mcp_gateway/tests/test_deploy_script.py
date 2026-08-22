@@ -2,7 +2,6 @@ from pathlib import Path
 
 import yaml
 
-
 ROOT = Path(__file__).parents[3]
 DEPLOY = ROOT / "scripts" / "deploy" / "deploy.sh"
 SMOKE = ROOT / "scripts" / "deploy" / "smoke_public.py"

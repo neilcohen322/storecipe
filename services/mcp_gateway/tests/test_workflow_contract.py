@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[3]
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 TERRAFORM = ROOT / ".github" / "workflows" / "terraform.yml"
