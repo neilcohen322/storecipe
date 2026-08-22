@@ -17,4 +17,13 @@ apps/web/.expo/
 apps/web/dist/
 *.log
 .worktrees/
+gha-creds-*.json
+**/gha-creds-*.json
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+backend.tf
+.terraform/
+release-manifest.json
 

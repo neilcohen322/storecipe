@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $# -ne 4 || $1 != storage || $2 != cp ]]; then
+  echo "The local restore fixture supports only: gcloud storage cp SOURCE DEST" >&2
+  exit 2
+fi
+: "${FAKE_GCS_ROOT:?FAKE_GCS_ROOT is required}"
+
+source_path=$3
+destination=$4
+if [[ $source_path == gs://fake-storecipe/* ]]; then
+  source_path="$FAKE_GCS_ROOT/${source_path#gs://fake-storecipe/}"
+fi
+cp "$source_path" "$destination"

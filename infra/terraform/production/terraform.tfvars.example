@@ -1,0 +1,12 @@
+project_id                      = "storecipe-prod-example"
+billing_account_id              = "000000-000000-000000"
+region                          = "us-central1"
+zone                            = "us-central1-a"
+machine_type                    = "e2-micro"
+bucket_suffix                   = "replace-unique"
+workload_identity_pool_name     = "projects/123456789/locations/global/workloadIdentityPools/storecipe-github"
+github_owner                    = "neilcohen322"
+github_repository               = "storecipe"
+budget_amount_usd               = 10
+budget_notification_email       = "operator@example.com"
+deletion_protection             = true

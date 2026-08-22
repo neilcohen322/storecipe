@@ -1,0 +1,6 @@
+project_id           = "storecipe-prod-example"
+billing_account_id   = "000000-000000-000000"
+region               = "us-central1"
+state_bucket_suffix  = "replace-unique"
+github_owner         = "neilcohen322"
+github_repository    = "storecipe"

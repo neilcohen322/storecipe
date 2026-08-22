@@ -1,0 +1,15 @@
+[Unit]
+Description=Storecipe PostgreSQL backup
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/opt/storecipe/current/compose.yaml
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/storecipe/current
+ExecStart=/usr/local/sbin/storecipe-runtime-operation backup
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=true

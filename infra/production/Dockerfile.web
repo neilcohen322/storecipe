@@ -1,0 +1,33 @@
+FROM node:24-alpine AS web-build
+
+RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
+WORKDIR /workspace/apps/web
+
+COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY apps/web/ ./
+
+ARG EXPO_PUBLIC_AUTH0_DOMAIN
+ARG EXPO_PUBLIC_AUTH0_CLIENT_ID
+ARG EXPO_PUBLIC_AUTH0_AUDIENCE
+ARG EXPO_PUBLIC_CATALOG_API_URL
+ARG EXPO_PUBLIC_INGESTION_API_URL
+ENV EXPO_PUBLIC_AUTH0_DOMAIN=${EXPO_PUBLIC_AUTH0_DOMAIN} \
+    EXPO_PUBLIC_AUTH0_CLIENT_ID=${EXPO_PUBLIC_AUTH0_CLIENT_ID} \
+    EXPO_PUBLIC_AUTH0_AUDIENCE=${EXPO_PUBLIC_AUTH0_AUDIENCE} \
+    EXPO_PUBLIC_CATALOG_API_URL=${EXPO_PUBLIC_CATALOG_API_URL} \
+    EXPO_PUBLIC_INGESTION_API_URL=${EXPO_PUBLIC_INGESTION_API_URL}
+
+RUN test -n "$EXPO_PUBLIC_AUTH0_DOMAIN" \
+ && test -n "$EXPO_PUBLIC_AUTH0_CLIENT_ID" \
+ && test -n "$EXPO_PUBLIC_AUTH0_AUDIENCE" \
+ && test -n "$EXPO_PUBLIC_CATALOG_API_URL" \
+ && test -n "$EXPO_PUBLIC_INGESTION_API_URL" \
+ && pnpm run test:production-bundle
+
+FROM caddy:2.11.4-alpine
+COPY infra/production/Caddyfile /etc/caddy/Caddyfile
+COPY --from=web-build /workspace/apps/web/dist /srv/web
+
+EXPOSE 80 443

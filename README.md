@@ -8,7 +8,7 @@ gateway.
 ## Architecture
 
 - **MCP gateway (`mcp-gateway`):** one public Streamable HTTP `/mcp` endpoint, OAuth
-  discovery, and exactly four tools backed by Catalog REST.
+  discovery, and exactly six tools backed by Catalog and Ingestion REST.
 - **Catalog API:** recipes, ratings, private search, ownership, idempotent creation,
   and PostgreSQL persistence; it does not host MCP transport.
 - **Ingestion API/worker:** asynchronous recipe-import and extraction infrastructure.
@@ -119,6 +119,121 @@ Set `CATALOG_TEST_MEDIA_BUCKET` only after Terraform creates the private product
 bucket; Catalog uses Application Default Credentials and never a JSON key path. When
 that variable is unset, the live GCS proof is skipped.
 
+### Production artifacts and recovery
+
+Production uses [`infra/production/compose.yaml`](infra/production/compose.yaml), not
+the local Compose file. It accepts four full GHCR digest references, exposes only Caddy
+on ports 80/443, and requires a root-only runtime environment bundle with no repository
+password defaults. The release workflow publishes images after green `master` CI or
+manually republishes a previously green `master` commit; publication never deploys.
+
+Production is one origin, not three subdomains. For a selected hostname, set
+`PUBLIC_ORIGIN=https://<host>`, `AUTH0_AUDIENCE=https://<host>/api`, and
+`MCP_RESOURCE_URL=https://<host>/mcp`; both frontend API bases equal `PUBLIC_ORIGIN`.
+DuckDNS is tried first and accepted only after two-resolver DNS, Caddy TLS, Auth0, and
+MCP-client checks. Tokens and registrar/payment details never belong in repository or
+project notes.
+
+`scripts/deploy/backup.sh` writes a PostgreSQL custom-format dump, SHA-256 sidecar, and
+safe manifest to the private backup bucket. It keeps seven daily and four weekly
+backups. `scripts/deploy/restore_verify.sh` restores a selected dump into a disposable
+PostgreSQL 17 container and checks both schemas, migration heads, bounded counts, and
+foreign-key validity without printing recipe data. The local proof uses only synthetic
+rows:
+
+```powershell
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock `
+  --mount "type=bind,source=$((Resolve-Path '.').Path),target=/repo,readonly" `
+  -w /repo docker:29-cli sh -c `
+  "apk add --no-cache bash coreutils openssl && bash scripts/deploy/verify_restore_local.sh"
+```
+
+Production backup, restore, and secret operations remain human-approved actions after
+infrastructure exists.
+
+Production deployment is performed by `scripts/deploy/deploy.sh` on the VM with one
+validated release manifest. The script takes an exclusive lock, fetches the runtime
+bundle from Secret Manager into a root-only temporary file, checks at least 5 GiB of
+free disk and active swap, and verifies that public runtime identifiers match the
+release. It then backs up PostgreSQL, pulls immutable image digests, runs Catalog and
+Ingestion migrations in that order, starts the stack, waits for health, and performs
+local and public HTTPS smoke checks.
+
+The persistent data disk is protected twice: Terraform will not destroy it without an
+explicit reviewed lifecycle edit, and the separate attachment resource keeps it when
+the VM is removed. Do not remove `prevent_destroy` merely to make a broad
+`terraform destroy` succeed. A machine-type update is allowed to stop and restart the
+VM, so changing `e2-micro` to `e2-small` causes expected downtime while preserving the
+static IP and attached data disk. Always review the saved plan before approving it.
+
+The monthly Terraform budget sends threshold updates to the dedicated email Monitoring
+channel configured by `GCP_BUDGET_NOTIFICATION_EMAIL` and to the Billing account's
+default IAM recipients. It is an alert, not a spending cap; confirm the operator email
+receives notifications and monitor the Billing report after deployment.
+
+GitHub authentication uses one GCP WIF provider with a two-workflow allowlist:
+`terraform.yml` and `deploy.yml` on `master`. That provider is only the first gate. The
+Terraform service account additionally accepts only the Terraform workflow identity;
+the deployment service account remains bound to the protected `production` environment.
+
+If a failure occurs after containers begin changing, the script recreates application
+and edge containers from the prior manifest's image digests. It deliberately never
+downgrades Alembic: migrations must remain compatible with the immediately preceding
+application release. On the first deployment it starts only PostgreSQL and Redis,
+backs up the initialized empty database, and then performs the first migrations.
+If either schema migration fails, the script refuses to start the target release and
+prints which earlier migration completed. Treat the database as potentially partial:
+restore and verify the latest pre-deployment backup before retrying. Image rollback is
+not a substitute for database restore in this case.
+
+Generate the real Secret Manager payload only after GCP, the hostname, and Auth0 exist.
+The helper reads three external secrets from process-only environment variables,
+generates database passwords and a 32-byte payload key, rejects placeholders and
+shell-sensitive values, and refuses to write inside the repository:
+
+```powershell
+$env:STORECIPE_INPUT_MCP_OBO_CLIENT_SECRET = '<PASSWORD_MANAGER_VALUE>'
+$env:STORECIPE_INPUT_CATALOG_M2M_CLIENT_SECRET = '<PASSWORD_MANAGER_VALUE>'
+$env:STORECIPE_INPUT_OPENROUTER_API_KEY = '<PASSWORD_MANAGER_VALUE>'
+
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy/build_runtime_bundle.ps1 `
+  -OutputPath "$env:USERPROFILE\storecipe-runtime.env" `
+  -PublicOrigin 'https://<PRODUCTION_HOST>' `
+  -Auth0Domain '<AUTH0_DOMAIN>' `
+  -McpOboClientId '<MCP_OBO_CLIENT_ID>' `
+  -CatalogM2mClientId '<CATALOG_M2M_CLIENT_ID>' `
+  -MediaBucket '<GCP_MEDIA_BUCKET>' `
+  -BackupBucket '<GCP_BACKUP_BUCKET>'
+```
+
+Upload the file directly with `gcloud secrets versions add`, verify the version is
+enabled, then securely remove it and clear the three process environment variables.
+The helper prints status only, never generated or supplied values.
+
+The local verifier checks production Compose, Caddy, Terraform, shell syntax, and all
+four production images with synthetic public values. It never contacts production
+unless explicitly enabled:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify.ps1
+
+# Only after production exists:
+$env:RUN_PRODUCTION_LIVE_CHECKS = '1'
+$env:PUBLIC_ORIGIN = 'https://<PRODUCTION_HOST>'
+$env:AUTH0_ISSUER = 'https://<AUTH0_DOMAIN>/'
+powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify.ps1
+```
+
+An offline run exits successfully when its completed checks pass but reports how many
+optional or live checks remain `UNVERIFIED`; it never labels that state as full
+production success. With `RUN_PRODUCTION_LIVE_CHECKS=1`, both ephemeral MCP and OBO API
+tokens are mandatory and a missing token fails the run.
+
+For production OAuth/MCP evidence, `scripts/smoke-mcp-auth.ps1` checks challenges,
+metadata, audience isolation, delegated identity, and optional six-tool evidence. It
+reports only issuer hostnames, audience labels, approved scopes, expiry buckets,
+`act` presence, and whether subjects match—never tokens, subjects, names, or emails.
+
 ### Server-rendered variant smoke (operator opt-in)
 
 The checked-in `INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON={}` value is intentionally
@@ -169,9 +284,10 @@ together. Secrets belong in `.env`, which Git ignores.
 Recipe and Catalog REST endpoints require an Auth0 access token whose issuer and
 audience match `AUTH0_ISSUER` and `AUTH0_AUDIENCE`. MCP hosts present tokens whose
 audience is `MCP_RESOURCE_URL`; the gateway exchanges those for API-audience tokens
-before calling Catalog. The gateway exposes exactly four tools: `query_recipes` and
-`get_recipe` use `recipes:read`, `create_recipe` uses `recipes:write`, and
-`rate_recipe` uses `ratings:write`. Leaving Auth0/OBO fully unset is safe for local
+before calling Catalog. The gateway exposes exactly six tools: `query_recipes`,
+`get_recipe`, `list_recipe_query_options`, and `resolve_recipe_query_selections` use
+`recipes:read`; `create_recipe` uses `recipes:write`; and `rate_recipe` uses
+`ratings:write`. Leaving Auth0/OBO fully unset is safe for local
 infrastructure checks: `/health/live` and `/health/ready` stay available, with
 `obo_config: not_required`. Any Auth0/OBO value enables the all-or-none gateway auth
 bundle (`AUTH0_ISSUER`, `AUTH0_AUDIENCE`, `MCP_OBO_CLIENT_ID`, and

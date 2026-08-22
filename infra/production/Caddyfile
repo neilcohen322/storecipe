@@ -1,0 +1,66 @@
+{
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+# Container healthchecks hit Host 127.0.0.1/localhost. The named public site
+# would 308 those requests to HTTPS PUBLIC_HOST, which fails from inside Docker.
+http://127.0.0.1, http://localhost {
+	respond 200
+}
+
+{$PUBLIC_HOST} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format filter {
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+			# URI replacement intentionally hides every query value and recipe
+			# cover object path. Method, status, duration, and upstream remain.
+			request>uri replace REDACTED
+		}
+	}
+
+	route {
+		@coverUpload {
+			method PUT
+			path /v1/recipes/*/cover-image
+		}
+		request_body @coverUpload {
+			max_size 8MB
+		}
+
+		handle /v1/imports* {
+			reverse_proxy ingestion-api:8001
+		}
+
+		handle /v1/* {
+			reverse_proxy catalog-api:8000
+		}
+
+		handle /.well-known/oauth-protected-resource/mcp* {
+			reverse_proxy mcp-gateway:8002
+		}
+
+		handle /mcp* {
+			reverse_proxy mcp-gateway:8002
+		}
+
+		handle /api {
+			respond 404
+		}
+
+		handle /api/* {
+			respond 404
+		}
+
+		handle {
+			root * /srv/web
+			try_files {path} /index.html
+			file_server
+		}
+	}
+}

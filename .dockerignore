@@ -4,6 +4,13 @@
 .github
 .venv
 .env
+.env.*
+!.env.example
+gha-creds-*.json
+**/gha-creds-*.json
+*.tfstate
+*.tfstate.*
+*.tfplan
 **/__pycache__
 **/.pytest_cache
 **/.mypy_cache

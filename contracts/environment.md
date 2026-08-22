@@ -58,6 +58,14 @@
 | `STORECIPE_TEST_REDIS_URL` | Redis integration tests | opt-in | Disposable Redis DSN for rate-limit and AI usage-governance checks |
 | `RUN_DOCKER_INTEGRATION` | Docker integration tests | opt-in | Set to `1` to build an isolated Compose project with deterministic local Auth and Catalog substitutes; the harness issues its own test token |
 
+Production uses `infra/production/compose.yaml`, not the local manifest. It requires
+`STORECIPE_WEB_IMAGE`, `STORECIPE_CATALOG_IMAGE`, `STORECIPE_INGESTION_IMAGE`, and
+`STORECIPE_MCP_IMAGE` as immutable `ghcr.io/...@sha256:<64-hex>` references. The runtime
+bundle supplies `POSTGRES_ADMIN_PASSWORD`, `CATALOG_DB_PASSWORD`, and
+`INGESTION_DB_PASSWORD`; no production password has a repository default. `PUBLIC_ORIGIN`
+is the one HTTPS browser origin, `AUTH0_AUDIENCE` is exactly `<PUBLIC_ORIGIN>/api`, and
+`MCP_RESOURCE_URL` is exactly `<PUBLIC_ORIGIN>/mcp`.
+
 Production values are injected by the deployment environment. `.env` is local only;
 `.env.example` contains names and harmless defaults but no secrets. Catalog talks to GCS
 with Application Default Credentials when a media bucket is configured; do not commit

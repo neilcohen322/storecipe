@@ -19,7 +19,8 @@ export default defineConfig({
     video: "off",
   },
   webServer: {
-    command: "pnpm build:web && pnpm exec serve -s dist -l 4173",
+    command: "pnpm exec expo export --platform web --clear && pnpm exec serve -s dist -l 4173",
+    env: { ...process.env, EXPO_PUBLIC_E2E_MODE: "true" },
     url: baseURL,
     reuseExistingServer: false,
     timeout: 180_000,
