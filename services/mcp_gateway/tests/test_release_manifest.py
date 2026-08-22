@@ -37,6 +37,19 @@ def manifest() -> dict[str, Any]:
 
 def test_accepts_strict_public_digest_manifest() -> None:
     assert MODULE.validate_manifest(manifest())["schema_version"] == 1
+    assert (
+        MODULE.validate_manifest(
+            manifest(), expected_image_prefix="ghcr.io/neilcohen322/storecipe-"
+        )["schema_version"]
+        == 1
+    )
+
+
+def test_rejects_image_outside_expected_repository_prefix() -> None:
+    candidate = manifest()
+    candidate["images"]["web"] = f"ghcr.io/attacker/storecipe-web@sha256:{'a' * 64}"
+    with pytest.raises(MODULE.ManifestError, match="expected Storecipe GHCR repository"):
+        MODULE.validate_manifest(candidate, expected_image_prefix="ghcr.io/neilcohen322/storecipe-")
 
 
 @pytest.mark.parametrize(

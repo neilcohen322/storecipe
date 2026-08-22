@@ -159,11 +159,27 @@ release. It then backs up PostgreSQL, pulls immutable image digests, runs Catalo
 Ingestion migrations in that order, starts the stack, waits for health, and performs
 local and public HTTPS smoke checks.
 
+The persistent data disk is protected twice: Terraform will not destroy it without an
+explicit reviewed lifecycle edit, and the separate attachment resource keeps it when
+the VM is removed. Do not remove `prevent_destroy` merely to make a broad
+`terraform destroy` succeed. A machine-type update is allowed to stop and restart the
+VM, so changing `e2-micro` to `e2-small` causes expected downtime while preserving the
+static IP and attached data disk. Always review the saved plan before approving it.
+
+The monthly Terraform budget sends threshold updates to the dedicated email Monitoring
+channel configured by `GCP_BUDGET_NOTIFICATION_EMAIL` and to the Billing account's
+default IAM recipients. It is an alert, not a spending cap; confirm the operator email
+receives notifications and monitor the Billing report after deployment.
+
 If a failure occurs after containers begin changing, the script recreates application
 and edge containers from the prior manifest's image digests. It deliberately never
 downgrades Alembic: migrations must remain compatible with the immediately preceding
 application release. On the first deployment it starts only PostgreSQL and Redis,
 backs up the initialized empty database, and then performs the first migrations.
+If either schema migration fails, the script refuses to start the target release and
+prints which earlier migration completed. Treat the database as potentially partial:
+restore and verify the latest pre-deployment backup before retrying. Image rollback is
+not a substitute for database restore in this case.
 
 Generate the real Secret Manager payload only after GCP, the hostname, and Auth0 exist.
 The helper reads three external secrets from process-only environment variables,
@@ -202,6 +218,11 @@ $env:PUBLIC_ORIGIN = 'https://<PRODUCTION_HOST>'
 $env:AUTH0_ISSUER = 'https://<AUTH0_DOMAIN>/'
 powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/verify.ps1
 ```
+
+An offline run exits successfully when its completed checks pass but reports how many
+optional or live checks remain `UNVERIFIED`; it never labels that state as full
+production success. With `RUN_PRODUCTION_LIVE_CHECKS=1`, both ephemeral MCP and OBO API
+tokens are mandatory and a missing token fails the run.
 
 For production OAuth/MCP evidence, `scripts/smoke-mcp-auth.ps1` checks challenges,
 metadata, audience isolation, delegated identity, and optional six-tool evidence. It

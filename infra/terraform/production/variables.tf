@@ -69,6 +69,15 @@ variable "budget_amount_usd" {
   }
 }
 
+variable "budget_notification_email" {
+  type        = string
+  description = "Operator email address that receives production budget threshold notifications."
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.budget_notification_email))
+    error_message = "budget_notification_email must be a valid email address."
+  }
+}
+
 variable "deletion_protection" {
   type        = bool
   default     = true

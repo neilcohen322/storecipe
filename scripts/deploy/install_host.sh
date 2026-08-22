@@ -19,7 +19,7 @@ mountpoint -q "$DATA_MOUNT" || mount "$DATA_MOUNT"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl gnupg jq openssl postgresql-client
+apt-get install -y ca-certificates curl gnupg jq openssl postgresql-client python3
 if ! command -v gcloud >/dev/null 2>&1; then
   curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
     | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg

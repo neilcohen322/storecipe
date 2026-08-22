@@ -16,6 +16,8 @@ def test_runtime_bundle_helper_is_outside_repo_and_secret_safe() -> None:
     assert "shell-sensitive characters" in text
     assert "Values were not printed" in text
     assert "STORECIPE_WEB_IMAGE" not in text
+    assert "A-Za-z0-9._+/=-" in text
+    assert "._~" not in text
 
 
 def test_mcp_smoke_never_emits_raw_identity_or_tokens() -> None:
@@ -29,6 +31,8 @@ def test_mcp_smoke_never_emits_raw_identity_or_tokens() -> None:
     assert "Write-Host $mcpToken" not in text
     assert "Write-Host $delegatedApiToken" not in text
     assert "email" not in text.lower()
+    assert "audience/OBO proof cannot be skipped in -Live mode" in text
+    assert "exit 1" in text
 
 
 def test_mcp_smoke_requires_exact_six_tool_evidence() -> None:

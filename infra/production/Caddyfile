@@ -27,7 +27,7 @@ http://127.0.0.1, http://localhost {
 	route {
 		@coverUpload {
 			method PUT
-			path /v1/recipes/*/cover
+			path /v1/recipes/*/cover-image
 		}
 		request_body @coverUpload {
 			max_size 8MB

@@ -48,6 +48,15 @@ def test_deploy_captures_previous_images_and_never_downgrades_database() -> None
     assert " downgrade " not in text
 
 
+def test_migration_failure_requires_backup_restore_before_retry() -> None:
+    text = DEPLOY.read_text(encoding="utf-8")
+    assert "MIGRATIONS_APPLIED=none" in text
+    assert "migration_failed Catalog" in text
+    assert "migration_failed Ingestion" in text
+    assert "Do not retry deployment or start the target stack" in text
+    assert "Restore the latest pre-deployment backup" in text
+
+
 def test_deploy_retries_local_https_while_caddy_obtains_certificate() -> None:
     text = DEPLOY.read_text(encoding="utf-8")
     function = text[text.index("wait_for_local_https()") : text.index("wait_for_service_health()")]

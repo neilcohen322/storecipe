@@ -5,6 +5,7 @@ resource "google_project_service" "production" {
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "iap.googleapis.com",
+    "monitoring.googleapis.com",
     "secretmanager.googleapis.com",
     "serviceusage.googleapis.com",
     "storage.googleapis.com",

@@ -45,3 +45,4 @@ def test_production_postgres_has_no_embedded_password() -> None:
     assert "CATALOG_DB_PASSWORD:?required" in compose
     assert "INGESTION_DB_PASSWORD:?required" in compose
     assert "PASSWORD :'catalog_password'" in init
+    assert "GRANT CREATE ON DATABASE" not in init

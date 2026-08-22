@@ -5,15 +5,22 @@ resource "google_compute_disk" "data" {
   type                      = "pd-standard"
   size                      = 20
   physical_block_size_bytes = 4096
+
+  lifecycle {
+    # The production database, Docker data root, media staging, and swap live here.
+    # Destroying this disk must require an explicit, reviewed lifecycle change.
+    prevent_destroy = true
+  }
 }
 
 resource "google_compute_instance" "production" {
-  name                = "storecipe-production"
-  project             = var.project_id
-  zone                = var.zone
-  machine_type        = var.machine_type
-  deletion_protection = var.deletion_protection
-  tags                = ["storecipe-web", "storecipe-iap"]
+  name                      = "storecipe-production"
+  project                   = var.project_id
+  zone                      = var.zone
+  machine_type              = var.machine_type
+  deletion_protection       = var.deletion_protection
+  allow_stopping_for_update = true
+  tags                      = ["storecipe-web", "storecipe-iap"]
 
   boot_disk {
     auto_delete = true
@@ -59,6 +66,10 @@ resource "google_compute_instance" "production" {
   }
 
   lifecycle {
+    # google_compute_attached_disk owns the data-disk attachment. Without this,
+    # the instance resource tries to remove that separately managed attachment.
+    ignore_changes = [attached_disk]
+
     precondition {
       condition     = google_compute_disk.data.size == 20
       error_message = "The persistent data disk must remain 20 GB."

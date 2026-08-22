@@ -74,6 +74,7 @@ jobs:
       TF_VAR_machine_type: ${{ inputs.machine_type }}
       TF_VAR_bucket_suffix: ${{ vars.GCP_BUCKET_SUFFIX }}
       TF_VAR_workload_identity_pool_name: ${{ vars.GCP_WIF_POOL_NAME }}
+      TF_VAR_budget_notification_email: ${{ vars.GCP_BUDGET_NOTIFICATION_EMAIL }}
       TF_VAR_github_owner: ${{ github.repository_owner }}
       TF_VAR_github_repository: ${{ github.event.repository.name }}
     steps:
@@ -91,7 +92,7 @@ jobs:
           STATE_BUCKET: ${{ vars.GCP_TERRAFORM_STATE_BUCKET }}
         run: |
           set -euo pipefail
-          for name in TF_VAR_project_id TF_VAR_billing_account_id TF_VAR_region TF_VAR_zone TF_VAR_bucket_suffix TF_VAR_workload_identity_pool_name STATE_BUCKET; do
+          for name in TF_VAR_project_id TF_VAR_billing_account_id TF_VAR_region TF_VAR_zone TF_VAR_bucket_suffix TF_VAR_workload_identity_pool_name TF_VAR_budget_notification_email STATE_BUCKET; do
             [[ -n "${!name:-}" ]] || { echo "Missing required variable: $name" >&2; exit 1; }
           done
       - name: Create saved production plan
@@ -105,6 +106,14 @@ jobs:
           terraform plan -input=false -out=production.tfplan
           sha256sum production.tfplan > production.tfplan.sha256
           terraform show -no-color production.tfplan > production-plan.txt
+          jq -n \
+            --arg workflow "Terraform" \
+            --arg operation "plan" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg commit "$GITHUB_SHA" \
+            --arg machine_type "$TF_VAR_machine_type" \
+            '{workflow: $workflow, operation: $operation, run_id: $run_id, commit: $commit, machine_type: $machine_type}' \
+            > production-plan-metadata.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: production-tfplan-${{ github.run_id }}
@@ -112,6 +121,7 @@ jobs:
             infra/terraform/production/production.tfplan
             infra/terraform/production/production.tfplan.sha256
             infra/terraform/production/production-plan.txt
+            infra/terraform/production/production-plan-metadata.json
           if-no-files-found: error
           retention-days: 7
 
@@ -134,6 +144,20 @@ jobs:
           set -euo pipefail
           [[ "$CONFIRMATION" == "apply-production" ]] || { echo "Incorrect confirmation" >&2; exit 1; }
           [[ "$PLAN_RUN_ID" =~ ^[0-9]+$ ]] || { echo "A numeric plan_run_id is required" >&2; exit 1; }
+      - name: Verify plan workflow provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          run=$(gh api "/repos/$GH_REPOSITORY/actions/runs/$PLAN_RUN_ID")
+          [[ "$(jq -r '.path' <<<"$run")" == ".github/workflows/terraform.yml" ]] || { echo "Selected run is not the Terraform workflow" >&2; exit 1; }
+          [[ "$(jq -r '.event' <<<"$run")" == "workflow_dispatch" ]] || { echo "Selected run was not manually dispatched" >&2; exit 1; }
+          [[ "$(jq -r '.conclusion' <<<"$run")" == "success" ]] || { echo "Selected Terraform run was not successful" >&2; exit 1; }
+          [[ "$(jq -r '.head_branch' <<<"$run")" == "master" ]] || { echo "Selected plan was not created from master" >&2; exit 1; }
+          [[ "$(jq -r '.head_sha' <<<"$run")" == "$EXPECTED_COMMIT" ]] || { echo "Selected plan is stale; create a fresh plan for the current master commit" >&2; exit 1; }
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
         with:
@@ -157,6 +181,11 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum --check production.tfplan.sha256
+          jq -e \
+            --arg run_id "${{ inputs.plan_run_id }}" \
+            --arg commit "$GITHUB_SHA" \
+            '.workflow == "Terraform" and .operation == "plan" and .run_id == $run_id and .commit == $commit' \
+            production-plan-metadata.json >/dev/null || { echo "Plan metadata does not match this apply" >&2; exit 1; }
           sed "s/REPLACE_WITH_BOOTSTRAP_STATE_BUCKET/$STATE_BUCKET/" backend.tf.example > backend.tf
           terraform init
           terraform apply -input=false production.tfplan

@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$script:UnverifiedCount = 0
 
 # Append persisted PATH entries without discarding session-only ones
 # (version-manager shims, activated venvs, CI job PATH mutations).
@@ -33,6 +34,12 @@ Invoke-Step 'production MCP helper self-test' {
     powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-mcp-auth.ps1 -SelfTest
 }
 
+function Write-Unverified {
+    param([Parameter(Mandatory)] [string] $Message)
+    $script:UnverifiedCount++
+    Write-Host "UNVERIFIED: $Message"
+}
+
 function Invoke-ProductionComposeConfig {
     $composeText = Get-Content -Raw ./infra/production/compose.yaml
     $requiredNames = [regex]::Matches($composeText, '\$\{([A-Z0-9_]+):\?') |
@@ -62,12 +69,12 @@ function Invoke-ProductionComposeConfig {
 }
 
 if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Host 'UNVERIFIED: Docker Compose checks require the docker CLI.'
+    Write-Unverified 'Docker Compose checks require the docker CLI.'
 } else {
     Invoke-Step 'docker compose config' { docker compose config --quiet }
     docker info *> $null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host 'UNVERIFIED: Docker daemon is unavailable; image builds skipped.'
+        Write-Unverified 'Docker daemon is unavailable; image builds skipped.'
     } else {
         Invoke-Step 'production Compose config' { Invoke-ProductionComposeConfig }
         Invoke-Step 'production Caddy config' {
@@ -115,7 +122,7 @@ if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 
 if ($env:RUN_PRODUCTION_LIVE_CHECKS -ne '1') {
-    Write-Host 'UNVERIFIED: Live production checks require RUN_PRODUCTION_LIVE_CHECKS=1.'
+    Write-Unverified 'Live production checks require RUN_PRODUCTION_LIVE_CHECKS=1.'
 } else {
     if ([string]::IsNullOrWhiteSpace($env:PUBLIC_ORIGIN) -or
         [string]::IsNullOrWhiteSpace($env:AUTH0_ISSUER)) {
@@ -128,31 +135,31 @@ if ($env:RUN_PRODUCTION_LIVE_CHECKS -ne '1') {
 }
 
 if ([string]::IsNullOrWhiteSpace($env:CATALOG_TEST_DATABASE_URL)) {
-    Write-Host 'UNVERIFIED: Catalog PostgreSQL integration checks require CATALOG_TEST_DATABASE_URL.'
+    Write-Unverified 'Catalog PostgreSQL integration checks require CATALOG_TEST_DATABASE_URL.'
 } else {
     Write-Host 'AVAILABLE: Catalog PostgreSQL integration checks can run with CATALOG_TEST_DATABASE_URL.'
 }
 
 if ([string]::IsNullOrWhiteSpace($env:INGESTION_TEST_DATABASE_URL)) {
-    Write-Host 'UNVERIFIED: PostgreSQL integration checks require INGESTION_TEST_DATABASE_URL.'
+    Write-Unverified 'PostgreSQL integration checks require INGESTION_TEST_DATABASE_URL.'
 } else {
     Write-Host 'AVAILABLE: PostgreSQL integration checks can run with INGESTION_TEST_DATABASE_URL.'
 }
 
 if ([string]::IsNullOrWhiteSpace($env:STORECIPE_TEST_REDIS_URL)) {
-    Write-Host 'UNVERIFIED: Redis integration checks require STORECIPE_TEST_REDIS_URL.'
+    Write-Unverified 'Redis integration checks require STORECIPE_TEST_REDIS_URL.'
 } else {
     Write-Host 'AVAILABLE: Redis integration checks can run with STORECIPE_TEST_REDIS_URL.'
 }
 
 if ([string]::IsNullOrWhiteSpace($env:CATALOG_TEST_MEDIA_BUCKET)) {
-    Write-Host 'UNVERIFIED: Live GCS cover-image checks require CATALOG_TEST_MEDIA_BUCKET.'
+    Write-Unverified 'Live GCS cover-image checks require CATALOG_TEST_MEDIA_BUCKET.'
 } else {
     Write-Host 'AVAILABLE: Live GCS cover-image checks can run with CATALOG_TEST_MEDIA_BUCKET.'
 }
 
 if ($env:RUN_DOCKER_INTEGRATION -ne '1') {
-    Write-Host 'UNVERIFIED: Docker integration checks require RUN_DOCKER_INTEGRATION=1.'
+    Write-Unverified 'Docker integration checks require RUN_DOCKER_INTEGRATION=1.'
 } else {
     Write-Host 'AVAILABLE: Isolated Docker integration checks are enabled.'
 }
@@ -162,10 +169,40 @@ try {
     Invoke-Step 'pnpm install (frozen)' { pnpm install --frozen-lockfile }
     Invoke-Step 'pnpm typecheck' { pnpm run typecheck }
     Invoke-Step 'pnpm test' { pnpm test --runInBand }
-    Invoke-Step 'pnpm production web export' { pnpm run build:web }
+    Invoke-Step 'pnpm production web export' {
+        $names = @(
+            'EXPO_PUBLIC_AUTH0_DOMAIN',
+            'EXPO_PUBLIC_AUTH0_CLIENT_ID',
+            'EXPO_PUBLIC_AUTH0_AUDIENCE',
+            'EXPO_PUBLIC_CATALOG_API_URL',
+            'EXPO_PUBLIC_INGESTION_API_URL',
+            'EXPO_PUBLIC_E2E_MODE'
+        )
+        $saved = @{}
+        try {
+            foreach ($name in $names) {
+                $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+            }
+            $env:EXPO_PUBLIC_AUTH0_DOMAIN = 'tenant.example.auth0.com'
+            $env:EXPO_PUBLIC_AUTH0_CLIENT_ID = 'verify-public-client'
+            $env:EXPO_PUBLIC_AUTH0_AUDIENCE = 'https://storecipe.example/api'
+            $env:EXPO_PUBLIC_CATALOG_API_URL = 'https://storecipe.example'
+            $env:EXPO_PUBLIC_INGESTION_API_URL = 'https://storecipe.example'
+            Remove-Item Env:EXPO_PUBLIC_E2E_MODE -ErrorAction SilentlyContinue
+            pnpm run test:production-bundle
+        } finally {
+            foreach ($name in $names) {
+                [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+            }
+        }
+    }
     Invoke-Step 'pnpm browser tests' { pnpm run test:e2e }
 } finally {
     Pop-Location
 }
 
-Write-Host 'All checks passed.'
+if ($script:UnverifiedCount -gt 0) {
+    Write-Host "Completed checks passed; $script:UnverifiedCount optional or live checks remain explicitly UNVERIFIED."
+} else {
+    Write-Host 'All configured offline and live checks passed.'
+}

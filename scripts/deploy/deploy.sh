@@ -24,6 +24,7 @@ DISK_REQUIRED_KB=$((5 * 1024 * 1024))
 APP_SERVICES=(edge catalog-api ingestion-api ingestion-worker ingestion-dispatcher ingestion-reconciler mcp-gateway)
 ALL_SERVICES=(postgres redis-cache redis-broker "${APP_SERVICES[@]}")
 STACK_CHANGED=0
+MIGRATIONS_APPLIED=none
 
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "Another Storecipe deployment is already running" >&2; exit 1; }
@@ -129,6 +130,14 @@ run_step() {
   "$@"
 }
 
+migration_failed() {
+  local service=$1
+  echo "CRITICAL: $service migration failed after the pre-deployment backup." >&2
+  echo "Database migration state may be partial (completed: $MIGRATIONS_APPLIED)." >&2
+  echo "Do not retry deployment or start the target stack. Restore the latest pre-deployment backup, verify it, then investigate the migration failure." >&2
+  return 1
+}
+
 for command in docker gcloud jq python3 flock curl swapon df; do
   command -v "$command" >/dev/null || { echo "Required command is missing: $command" >&2; exit 1; }
 done
@@ -226,10 +235,16 @@ run_step "pre-deployment backup" "$ROOT_DIR/scripts/deploy/backup.sh"
 run_step "pull immutable images" compose pull "${APP_SERVICES[@]}"
 catalog_revision=$(jq -r '.migrations.catalog' "$TARGET_MANIFEST")
 ingestion_revision=$(jq -r '.migrations.ingestion' "$TARGET_MANIFEST")
-run_step "Catalog migration" compose --profile migration run --rm --no-deps catalog-migrate \
-  alembic -c services/catalog/alembic.ini upgrade "$catalog_revision"
-run_step "Ingestion migration" compose --profile migration run --rm --no-deps ingestion-migrate \
-  alembic -c services/ingestion/alembic.ini upgrade "$ingestion_revision"
+if ! run_step "Catalog migration" compose --profile migration run --rm --no-deps catalog-migrate \
+  alembic -c services/catalog/alembic.ini upgrade "$catalog_revision"; then
+  migration_failed Catalog
+fi
+MIGRATIONS_APPLIED=catalog
+if ! run_step "Ingestion migration" compose --profile migration run --rm --no-deps ingestion-migrate \
+  alembic -c services/ingestion/alembic.ini upgrade "$ingestion_revision"; then
+  migration_failed Ingestion
+fi
+MIGRATIONS_APPLIED=catalog-and-ingestion
 
 STACK_CHANGED=1
 run_step "start target release" compose up -d --remove-orphans

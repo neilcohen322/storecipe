@@ -18,11 +18,14 @@ def test_host_uses_retained_data_disk_for_docker_and_two_gb_swap() -> None:
 
 def test_host_install_is_idempotent_and_root_owned() -> None:
     text = INSTALL.read_text(encoding="utf-8")
+    startup = STARTUP.read_text(encoding="utf-8")
     assert "if [[ ! -f /etc/apt/keyrings/docker.asc ]]" in text
     assert "if [[ ! -e /swapfile ]]" in text
     assert "/opt/storecipe/releases /opt/storecipe/current" in text
     assert "-o root -g root" in text
     assert "systemctl enable --now storecipe-backup.timer storecipe-media-reconcile.timer" in text
+    assert "postgresql-client python3" in text
+    assert "postgresql-client python3" in startup
 
 
 def test_scheduled_operations_fetch_and_remove_runtime_secret() -> None:

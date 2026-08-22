@@ -134,6 +134,13 @@ $mcpResource = "$origin/mcp"
 $apiAudience = "$origin/api"
 $metadataUrl = "$origin/.well-known/oauth-protected-resource/mcp"
 
+$mcpToken = [Environment]::GetEnvironmentVariable('STORECIPE_MCP_ACCESS_TOKEN', 'Process')
+$delegatedApiToken = [Environment]::GetEnvironmentVariable('STORECIPE_OBO_API_ACCESS_TOKEN', 'Process')
+if ([string]::IsNullOrWhiteSpace($mcpToken) -or [string]::IsNullOrWhiteSpace($delegatedApiToken)) {
+    Write-Error 'LIVE CHECK FAILED: set both ephemeral token variables only in this shell; audience/OBO proof cannot be skipped in -Live mode.'
+    exit 1
+}
+
 $catalogChallenge = Invoke-HttpCheck 'Catalog unauthenticated protection' "$origin/v1/recipes"
 Assert-Status $catalogChallenge 401
 $mcpChallenge = Invoke-HttpCheck 'MCP unauthenticated protection' $mcpResource 'POST' @{
@@ -156,13 +163,6 @@ if ($metadata.resource -ne $mcpResource -or
 Write-Host 'PASS exact MCP resource, production issuer, and three public scopes.'
 
 if ($ToolsJsonPath) { Test-ExactTools $ToolsJsonPath }
-
-$mcpToken = [Environment]::GetEnvironmentVariable('STORECIPE_MCP_ACCESS_TOKEN', 'Process')
-$delegatedApiToken = [Environment]::GetEnvironmentVariable('STORECIPE_OBO_API_ACCESS_TOKEN', 'Process')
-if ([string]::IsNullOrWhiteSpace($mcpToken) -or [string]::IsNullOrWhiteSpace($delegatedApiToken)) {
-    Write-Host 'UNVERIFIED audience/OBO proof: set both ephemeral token variables only in this shell.'
-    exit 0
-}
 
 $mcpAtCatalog = Invoke-HttpCheck 'MCP token rejected by Catalog' "$origin/v1/recipes" 'GET' @{ Authorization = "Bearer $mcpToken" }
 Assert-Status $mcpAtCatalog 401

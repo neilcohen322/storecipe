@@ -4,6 +4,7 @@ locals {
     "roles/compute.admin",
     "roles/iap.admin",
     "roles/iam.serviceAccountAdmin",
+    "roles/monitoring.editor",
     "roles/resourcemanager.projectIamAdmin",
     "roles/secretmanager.admin",
     "roles/serviceusage.serviceUsageAdmin",
@@ -62,12 +63,13 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
   workload_identity_pool_provider_id = "storecipe-repository"
   display_name                       = "Storecipe repository"
-  attribute_condition                = "attribute.repository == '${local.repository}' && assertion.ref == 'refs/heads/master'"
+  attribute_condition                = "attribute.repository == '${local.repository}' && assertion.ref == 'refs/heads/master' && attribute.workflow == '${local.repository}/.github/workflows/terraform.yml@refs/heads/master'"
   attribute_mapping = {
     "google.subject"        = "assertion.sub"
     "attribute.repository"  = "assertion.repository"
     "attribute.ref"         = "assertion.ref"
     "attribute.environment" = "assertion.environment"
+    "attribute.workflow"    = "assertion.workflow_ref"
   }
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"

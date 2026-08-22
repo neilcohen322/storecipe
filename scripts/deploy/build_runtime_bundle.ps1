@@ -32,7 +32,7 @@ function Get-SecretInput {
     if ($value -match "[`r`n]") {
         throw "$Name contains a newline and cannot be written safely."
     }
-    if ($value -notmatch '^[A-Za-z0-9._~+/-]+$') {
+    if ($value -notmatch '^[A-Za-z0-9._+/=-]+$') {
         throw "$Name contains shell-sensitive characters; rotate/create a URL-safe credential."
     }
     return $value

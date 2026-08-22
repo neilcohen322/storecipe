@@ -20,6 +20,9 @@ def test_machine_and_disk_contract() -> None:
     assert re.search(r'deletion_policy\s*=\s*"KEEP"', text)
     assert "google_compute_attached_disk" in text
     assert "google_compute_disk.data" in text
+    assert "allow_stopping_for_update = true" in text
+    assert "ignore_changes = [attached_disk]" in text
+    assert "prevent_destroy = true" in text
 
 
 def test_network_is_web_public_and_iap_ssh_only() -> None:
@@ -45,6 +48,9 @@ def test_budget_has_three_actual_spend_thresholds() -> None:
     for threshold in ("0.5", "0.8", "1.0"):
         assert f"threshold_percent = {threshold}" in text
     assert text.count('spend_basis       = "CURRENT_SPEND"') == 3
+    assert "all_updates_rule" in text
+    assert "google_monitoring_notification_channel.budget_email.name" in text
+    assert "disable_default_iam_recipients = false" in text
 
 
 def test_terraform_identity_can_attach_runtime_service_account() -> None:

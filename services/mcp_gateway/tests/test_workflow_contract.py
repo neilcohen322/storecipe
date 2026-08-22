@@ -26,6 +26,7 @@ def test_terraform_pr_validation_is_offline_and_manual_cloud_is_wif() -> None:
     assert "service_account:" in text
     assert "bootstrap.tfplan" not in text
     assert "production.tfplan" in text
+    assert "GCP_BUDGET_NOTIFICATION_EMAIL" in text
 
 
 def test_terraform_apply_uses_exact_plan_and_production_gate() -> None:
@@ -35,6 +36,9 @@ def test_terraform_apply_uses_exact_plan_and_production_gate() -> None:
     assert "sha256sum --check" in text
     assert "terraform apply -input=false production.tfplan" in text
     assert "apply-production" in text
+    assert "production-plan-metadata.json" in text
+    assert "actions/runs/$PLAN_RUN_ID" in text
+    assert '"$(jq -r \'.head_sha\' <<<"$run")" == "$EXPECTED_COMMIT"' in text
 
 
 def test_deploy_is_manual_locked_wif_iap_and_vm_reads_secrets() -> None:
@@ -54,6 +58,9 @@ def test_deploy_is_manual_locked_wif_iap_and_vm_reads_secrets() -> None:
     assert "project_id: ${{ vars.GCP_PROJECT_ID }}" in text
     assert text.count("CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}") == 2
     assert '[[ -n "${CLOUDSDK_CORE_PROJECT:-}" ]]' in text
+    assert "actions/runs/$RELEASE_RUN_ID" in text
+    assert ".github/workflows/release.yml" in text
+    assert '--expected-image-prefix "ghcr.io/$owner/storecipe-"' in text
 
 
 def test_cloud_workflows_have_no_key_or_unsafe_event() -> None:

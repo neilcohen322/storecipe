@@ -62,7 +62,7 @@ def _reject_secret_fields(value: Any, location: str = "manifest") -> None:
             _reject_secret_fields(item, f"{location}[{index}]")
 
 
-def validate_manifest(data: Any) -> dict[str, Any]:
+def validate_manifest(data: Any, *, expected_image_prefix: str | None = None) -> dict[str, Any]:
     manifest = _mapping(data, "manifest")
     _reject_secret_fields(manifest)
     _exact_fields(manifest, TOP_LEVEL_FIELDS, "manifest")
@@ -77,6 +77,10 @@ def validate_manifest(data: Any) -> dict[str, Any]:
     for name, image in images.items():
         if not isinstance(image, str) or not IMAGE_RE.fullmatch(image):
             raise ManifestError(f"images.{name} must be a full GHCR sha256 digest reference")
+        if expected_image_prefix is not None and not image.startswith(expected_image_prefix):
+            raise ManifestError(
+                f"images.{name} must belong to the expected Storecipe GHCR repository"
+            )
         if ":latest" in image:
             raise ManifestError("latest images are forbidden")
 
@@ -118,8 +122,15 @@ def validate_manifest(data: Any) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate a Storecipe release manifest")
     parser.add_argument("manifest", type=Path)
+    parser.add_argument(
+        "--expected-image-prefix",
+        help="Require every image reference to start with this trusted GHCR prefix",
+    )
     args = parser.parse_args()
-    validate_manifest(json.loads(args.manifest.read_text(encoding="utf-8")))
+    validate_manifest(
+        json.loads(args.manifest.read_text(encoding="utf-8")),
+        expected_image_prefix=args.expected_image_prefix,
+    )
     print("Release manifest is valid.")
 
 

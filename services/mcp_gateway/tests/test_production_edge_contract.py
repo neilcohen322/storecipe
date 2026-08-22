@@ -23,6 +23,8 @@ def test_edge_routes_are_ordered_and_internal_is_hidden() -> None:
 def test_cover_upload_has_eight_mb_edge_limit() -> None:
     caddy = PRODUCTION_CADDY.read_text(encoding="utf-8")
     assert "@coverUpload" in caddy
+    assert "path /v1/recipes/*/cover-image" in caddy
+    assert "path /v1/recipes/*/cover\n" not in caddy
     assert "max_size 8MB" in caddy
     assert caddy.index("request_body @coverUpload") < caddy.index("handle /v1/*")
 

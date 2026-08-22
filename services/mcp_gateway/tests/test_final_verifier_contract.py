@@ -22,4 +22,7 @@ def test_live_checks_are_explicitly_opt_in() -> None:
     text = VERIFY.read_text(encoding="utf-8")
     assert "RUN_PRODUCTION_LIVE_CHECKS" in text
     assert "smoke-mcp-auth.ps1" in text
-    assert "UNVERIFIED: Live production checks" in text
+    assert "Write-Unverified 'Live production checks" in text
+    assert "optional or live checks remain explicitly UNVERIFIED" in text
+    assert "All checks passed." not in text
+    assert "pnpm run test:production-bundle" in text

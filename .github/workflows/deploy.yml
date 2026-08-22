@@ -52,6 +52,18 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin master
           git merge-base --is-ancestor "$COMMIT" origin/master
+      - name: Verify release workflow provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+        run: |
+          set -euo pipefail
+          run=$(gh api "/repos/$GH_REPOSITORY/actions/runs/$RELEASE_RUN_ID")
+          [[ "$(jq -r '.path' <<<"$run")" == ".github/workflows/release.yml" ]] || { echo "Selected run is not the Release workflow" >&2; exit 1; }
+          [[ "$(jq -r '.conclusion' <<<"$run")" == "success" ]] || { echo "Selected Release run was not successful" >&2; exit 1; }
+          event=$(jq -r '.event' <<<"$run")
+          [[ "$event" == "workflow_dispatch" || "$event" == "workflow_run" ]] || { echo "Selected Release run has an unexpected trigger" >&2; exit 1; }
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
         with:
           name: release-${{ inputs.release_commit }}
@@ -62,9 +74,14 @@ jobs:
       - name: Validate release manifest and bind it to the selected commit
         env:
           COMMIT: ${{ inputs.release_commit }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          python scripts/release/validate_manifest.py release/release-manifest.json
+          # OWNER is supplied by the step environment.
+          # shellcheck disable=SC2153
+          owner=$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")
+          python scripts/release/validate_manifest.py release/release-manifest.json \
+            --expected-image-prefix "ghcr.io/$owner/storecipe-"
           [[ "$(jq -r '.commit' release/release-manifest.json)" == "$COMMIT" ]] || {
             echo "Release artifact commit mismatch" >&2
             exit 1

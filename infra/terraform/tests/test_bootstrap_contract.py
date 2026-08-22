@@ -28,5 +28,12 @@ def test_wif_is_repository_and_master_restricted_without_keys() -> None:
     assert 'issuer_uri = "https://token.actions.githubusercontent.com"' in text
     assert "attribute.repository ==" in text
     assert "assertion.ref == 'refs/heads/master'" in text
+    assert '"attribute.workflow"    = "assertion.workflow_ref"' in text
+    assert ".github/workflows/terraform.yml@refs/heads/master" in text
     assert "roles/iam.workloadIdentityUser" in text
     assert "google_service_account_key" not in text
+
+
+def test_terraform_identity_can_manage_budget_email_channel() -> None:
+    text = combined()
+    assert '"roles/monitoring.editor"' in text
