@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [master]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Existing green master commit to republish
+        required: true
+        type: string
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'master')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # actions/checkout v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: Select and verify green master commit
+        id: release
+        env:
+          REQUESTED_COMMIT: ${{ inputs.commit }}
+          WORKFLOW_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            commit="$WORKFLOW_COMMIT"
+          else
+            commit="$REQUESTED_COMMIT"
+          fi
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "Commit must be 40 lowercase hex characters" >&2; exit 1; }
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$commit" origin/master || {
+            echo "Requested commit is not on master" >&2
+            exit 1
+          }
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            successes=$(gh api "/repos/$GH_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$commit&status=success&per_page=1" --jq '.total_count')
+            [[ "$successes" -ge 1 ]] || { echo "No successful CI run exists for requested commit" >&2; exit 1; }
+          fi
+          git checkout --detach "$commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Validate public release inputs
+        env:
+          PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
+          AUTH0_PUBLIC_CLIENT_ID: ${{ vars.AUTH0_PUBLIC_CLIENT_ID }}
+          AUTH0_API_AUDIENCE: ${{ vars.AUTH0_API_AUDIENCE }}
+          MCP_RESOURCE_URL: ${{ vars.MCP_RESOURCE_URL }}
+        run: |
+          set -euo pipefail
+          for name in PUBLIC_ORIGIN AUTH0_DOMAIN AUTH0_PUBLIC_CLIENT_ID AUTH0_API_AUDIENCE MCP_RESOURCE_URL; do
+            [[ -n "${!name:-}" ]] || { echo "$name is required" >&2; exit 1; }
+          done
+          [[ "$PUBLIC_ORIGIN" == https://* ]] || { echo "PUBLIC_ORIGIN must use HTTPS" >&2; exit 1; }
+          [[ "$AUTH0_API_AUDIENCE" == "$PUBLIC_ORIGIN/api" ]] || { echo "API audience mismatch" >&2; exit 1; }
+          [[ "$MCP_RESOURCE_URL" == "$PUBLIC_ORIGIN/mcp" ]] || { echo "MCP resource mismatch" >&2; exit 1; }
+
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login ghcr.io --username "$GH_ACTOR" --password-stdin
+
+      - name: Build and push four immutable images
+        id: images
+        env:
+          COMMIT: ${{ steps.release.outputs.commit }}
+          OWNER: ${{ github.repository_owner }}
+          PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
+          AUTH0_PUBLIC_CLIENT_ID: ${{ vars.AUTH0_PUBLIC_CLIENT_ID }}
+          AUTH0_API_AUDIENCE: ${{ vars.AUTH0_API_AUDIENCE }}
+        run: |
+          set -euo pipefail
+          # OWNER is supplied by the step environment.
+          # shellcheck disable=SC2153
+          owner=$(tr '[:upper:]' '[:lower:]' <<<"$OWNER")
+          web="ghcr.io/$owner/storecipe-web"
+          catalog="ghcr.io/$owner/storecipe-catalog"
+          ingestion="ghcr.io/$owner/storecipe-ingestion"
+          mcp="ghcr.io/$owner/storecipe-mcp"
+
+          docker build -f infra/production/Dockerfile.web \
+            --build-arg "EXPO_PUBLIC_AUTH0_DOMAIN=$AUTH0_DOMAIN" \
+            --build-arg "EXPO_PUBLIC_AUTH0_CLIENT_ID=$AUTH0_PUBLIC_CLIENT_ID" \
+            --build-arg "EXPO_PUBLIC_AUTH0_AUDIENCE=$AUTH0_API_AUDIENCE" \
+            --build-arg "EXPO_PUBLIC_CATALOG_API_URL=$PUBLIC_ORIGIN" \
+            --build-arg "EXPO_PUBLIC_INGESTION_API_URL=$PUBLIC_ORIGIN" \
+            -t "$web:$COMMIT" .
+          docker build -f services/catalog/Dockerfile -t "$catalog:$COMMIT" .
+          docker build -f services/ingestion/Dockerfile -t "$ingestion:$COMMIT" .
+          docker build -f services/mcp_gateway/Dockerfile -t "$mcp:$COMMIT" .
+
+          for image in "$web" "$catalog" "$ingestion" "$mcp"; do docker push "$image:$COMMIT"; done
+          for name in web catalog ingestion mcp; do
+            image=${!name}
+            digest_ref=$(docker image inspect "$image:$COMMIT" --format '{{index .RepoDigests 0}}')
+            [[ "$digest_ref" =~ @sha256:[0-9a-f]{64}$ ]] || { echo "Missing digest for $name" >&2; exit 1; }
+            echo "$name=$digest_ref" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Build and validate release manifest
+        env:
+          COMMIT: ${{ steps.release.outputs.commit }}
+          WEB_IMAGE: ${{ steps.images.outputs.web }}
+          CATALOG_IMAGE: ${{ steps.images.outputs.catalog }}
+          INGESTION_IMAGE: ${{ steps.images.outputs.ingestion }}
+          MCP_IMAGE: ${{ steps.images.outputs.mcp }}
+          PUBLIC_ORIGIN: ${{ vars.PUBLIC_ORIGIN }}
+          AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
+          AUTH0_PUBLIC_CLIENT_ID: ${{ vars.AUTH0_PUBLIC_CLIENT_ID }}
+          AUTH0_API_AUDIENCE: ${{ vars.AUTH0_API_AUDIENCE }}
+          MCP_RESOURCE_URL: ${{ vars.MCP_RESOURCE_URL }}
+        run: |
+          set -euo pipefail
+          catalog_head=$(docker run --rm "$CATALOG_IMAGE" alembic -c services/catalog/alembic.ini heads | awk '{print $1}')
+          ingestion_head=$(docker run --rm "$INGESTION_IMAGE" alembic -c services/ingestion/alembic.ini heads | awk '{print $1}')
+          [[ "$catalog_head" =~ ^[0-9]{8}_[0-9]{2}$ ]] || { echo "Invalid Catalog migration head" >&2; exit 1; }
+          [[ "$ingestion_head" =~ ^[0-9]{8}_[0-9]{2}$ ]] || { echo "Invalid Ingestion migration head" >&2; exit 1; }
+          python scripts/release/build_manifest.py \
+            --commit "$COMMIT" \
+            --web-image "$WEB_IMAGE" \
+            --catalog-image "$CATALOG_IMAGE" \
+            --ingestion-image "$INGESTION_IMAGE" \
+            --mcp-image "$MCP_IMAGE" \
+            --origin "$PUBLIC_ORIGIN" \
+            --auth0-domain "$AUTH0_DOMAIN" \
+            --auth0-public-client-id "$AUTH0_PUBLIC_CLIENT_ID" \
+            --api-audience "$AUTH0_API_AUDIENCE" \
+            --mcp-resource-url "$MCP_RESOURCE_URL" \
+            --catalog-migration "$catalog_head" \
+            --ingestion-migration "$ingestion_head"
+          python scripts/release/validate_manifest.py release-manifest.json
+
+      # actions/upload-artifact v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-${{ steps.release.outputs.commit }}
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 90

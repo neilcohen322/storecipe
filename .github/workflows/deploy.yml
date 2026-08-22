@@ -1,0 +1,119 @@
+name: Production Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_commit:
+        description: Published 40-character master commit
+        required: true
+        type: string
+      release_run_id:
+        description: Release workflow run containing the manifest
+        required: true
+        type: string
+      confirmation:
+        description: Enter deploy-production
+        required: true
+        type: string
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    steps:
+      - name: Validate operator inputs
+        env:
+          COMMIT: ${{ inputs.release_commit }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "release_commit must be 40 lowercase hex characters" >&2; exit 1; }
+          [[ "$RELEASE_RUN_ID" =~ ^[0-9]+$ ]] || { echo "release_run_id must be numeric" >&2; exit 1; }
+          [[ "$CONFIRMATION" == "deploy-production" ]] || { echo "Incorrect confirmation" >&2; exit 1; }
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_commit }}
+      - name: Verify selected commit belongs to master
+        env:
+          COMMIT: ${{ inputs.release_commit }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$COMMIT" origin/master
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          name: release-${{ inputs.release_commit }}
+          path: release
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.release_run_id }}
+      - name: Validate release manifest and bind it to the selected commit
+        env:
+          COMMIT: ${{ inputs.release_commit }}
+        run: |
+          set -euo pipefail
+          python scripts/release/validate_manifest.py release/release-manifest.json
+          [[ "$(jq -r '.commit' release/release-manifest.json)" == "$COMMIT" ]] || {
+            echo "Release artifact commit mismatch" >&2
+            exit 1
+          }
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
+        with:
+          version: ">= 545.0.0"
+      - name: Build public deployment bundle
+        run: |
+          set -euo pipefail
+          mkdir -p bundle/scripts bundle/infra
+          cp infra/production/compose.yaml infra/production/Caddyfile infra/production/postgres.conf bundle/
+          cp -R infra/production/postgres-init bundle/
+          cp -R scripts/deploy scripts/release bundle/scripts/
+          cp -R infra/systemd bundle/infra/
+          tar -C bundle -czf storecipe-deployment.tgz .
+      - name: Copy bundle and manifest through IAP
+        env:
+          VM: ${{ vars.GCP_VM_NAME }}
+          ZONE: ${{ vars.GCP_ZONE }}
+        run: |
+          set -euo pipefail
+          gcloud compute scp --quiet --tunnel-through-iap --zone "$ZONE" \
+            storecipe-deployment.tgz release/release-manifest.json "$VM:~/"
+      - name: Run backup-first host deployment through IAP
+        env:
+          VM: ${{ vars.GCP_VM_NAME }}
+          ZONE: ${{ vars.GCP_ZONE }}
+        run: |
+          set -euo pipefail
+          gcloud compute ssh "$VM" --quiet --tunnel-through-iap --zone "$ZONE" --command '
+            set -Eeuo pipefail
+            sudo tar -xzf ~/storecipe-deployment.tgz -C /opt/storecipe/current
+            sudo chown -R root:root /opt/storecipe/current
+            sudo install -m 0750 /opt/storecipe/current/scripts/deploy/run_with_runtime_env.sh /usr/local/sbin/storecipe-runtime-operation
+            sudo install -m 0644 /opt/storecipe/current/infra/systemd/*.service /opt/storecipe/current/infra/systemd/*.timer /etc/systemd/system/
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now storecipe-backup.timer storecipe-media-reconcile.timer
+            sudo install -m 0600 ~/release-manifest.json /opt/storecipe/releases/incoming-release-manifest.json
+            sudo docker stop storecipe-bootstrap >/dev/null 2>&1 || true
+            if ! sudo /opt/storecipe/current/scripts/deploy/deploy.sh /opt/storecipe/releases/incoming-release-manifest.json; then
+              if ! sudo docker ps --filter name=storecipe-production-edge --format "{{.ID}}" | grep -q .; then
+                sudo docker start storecipe-bootstrap >/dev/null 2>&1 || true
+              fi
+              exit 1
+            fi
+            rm -f ~/storecipe-deployment.tgz ~/release-manifest.json
+          '

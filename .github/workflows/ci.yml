@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [master]
@@ -41,8 +44,8 @@ jobs:
       CATALOG_TEST_DATABASE_URL: postgresql+asyncpg://catalog_app:local_catalog_only@localhost:5432/storecipe
       INGESTION_TEST_DATABASE_URL: postgresql+asyncpg://ingestion_app:local_ingestion_only@localhost:5432/storecipe
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
         with:
           version: "0.11.28"
           enable-cache: true
@@ -80,11 +83,11 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
         with:
           version: 11.3.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24
           cache: pnpm
@@ -98,7 +101,7 @@ jobs:
       - run: pnpm run test:e2e
       - name: Upload Playwright failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: playwright-failure-diagnostics
           path: apps/web/test-results
@@ -109,7 +112,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Build production service images
         run: |
           docker compose build catalog-api ingestion-api mcp-gateway
+          docker build -f infra/production/Dockerfile.web \
+            --build-arg EXPO_PUBLIC_AUTH0_DOMAIN=tenant.example.auth0.com \
+            --build-arg EXPO_PUBLIC_AUTH0_CLIENT_ID=ci-public-client \
+            --build-arg EXPO_PUBLIC_AUTH0_AUDIENCE=https://storecipe.example/api \
+            --build-arg EXPO_PUBLIC_CATALOG_API_URL=https://storecipe.example \
+            --build-arg EXPO_PUBLIC_INGESTION_API_URL=https://storecipe.example .
+
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Validate production Compose with synthetic values
+        run: |
+          set -euo pipefail
+          while read -r name; do export "$name=contract-value"; done < <(grep -oE '\$\{[A-Z0-9_]+:\?' infra/production/compose.yaml | cut -c3- | cut -d: -f1 | sort -u)
+          export PUBLIC_HOST=storecipe.example PUBLIC_ORIGIN=https://storecipe.example
+          docker compose -f infra/production/compose.yaml --profile migration config --quiet
+      - name: Validate production Caddy routing
+        run: docker run --rm -e PUBLIC_HOST=storecipe.example -v "$PWD/infra/production/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
+
+  infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: 1.15.0
+      - run: terraform fmt -check -recursive infra/terraform
+      - working-directory: infra/terraform/bootstrap
+        run: terraform init -backend=false && terraform validate
+      - working-directory: infra/terraform/production
+        run: terraform init -backend=false && terraform validate

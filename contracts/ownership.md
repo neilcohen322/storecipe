@@ -35,18 +35,20 @@ server-side LLM request.
 | Background work | Ingestion worker | Celery via a dedicated persistent Redis broker |
 | Dispatch recovery and retention | Ingestion dispatcher/reconciler | Ingestion PostgreSQL schema |
 
-## The four MCP tools
+## The six MCP tools
 
 These are the complete public tool surface. Tool names, scopes, annotations, and
 Catalog operations are closed-world contracts; adding a Catalog endpoint does not
 implicitly add an MCP tool.
 
-| Tool | Direct Catalog REST call | Required scope | Annotations |
+| Tool | Backend REST operation | Required scope | Annotations |
 |---|---|---|---|
 | `query_recipes` | `GET /v1/recipes` | `recipes:read` | read-only, idempotent, non-destructive, closed-world |
 | `get_recipe` | `GET /v1/recipes/{recipe_id}` | `recipes:read` | read-only, idempotent, non-destructive, closed-world |
 | `create_recipe` | `POST /v1/recipes` + `Idempotency-Key` | `recipes:write` | write, idempotent, non-destructive, closed-world |
 | `rate_recipe` | `PUT /v1/recipes/{recipe_id}/rating` | `ratings:write` | write, idempotent, destructive, closed-world |
+| `list_recipe_query_options` | `GET /v1/recipe-facets` | `recipes:read` | read-only, idempotent, non-destructive, closed-world |
+| `resolve_recipe_query_selections` | `POST /v1/recipe-facet-selections` | `recipes:read` | read-only, idempotent, non-destructive, closed-world |
 
 `query_recipes` preserves repeated ingredient/tag parameters and ordered repeated
 `sort` parameters; opaque cursors pass through unchanged. `create_recipe` receives
@@ -69,7 +71,7 @@ internal `recipes:internal:create` scope is never advertised to MCP clients.
 Public HTTPS/deployment controls are the rate-limiting boundary for gateway traffic.
 The gateway introduces no operation-specific limiter. Each tool invocation makes one
 Catalog request, except after a Catalog `401` when the gateway invalidates the cached
-OBO exchange and retries that same Catalog operation once. All four tools are
+OBO exchange and retries that same Catalog operation once. All six tools are
 idempotent (`create_recipe` via Idempotency-Key), so the single retry is safe.
 Catalog and Ingestion retain their own service-level protections: bounded
 query/pagination inputs, Catalog database/cache limits, and the existing Ingestion

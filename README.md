@@ -8,7 +8,7 @@ gateway.
 ## Architecture
 
 - **MCP gateway (`mcp-gateway`):** one public Streamable HTTP `/mcp` endpoint, OAuth
-  discovery, and exactly four tools backed by Catalog REST.
+  discovery, and exactly six tools backed by Catalog and Ingestion REST.
 - **Catalog API:** recipes, ratings, private search, ownership, idempotent creation,
   and PostgreSQL persistence; it does not host MCP transport.
 - **Ingestion API/worker:** asynchronous recipe-import and extraction infrastructure.
@@ -119,6 +119,52 @@ Set `CATALOG_TEST_MEDIA_BUCKET` only after Terraform creates the private product
 bucket; Catalog uses Application Default Credentials and never a JSON key path. When
 that variable is unset, the live GCS proof is skipped.
 
+### Production artifacts and recovery
+
+Production uses [`infra/production/compose.yaml`](infra/production/compose.yaml), not
+the local Compose file. It accepts four full GHCR digest references, exposes only Caddy
+on ports 80/443, and requires a root-only runtime environment bundle with no repository
+password defaults. The release workflow publishes images after green `master` CI or
+manually republishes a previously green `master` commit; publication never deploys.
+
+Production is one origin, not three subdomains. For a selected hostname, set
+`PUBLIC_ORIGIN=https://<host>`, `AUTH0_AUDIENCE=https://<host>/api`, and
+`MCP_RESOURCE_URL=https://<host>/mcp`; both frontend API bases equal `PUBLIC_ORIGIN`.
+DuckDNS is tried first and accepted only after two-resolver DNS, Caddy TLS, Auth0, and
+MCP-client checks. Tokens and registrar/payment details never belong in repository or
+project notes.
+
+`scripts/deploy/backup.sh` writes a PostgreSQL custom-format dump, SHA-256 sidecar, and
+safe manifest to the private backup bucket. It keeps seven daily and four weekly
+backups. `scripts/deploy/restore_verify.sh` restores a selected dump into a disposable
+PostgreSQL 17 container and checks both schemas, migration heads, bounded counts, and
+foreign-key validity without printing recipe data. The local proof uses only synthetic
+rows:
+
+```powershell
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock `
+  --mount "type=bind,source=$((Resolve-Path '.').Path),target=/repo,readonly" `
+  -w /repo docker:29-cli sh -c `
+  "apk add --no-cache bash coreutils openssl && bash scripts/deploy/verify_restore_local.sh"
+```
+
+Production backup, restore, and secret operations remain human-approved actions after
+infrastructure exists.
+
+Production deployment is performed by `scripts/deploy/deploy.sh` on the VM with one
+validated release manifest. The script takes an exclusive lock, fetches the runtime
+bundle from Secret Manager into a root-only temporary file, checks at least 5 GiB of
+free disk and active swap, and verifies that public runtime identifiers match the
+release. It then backs up PostgreSQL, pulls immutable image digests, runs Catalog and
+Ingestion migrations in that order, starts the stack, waits for health, and performs
+local and public HTTPS smoke checks.
+
+If a failure occurs after containers begin changing, the script recreates application
+and edge containers from the prior manifest's image digests. It deliberately never
+downgrades Alembic: migrations must remain compatible with the immediately preceding
+application release. On the first deployment it starts only PostgreSQL and Redis,
+backs up the initialized empty database, and then performs the first migrations.
+
 ### Server-rendered variant smoke (operator opt-in)
 
 The checked-in `INGESTION_SERVER_RENDERED_VARIANT_HOSTS_JSON={}` value is intentionally
@@ -169,9 +215,10 @@ together. Secrets belong in `.env`, which Git ignores.
 Recipe and Catalog REST endpoints require an Auth0 access token whose issuer and
 audience match `AUTH0_ISSUER` and `AUTH0_AUDIENCE`. MCP hosts present tokens whose
 audience is `MCP_RESOURCE_URL`; the gateway exchanges those for API-audience tokens
-before calling Catalog. The gateway exposes exactly four tools: `query_recipes` and
-`get_recipe` use `recipes:read`, `create_recipe` uses `recipes:write`, and
-`rate_recipe` uses `ratings:write`. Leaving Auth0/OBO fully unset is safe for local
+before calling Catalog. The gateway exposes exactly six tools: `query_recipes`,
+`get_recipe`, `list_recipe_query_options`, and `resolve_recipe_query_selections` use
+`recipes:read`; `create_recipe` uses `recipes:write`; and `rate_recipe` uses
+`ratings:write`. Leaving Auth0/OBO fully unset is safe for local
 infrastructure checks: `/health/live` and `/health/ready` stay available, with
 `obo_config: not_required`. Any Auth0/OBO value enables the all-or-none gateway auth
 bundle (`AUTH0_ISSUER`, `AUTH0_AUDIENCE`, `MCP_OBO_CLIENT_ID`, and

@@ -14,6 +14,30 @@ const blockedMarkers = [
 const environment = { ...process.env };
 delete environment.EXPO_PUBLIC_E2E_MODE;
 
+const requiredPublicValues = [
+  "EXPO_PUBLIC_AUTH0_DOMAIN",
+  "EXPO_PUBLIC_AUTH0_CLIENT_ID",
+  "EXPO_PUBLIC_AUTH0_AUDIENCE",
+  "EXPO_PUBLIC_CATALOG_API_URL",
+  "EXPO_PUBLIC_INGESTION_API_URL",
+];
+for (const name of requiredPublicValues) {
+  if (!environment[name]?.trim()) throw new Error(`${name} is required for a production bundle`);
+}
+
+const catalogBase = new URL(environment.EXPO_PUBLIC_CATALOG_API_URL);
+const ingestionBase = new URL(environment.EXPO_PUBLIC_INGESTION_API_URL);
+if (catalogBase.protocol !== "https:" || catalogBase.origin !== ingestionBase.origin) {
+  throw new Error("Production API bases must share one HTTPS origin");
+}
+if (catalogBase.pathname !== "/" || ingestionBase.pathname !== "/") {
+  throw new Error("Production API bases must be origins; clients append /v1 paths");
+}
+const audience = new URL(environment.EXPO_PUBLIC_AUTH0_AUDIENCE);
+if (audience.href !== `${catalogBase.origin}/api`) {
+  throw new Error("EXPO_PUBLIC_AUTH0_AUDIENCE must equal the public origin plus /api");
+}
+
 execFileSync(process.execPath, [join(root, "node_modules", "expo", "bin", "cli"), "export", "--platform", "web"], {
   cwd: root,
   env: environment,

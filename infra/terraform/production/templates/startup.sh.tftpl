@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+DATA_DEVICE=/dev/disk/by-id/google-storecipe-data
+DATA_MOUNT=/var/lib/storecipe
+
+until [[ -b "$DATA_DEVICE" ]]; do sleep 2; done
+if ! blkid "$DATA_DEVICE" >/dev/null 2>&1; then
+  mkfs.ext4 -F "$DATA_DEVICE"
+fi
+mkdir -p "$DATA_MOUNT"
+grep -qF "$DATA_DEVICE $DATA_MOUNT" /etc/fstab || \
+  echo "$DATA_DEVICE $DATA_MOUNT ext4 defaults,nofail 0 2" >> /etc/fstab
+mountpoint -q "$DATA_MOUNT" || mount "$DATA_MOUNT"
+
+apt-get update
+apt-get install -y ca-certificates curl gnupg jq openssl postgresql-client
+if ! command -v gcloud >/dev/null 2>&1; then
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update
+  apt-get install -y google-cloud-cli
+fi
+install -m 0755 -d /etc/apt/keyrings
+if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
+  curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+fi
+if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
+  . /etc/os-release
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $VERSION_CODENAME stable" > /etc/apt/sources.list.d/docker.list
+  apt-get update
+fi
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+mkdir -p "$DATA_MOUNT/docker" /opt/storecipe/releases /opt/storecipe/current /run/storecipe
+chown root:root /opt/storecipe/releases /opt/storecipe/current "$DATA_MOUNT" /run/storecipe
+chmod 0750 /opt/storecipe/releases /opt/storecipe/current "$DATA_MOUNT" /run/storecipe
+install -d -m 0755 /etc/docker
+cat >/etc/docker/daemon.json <<JSON
+{"data-root":"$DATA_MOUNT/docker","log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}
+JSON
+systemctl enable --now docker
+systemctl restart docker
+
+if [[ ! -e /swapfile ]]; then
+  fallocate -l 2G "$DATA_MOUNT/swapfile"
+  chmod 0600 "$DATA_MOUNT/swapfile"
+  mkswap "$DATA_MOUNT/swapfile"
+  ln -s "$DATA_MOUNT/swapfile" /swapfile
+fi
+swapon --show=NAME | grep -qx "$DATA_MOUNT/swapfile" || swapon "$DATA_MOUNT/swapfile"
+grep -qF "$DATA_MOUNT/swapfile none swap" /etc/fstab || \
+  echo "$DATA_MOUNT/swapfile none swap sw 0 0" >> /etc/fstab
+
+cat >/etc/storecipe-host.conf <<CONF
+RUNTIME_SECRET_NAME=${runtime_secret_name}
+MEDIA_BUCKET=${media_bucket_name}
+BACKUP_BUCKET=${backup_bucket_name}
+CONF
+chmod 0644 /etc/storecipe-host.conf
+
+mkdir -p /opt/storecipe/bootstrap
+cat >/opt/storecipe/bootstrap/index.html <<'HTML'
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Storecipe</title><body><h1>Storecipe host is ready</h1><p>Production release not deployed.</p></body></html>
+HTML
+if ! docker inspect storecipe-bootstrap >/dev/null 2>&1; then
+  docker run -d --name storecipe-bootstrap --restart unless-stopped -p 80:80 \
+    -v /opt/storecipe/bootstrap:/usr/share/caddy:ro caddy:2.11.4-alpine
+fi

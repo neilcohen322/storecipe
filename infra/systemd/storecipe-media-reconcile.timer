@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly Storecipe orphaned media reconciliation
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=storecipe-media-reconcile.service
+
+[Install]
+WantedBy=timers.target
