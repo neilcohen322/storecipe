@@ -38,11 +38,15 @@ if (audience.href !== `${catalogBase.origin}/api`) {
   throw new Error("EXPO_PUBLIC_AUTH0_AUDIENCE must equal the public origin plus /api");
 }
 
-execFileSync(process.execPath, [join(root, "node_modules", "expo", "bin", "cli"), "export", "--platform", "web"], {
-  cwd: root,
-  env: environment,
-  stdio: "inherit",
-});
+execFileSync(
+  process.execPath,
+  [join(root, "node_modules", "expo", "bin", "cli"), "export", "--platform", "web", "--clear"],
+  {
+    cwd: root,
+    env: environment,
+    stdio: "inherit",
+  },
+);
 
 function files(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

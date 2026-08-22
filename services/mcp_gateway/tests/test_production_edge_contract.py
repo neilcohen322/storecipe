@@ -4,6 +4,8 @@ ROOT = Path(__file__).parents[3]
 PRODUCTION_CADDY = ROOT / "infra" / "production" / "Caddyfile"
 PRODUCTION_COMPOSE = ROOT / "infra" / "production" / "compose.yaml"
 WEB_DOCKERFILE = ROOT / "infra" / "production" / "Dockerfile.web"
+PRODUCTION_BUNDLE = ROOT / "apps" / "web" / "scripts" / "verify-production-bundle.mjs"
+PLAYWRIGHT_CONFIG = ROOT / "apps" / "web" / "playwright.config.ts"
 
 
 def test_edge_routes_are_ordered_and_internal_is_hidden() -> None:
@@ -55,3 +57,12 @@ def test_web_image_has_public_inputs_and_no_secret_build_arg() -> None:
     assert "ARG SECRET" not in dockerfile.upper()
     assert "caddy:2.11.4-alpine" in dockerfile
     assert "COPY --from=web-build" in dockerfile
+
+
+def test_production_and_e2e_exports_clear_environment_sensitive_metro_cache() -> None:
+    production = PRODUCTION_BUNDLE.read_text(encoding="utf-8")
+    playwright = PLAYWRIGHT_CONFIG.read_text(encoding="utf-8")
+    assert "delete environment.EXPO_PUBLIC_E2E_MODE" in production
+    assert '"--platform", "web", "--clear"' in production
+    assert 'EXPO_PUBLIC_E2E_MODE: "true"' in playwright
+    assert "expo export --platform web --clear" in playwright
