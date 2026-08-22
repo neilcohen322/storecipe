@@ -50,7 +50,7 @@ def test_budget_has_three_actual_spend_thresholds() -> None:
     assert text.count('spend_basis       = "CURRENT_SPEND"') == 3
     assert "all_updates_rule" in text
     assert "google_monitoring_notification_channel.budget_email.name" in text
-    assert "disable_default_iam_recipients = false" in text
+    assert re.search(r"disable_default_iam_recipients\s*=\s*false", text)
 
 
 def test_terraform_identity_can_attach_runtime_service_account() -> None:

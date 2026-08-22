@@ -171,6 +171,11 @@ channel configured by `GCP_BUDGET_NOTIFICATION_EMAIL` and to the Billing account
 default IAM recipients. It is an alert, not a spending cap; confirm the operator email
 receives notifications and monitor the Billing report after deployment.
 
+GitHub authentication uses one GCP WIF provider with a two-workflow allowlist:
+`terraform.yml` and `deploy.yml` on `master`. That provider is only the first gate. The
+Terraform service account additionally accepts only the Terraform workflow identity;
+the deployment service account remains bound to the protected `production` environment.
+
 If a failure occurs after containers begin changing, the script recreates application
 and edge containers from the prior manifest's image digests. It deliberately never
 downgrades Alembic: migrations must remain compatible with the immediately preceding

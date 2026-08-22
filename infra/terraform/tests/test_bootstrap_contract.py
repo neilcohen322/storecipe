@@ -23,15 +23,27 @@ def test_state_bucket_is_private_versioned_and_retained() -> None:
     assert "force_destroy               = false" in text
 
 
-def test_wif_is_repository_and_master_restricted_without_keys() -> None:
+def test_wif_admits_only_terraform_and_deploy_workflows_on_master() -> None:
     text = combined()
     assert 'issuer_uri = "https://token.actions.githubusercontent.com"' in text
     assert "attribute.repository ==" in text
     assert "assertion.ref == 'refs/heads/master'" in text
     assert '"attribute.workflow"    = "assertion.workflow_ref"' in text
     assert ".github/workflows/terraform.yml@refs/heads/master" in text
+    assert ".github/workflows/deploy.yml@refs/heads/master" in text
+    assert "attribute.workflow in [" in text
     assert "roles/iam.workloadIdentityUser" in text
     assert "google_service_account_key" not in text
+
+
+def test_terraform_service_account_is_bound_only_to_terraform_workflow() -> None:
+    text = (BOOTSTRAP / "main.tf").read_text(encoding="utf-8")
+    resource = text.split(
+        'resource "google_service_account_iam_member" "terraform_wif"', maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+    assert "/attribute.workflow/" in resource
+    assert ".github/workflows/terraform.yml@refs/heads/master" in resource
+    assert "/attribute.repository/" not in resource
 
 
 def test_terraform_identity_can_manage_budget_email_channel() -> None:

@@ -63,7 +63,14 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
   workload_identity_pool_provider_id = "storecipe-repository"
   display_name                       = "Storecipe repository"
-  attribute_condition                = "attribute.repository == '${local.repository}' && assertion.ref == 'refs/heads/master' && attribute.workflow == '${local.repository}/.github/workflows/terraform.yml@refs/heads/master'"
+  attribute_condition                = <<-EOT
+    attribute.repository == '${local.repository}' &&
+    assertion.ref == 'refs/heads/master' &&
+    attribute.workflow in [
+      '${local.repository}/.github/workflows/terraform.yml@refs/heads/master',
+      '${local.repository}/.github/workflows/deploy.yml@refs/heads/master'
+    ]
+  EOT
   attribute_mapping = {
     "google.subject"        = "assertion.sub"
     "attribute.repository"  = "assertion.repository"
@@ -85,7 +92,7 @@ resource "google_service_account" "terraform" {
 resource "google_service_account_iam_member" "terraform_wif" {
   service_account_id = google_service_account.terraform.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${local.repository}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.workflow/${local.repository}/.github/workflows/terraform.yml@refs/heads/master"
 }
 
 resource "google_project_iam_member" "terraform" {

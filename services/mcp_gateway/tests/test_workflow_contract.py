@@ -4,6 +4,8 @@ ROOT = Path(__file__).parents[3]
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 TERRAFORM = ROOT / ".github" / "workflows" / "terraform.yml"
 DEPLOY = ROOT / ".github" / "workflows" / "deploy.yml"
+BOOTSTRAP = ROOT / "infra" / "terraform" / "bootstrap" / "main.tf"
+PRODUCTION_IAM = ROOT / "infra" / "terraform" / "production" / "iam.tf"
 
 
 def test_ci_preserves_five_protected_check_names() -> None:
@@ -74,3 +76,16 @@ def test_cloud_workflows_have_no_key_or_unsafe_event() -> None:
         if "uses:" in line:
             reference = line.split("@", 1)[-1].split()[0]
             assert len(reference) == 40 and all(char in "0123456789abcdef" for char in reference)
+
+
+def test_shared_wif_provider_preserves_separate_service_account_boundaries() -> None:
+    bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+    production_iam = PRODUCTION_IAM.read_text(encoding="utf-8")
+    assert ".github/workflows/terraform.yml@refs/heads/master" in bootstrap
+    assert ".github/workflows/deploy.yml@refs/heads/master" in bootstrap
+    assert "/attribute.workflow/" in bootstrap
+    assert "/attribute.repository/${local.repository}" not in bootstrap
+    deploy_binding = production_iam.split(
+        'resource "google_service_account_iam_member" "deploy_wif"', maxsplit=1
+    )[1].split("\n}\n", maxsplit=1)[0]
+    assert "/attribute.environment/production" in deploy_binding
