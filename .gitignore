@@ -13,6 +13,9 @@ htmlcov/
 .vscode/
 .DS_Store
 node_modules/
+.pnpm-store/
+.uv-cache/
+*.code-workspace
 apps/web/.expo/
 apps/web/dist/
 *.log
