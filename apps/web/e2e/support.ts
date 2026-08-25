@@ -20,7 +20,7 @@ export async function assertStablePageQuality(page: Page, errors: string[]): Pro
   expectNoConsoleErrors(errors);
 }
 
-const NodeBuffer = (globalThis as unknown as { Buffer: { from(data: number[]): Uint8Array } }).Buffer;
+const NodeBuffer = (globalThis as unknown as { Buffer: { from(data: number[]): Buffer } }).Buffer;
 export const TINY_WEBP = NodeBuffer.from([
   0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
   0x18, 0x00, 0x00, 0x00, 0x30, 0x01, 0x00, 0x9d, 0x01, 0x2a, 0x01, 0x00, 0x01, 0x00, 0x03, 0x00,
@@ -49,6 +49,7 @@ export async function assertNoSensitiveMediaLeak(page: Page): Promise<void> {
 export async function installApiInterceptions(page: Page): Promise<void> {
   let importPoll = 0;
   let coverVersion = 0;
+  let favorite = false;
   const covers = new Map<string, { etag: string; byteSize: number }>();
   covers.set(fixtureRecipe.id, { etag: "0".repeat(64), byteSize: TINY_WEBP.length });
   const cors = {
@@ -104,14 +105,22 @@ export async function installApiInterceptions(page: Page): Promise<void> {
       return route.fulfill({ status: 201, json: recipeJson("created-e2e-recipe", "Browser baked pasta"), headers: cors });
     }
     if (/^\/v1\/recipes\/[^/]+$/.test(url.pathname)) {
-      return route.fulfill({
-        json: url.pathname.endsWith("created-e2e-recipe")
-          ? recipeJson("created-e2e-recipe", "Browser baked pasta")
-          : recipeJson(fixtureRecipe.id, fixtureRecipe.title),
-        headers: cors,
-      });
+      const id = url.pathname.endsWith("created-e2e-recipe") ? "created-e2e-recipe" : fixtureRecipe.id;
+      const title = id === "created-e2e-recipe" ? "Browser baked pasta" : fixtureRecipe.title;
+      if (request.method() === "PATCH") {
+        const body = (request.postDataJSON() ?? {}) as { favorite?: boolean };
+        if (typeof body.favorite === "boolean") favorite = body.favorite;
+        return route.fulfill({ json: { ...recipeJson(id, title), favorite }, headers: cors });
+      }
+      if (request.method() === "DELETE") {
+        return route.fulfill({ status: 204, headers: cors });
+      }
+      return route.fulfill({ json: { ...recipeJson(id, title), favorite }, headers: cors });
     }
     if (/^\/v1\/recipes\/[^/]+\/rating$/.test(url.pathname)) return route.fulfill({ json: { value: 5 }, headers: cors });
+    if (url.pathname === "/v1/imports" && request.method() === "GET") {
+      return route.fulfill({ json: { items: [], nextCursor: null }, headers: cors });
+    }
     if ((url.pathname === "/v1/imports/url" || url.pathname === "/v1/imports/text") && request.method() === "POST") {
       return route.fulfill({ status: 202, json: { jobId: "import-e2e-job", status: "queued" }, headers: cors });
     }
@@ -138,6 +147,9 @@ export async function installApiInterceptions(page: Page): Promise<void> {
         },
         headers: cors,
       });
+    }
+    if (url.pathname === "/v1/account-deletions" && request.method() === "POST") {
+      return route.fulfill({ status: 202, json: { status: "pending" }, headers: cors });
     }
     return route.fulfill({ status: 404, json: { detail: "Unmatched E2E request" }, headers: cors });
   });

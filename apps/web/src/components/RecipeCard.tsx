@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
 
 import type { Recipe } from "../api/catalog";
 import { useTheme } from "../theme/ThemeProvider";
@@ -10,6 +11,7 @@ export type RecipeCardProps = {
   onOpen(recipeId: string): void;
   view: "card" | "list";
   loadCoverImage?: CoverImageLoader;
+  onToggleFavorite?(recipe: Recipe): void;
 };
 
 function mediaColor(recipeId: string, colors: { brand: string; success: string; warning: string; danger: string }): string {
@@ -17,62 +19,96 @@ function mediaColor(recipeId: string, colors: { brand: string; success: string; 
   return palette[recipeId.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % palette.length];
 }
 
-export function RecipeCard({ item: recipe, onOpen, view, loadCoverImage }: RecipeCardProps) {
-  const { theme } = useTheme();
-  const details = [
+function detailsLabel(recipe: Recipe): string {
+  return [
     recipe.totalMinutes != null ? `${recipe.totalMinutes} min` : null,
+    recipe.servings != null ? `Serves ${recipe.servings}` : null,
     recipe.rating != null ? `${recipe.rating}/5` : "Unrated",
-  ].filter((value): value is string => value !== null);
-  const detailsLabel = details.join(" · ");
+  ].filter((value): value is string => value !== null).join(" · ");
+}
+
+export function RecipeCard({ item: recipe, onOpen, view, loadCoverImage, onToggleFavorite }: RecipeCardProps) {
+  const { theme } = useTheme();
+  const [hovered, setHovered] = useState(false);
+  const favoriteLabel = recipe.favorite ? `Remove ${recipe.title} from favorites` : `Add ${recipe.title} to favorites`;
+  const tags = recipe.tags.slice(0, 2);
+  const meta = detailsLabel(recipe);
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${recipe.title}`}
-      onPress={() => onOpen(recipe.id)}
-      focusable
-      style={({ pressed }) => [
-        styles.container,
-        view === "list" && styles.list,
-        { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, opacity: pressed ? 0.78 : 1 },
-      ]}
-    >
-      <View testID={`recipe-card-media-${recipe.id}`} style={[styles.mediaSlot, view === "list" && styles.listMedia, { backgroundColor: mediaColor(recipe.id, theme.colors) }]}>
-        <RecipeMedia
-          recipeId={recipe.id}
-          title={recipe.title}
-          tags={recipe.tags}
-          coverImage={recipe.coverImage}
-          loadCoverImage={loadCoverImage}
-        />
-        {view === "card" ? (
-          <View style={[styles.overlay, { backgroundColor: theme.colors.overlayScrim }]}>
-            <Text style={[styles.overlayTitle, { color: theme.colors.accentContrast, fontFamily: theme.type.fontFamily.heading }]}>{recipe.title}</Text>
-            <Text style={[styles.overlayDetails, { color: theme.colors.accentContrast }]}>{detailsLabel}</Text>
-          </View>
-        ) : null}
-      </View>
-      {view === "list" ? (
-        <View style={styles.copy}>
-          <Text style={[styles.title, { color: theme.colors.text }]}>{recipe.title}</Text>
-          <Text style={[styles.details, { color: theme.colors.mutedText }]}>{detailsLabel}</Text>
-          {recipe.tags.length > 0 ? <Text numberOfLines={1} style={[styles.tags, { color: theme.colors.mutedText }]}>{recipe.tags.join(" · ")}</Text> : null}
+    <View style={styles.wrap}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${recipe.title}`}
+        onPress={() => onOpen(recipe.id)}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
+        focusable
+        style={({ pressed }) => [
+          styles.container,
+          view === "list" && styles.list,
+          {
+            backgroundColor: theme.colors.surface,
+            borderColor: theme.colors.border,
+            opacity: pressed ? 0.78 : 1,
+            ...(hovered && !pressed ? theme.shadows.raised : theme.shadows.none),
+          },
+        ]}
+      >
+        <View
+          testID={`recipe-card-media-${recipe.id}`}
+          style={[
+            styles.mediaSlot,
+            view === "list" && styles.listMedia,
+            { backgroundColor: mediaColor(recipe.id, theme.colors) },
+          ]}
+        >
+          <RecipeMedia
+            recipeId={recipe.id}
+            title={recipe.title}
+            tags={recipe.tags}
+            coverImage={recipe.coverImage}
+            loadCoverImage={loadCoverImage}
+          />
         </View>
+        <View style={[styles.copy, view === "list" && styles.listCopy]}>
+          <Text style={[styles.title, { color: theme.colors.text, fontFamily: theme.type.fontFamily.heading }]}>{recipe.title}</Text>
+          <Text style={[styles.details, { color: theme.colors.mutedText }]}>{meta}</Text>
+          {tags.length > 0 ? <Text numberOfLines={1} style={[styles.tags, { color: theme.colors.mutedText }]}>{tags.join(" · ")}</Text> : null}
+        </View>
+      </Pressable>
+      {onToggleFavorite ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={favoriteLabel}
+          accessibilityState={{ selected: recipe.favorite }}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            onToggleFavorite(recipe);
+          }}
+          focusable
+          style={({ pressed }) => [
+            styles.favorite,
+            { backgroundColor: theme.colors.elevatedSurface, opacity: pressed ? 0.78 : 1 },
+          ]}
+        >
+          <Text style={[styles.favoriteMark, { color: recipe.favorite ? theme.colors.warning : theme.colors.mutedText }]}>{recipe.favorite ? "★" : "☆"}</Text>
+        </Pressable>
       ) : null}
-    </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { minHeight: 44, width: "100%", maxWidth: "100%", borderRadius: 16, overflow: "hidden" },
-  list: { flexDirection: "row", borderWidth: 1 },
-  mediaSlot: { minHeight: 240, width: "100%" },
-  listMedia: { width: 112, minHeight: 112, minWidth: 112 },
-  overlay: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 16, gap: 4 },
-  overlayTitle: { fontSize: 18, fontWeight: "700" },
-  overlayDetails: { fontSize: 14 },
-  copy: { padding: 16, gap: 4, flex: 1, minWidth: 0 },
+  wrap: { width: "100%", maxWidth: "100%", position: "relative" },
+  container: { minHeight: 44, width: "100%", maxWidth: "100%", borderRadius: 16, overflow: "hidden", borderWidth: 1 },
+  list: { flexDirection: "row" },
+  mediaSlot: { width: "100%", aspectRatio: 4 / 3 },
+  listMedia: { width: 112, minHeight: 84, minWidth: 112, aspectRatio: 4 / 3 },
+  copy: { padding: 16, gap: 4 },
+  listCopy: { flex: 1, minWidth: 0, justifyContent: "center" },
   title: { fontSize: 18, fontWeight: "700" },
   details: { fontSize: 14 },
   tags: { fontSize: 12 },
+  favorite: { position: "absolute", top: 8, right: 8, zIndex: 2, minHeight: 44, minWidth: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  favoriteMark: { fontSize: 22, lineHeight: 26 },
 });

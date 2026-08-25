@@ -149,6 +149,7 @@ async def test_idempotent_create_recovers_winner_after_unique_conflict(
 ) -> None:
     user = await resolve_user(session, SUBJECT)
     user_id = user.id
+    await session.commit()
     payload = _recipe_create("Winner payload")
     key = "550e8400-e29b-41d4-a716-446655440000"
     real_commit = AsyncSession.commit

@@ -18,6 +18,7 @@ from ingestion.models import (
     LlmInvocationState,
     LlmOperationKind,
 )
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -178,18 +179,36 @@ class AiBudgetRepository:
     async def settle_expired_ambiguities(self, now: datetime | None = None) -> int:
         now = now or datetime.now(UTC)
         count = 0
-        rows = list(
-            await self.session.scalars(
+        candidates = list(
+            (
+                await self.session.execute(
+                    select(LlmInvocation.id, LlmInvocation.owner_subject)
+                    .where(
+                        LlmInvocation.state == LlmInvocationState.AMBIGUOUS,
+                        LlmInvocation.settled_at.is_(None),
+                        LlmInvocation.request_deadline_at <= now,
+                    )
+                    .order_by(LlmInvocation.owner_subject, LlmInvocation.id)
+                )
+            ).all()
+        )
+        account_deletions = AccountDeletionRepository(self.session)
+        for invocation_id, owner_subject in candidates:
+            await account_deletions.acquire_subject_lock(owner_subject)
+            if await account_deletions.is_tombstoned(owner_subject):
+                continue
+            invocation = await self.session.scalar(
                 select(LlmInvocation)
                 .where(
+                    LlmInvocation.id == invocation_id,
                     LlmInvocation.state == LlmInvocationState.AMBIGUOUS,
                     LlmInvocation.settled_at.is_(None),
                     LlmInvocation.request_deadline_at <= now,
                 )
-                .with_for_update(skip_locked=True)
+                .with_for_update()
             )
-        )
-        for invocation in rows:
+            if invocation is None:
+                continue
             _, usage = await self._locked(invocation.id)
             usage.reserved_tokens -= invocation.reserved_tokens
             usage.consumed_tokens += invocation.reserved_tokens

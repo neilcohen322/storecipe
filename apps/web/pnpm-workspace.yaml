@@ -2,3 +2,14 @@ allowBuilds:
   browser-tabs-lock: false
 minimumReleaseAgeExclude:
   - expo-image-picker@57.0.11
+overrides:
+  brace-expansion@>=4: 5.0.9
+  js-yaml@^4: 4.3.1
+  nanoid@^3: 3.3.18
+  postcss@^8: 8.5.18
+# image-size 2.0.3 is not published (latest is 2.0.2 as of 2026-08-25).
+# Expo/metro pulls it at build time only. Revisit before 2026-11-25.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-w3rx-r6r6-pgpr
+    - GHSA-5p2g-fcmc-qvqq

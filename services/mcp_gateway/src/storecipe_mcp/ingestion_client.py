@@ -23,6 +23,7 @@ DEFAULT_READINESS_TIMEOUT_SECONDS = 5.0
 
 _WRITE_SCOPE = "recipes:write"
 _ALLOWLISTED_CONFLICT_CATEGORIES = frozenset({"idempotency_conflict"})
+_ACCOUNT_DELETED_CATEGORY = "account_deleted"
 _IDEMPOTENCY_KEY_ADAPTER = TypeAdapter(RecipeCreateIdempotencyKey)
 
 
@@ -247,6 +248,10 @@ def _map_response_error(
         if category is not None:
             return IngestionClientError(category, retryable=False)
         return IngestionClientError("temporary_ingestion_failure", retryable=False)
+    if status == 410:
+        if _problem_category(response) == _ACCOUNT_DELETED_CATEGORY:
+            return IngestionClientError(_ACCOUNT_DELETED_CATEGORY, retryable=False)
+        return IngestionClientError("resource_gone", retryable=False)
     if status == 429:
         return IngestionClientError(
             "ingestion_rate_limited",
@@ -266,6 +271,13 @@ def _map_response_error(
 
 
 def _allowlisted_problem_category(response: _BufferedResponse) -> str | None:
+    category = _problem_category(response)
+    if category in _ALLOWLISTED_CONFLICT_CATEGORIES:
+        return category
+    return None
+
+
+def _problem_category(response: _BufferedResponse) -> str | None:
     try:
         body = response.json()
     except (TypeError, ValueError):
@@ -273,7 +285,7 @@ def _allowlisted_problem_category(response: _BufferedResponse) -> str | None:
     if not isinstance(body, Mapping):
         return None
     category = body.get("errorCategory")
-    if isinstance(category, str) and category in _ALLOWLISTED_CONFLICT_CATEGORIES:
+    if isinstance(category, str):
         return category
     return None
 

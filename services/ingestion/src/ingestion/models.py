@@ -86,6 +86,24 @@ class IngredientNormalizationOperationState(StrEnum):
     FAILED = "failed"
 
 
+class AccountDeletionTombstone(Base):
+    """Durable, time-bounded denial marker for a deleted account subject."""
+
+    __tablename__ = "account_deletion_tombstones"
+    __table_args__ = (
+        Index("ix_account_deletion_tombstones_expires_at", "expires_at"),
+        CheckConstraint(
+            "expires_at > deleted_at",
+            name="ck_account_deletion_tombstones_retention_window",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    subject: Mapped[str] = mapped_column(String(255), primary_key=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def _enum(enum: type[StrEnum], name: str) -> Enum:
     return Enum(
         enum,

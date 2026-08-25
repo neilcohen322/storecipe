@@ -59,6 +59,12 @@ test("omits inactive duration and rating params", () => {
   });
 });
 
+test("serializes favorite only when the route value is true", () => {
+  expect(serializeRecipeListParams(normalizeRecipeListParams({ favorite: "true" }))).toEqual({ favorite: "true" });
+  expect(serializeRecipeListParams(normalizeRecipeListParams({ favorite: "false" }))).toEqual({});
+  expect(serializeRecipeListParams(normalizeRecipeListParams({}))).not.toHaveProperty("favorite");
+});
+
 test("rewrites URL names to unique resolvedName values", () => {
   const params = normalizeRecipeListParams({ ingredient: ["Straße", "tomato"], tag: ["Weeknight"] });
   const next = applyCanonicalSelections(params, {

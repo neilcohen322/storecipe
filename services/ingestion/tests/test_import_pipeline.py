@@ -67,6 +67,7 @@ from ingestion.pipeline import ImportPipeline as _ImportPipeline
 from ingestion.repositories.budgets import AiBudgetRepository
 from ingestion.repositories.imports import ImportRepository
 from ingestion.server_rendered_variants import ServerRenderedVariantRegistry
+from ingestion.services.account_deletions import AccountDeleted, AccountDeletionService
 
 
 @pytest_asyncio.fixture
@@ -333,6 +334,20 @@ class RecordingModelExtractor:
         if isinstance(outcome, BaseException):
             raise outcome
         return outcome
+
+
+class TombstoningModelExtractor:
+    def __init__(self, session: AsyncSession, owner_subject: str) -> None:
+        self._session = session
+        self._owner_subject = owner_subject
+        self.calls = 0
+
+    async def extract(
+        self, *, source_text: str, trusted_source_url: str | None
+    ) -> AiExtractionResult:
+        self.calls += 1
+        await AccountDeletionService(self._session).tombstone(self._owner_subject)
+        return model_result()
 
 
 class ProviderVisibilityModelExtractor:
@@ -2684,6 +2699,78 @@ class RecordingCatalog:
         self.calls += 1
         self.candidates.append(candidate)
         return uuid4()
+
+
+class TombstoningCatalog:
+    def __init__(self, session: AsyncSession, owner_subject: str) -> None:
+        self._session = session
+        self._owner_subject = owner_subject
+        self.calls = 0
+
+    async def create_imported(
+        self,
+        job_id: UUID,
+        owner_subject: str,
+        source_fingerprint: str,
+        candidate: RecipeImportCandidate,
+    ) -> UUID:
+        self.calls += 1
+        await AccountDeletionService(self._session).tombstone(self._owner_subject)
+        return uuid4()
+
+
+async def assert_owner_data_wiped(session: AsyncSession, job_id: UUID) -> None:
+    assert await session.get(ImportJob, job_id) is None
+    assert await session.scalar(select(LlmInvocation).where(LlmInvocation.job_id == job_id)) is None
+    assert await session.get(AiDailyUsage, ("auth0|owner", datetime.now(UTC).date())) is None
+
+
+@pytest.mark.asyncio
+async def test_tombstone_during_model_extraction_aborts_provider_persistence(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"unstructured recipe"
+    )
+    extractor = TombstoningModelExtractor(session, "auth0|owner")
+
+    with pytest.raises(AccountDeleted):
+        await ImportPipeline(repository, cipher()).run(
+            job_id,
+            token,
+            import_adapters(
+                RecordingFetcher(),
+                RecordingDeterministicExtractor(ParseError(ParseFailureCode.NO_RECIPE_FOUND)),
+                extractor,
+            ),
+        )
+
+    assert extractor.calls == 1
+    await assert_owner_data_wiped(session, job_id)
+
+
+@pytest.mark.asyncio
+async def test_tombstone_during_catalog_call_aborts_catalog_settlement(
+    session: AsyncSession,
+) -> None:
+    repository, job_id, token = await new_claimed_job(
+        session, input_kind=ImportInputKind.TEXT, plaintext=b"structured recipe"
+    )
+    catalog = TombstoningCatalog(session, "auth0|owner")
+
+    with pytest.raises(AccountDeleted):
+        await ImportPipeline(repository, cipher()).run(
+            job_id,
+            token,
+            import_adapters(
+                RecordingFetcher(),
+                RecordingDeterministicExtractor(deterministic_candidate(source_url=None)),
+                catalog=catalog,
+            ),
+        )
+
+    assert catalog.calls == 1
+    await assert_owner_data_wiped(session, job_id)
 
 
 def egg_items(*lines: str) -> list[IngredientNormalizationItem]:

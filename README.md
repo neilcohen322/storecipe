@@ -137,15 +137,17 @@ project notes.
 `scripts/deploy/backup.sh` writes a PostgreSQL custom-format dump, SHA-256 sidecar, and
 safe manifest to the private backup bucket. It keeps seven daily and four weekly
 backups. `scripts/deploy/restore_verify.sh` restores a selected dump into a disposable
-PostgreSQL 17 container and checks both schemas, migration heads, bounded counts, and
-foreign-key validity without printing recipe data. The local proof uses only synthetic
-rows:
+PostgreSQL 17 container, checks both schemas, migration heads, bounded counts, and
+foreign-key validity without printing recipe data, then replays the private
+account-deletion journal so a backup taken before deletion cannot resurrect that
+account. The local proof uses only synthetic rows, including a pre-deletion snapshot
+and a journal object for the deleted subject:
 
 ```powershell
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock `
   --mount "type=bind,source=$((Resolve-Path '.').Path),target=/repo,readonly" `
   -w /repo docker:29-cli sh -c `
-  "apk add --no-cache bash coreutils openssl && bash scripts/deploy/verify_restore_local.sh"
+  "apk add --no-cache bash coreutils openssl python3 && bash scripts/deploy/verify_restore_local.sh"
 ```
 
 Production backup, restore, and secret operations remain human-approved actions after
@@ -194,6 +196,7 @@ shell-sensitive values, and refuses to write inside the repository:
 ```powershell
 $env:STORECIPE_INPUT_MCP_OBO_CLIENT_SECRET = '<PASSWORD_MANAGER_VALUE>'
 $env:STORECIPE_INPUT_CATALOG_M2M_CLIENT_SECRET = '<PASSWORD_MANAGER_VALUE>'
+$env:STORECIPE_INPUT_CATALOG_ACCOUNT_DELETION_CLIENT_SECRET = '<PASSWORD_MANAGER_VALUE>'
 $env:STORECIPE_INPUT_OPENROUTER_API_KEY = '<PASSWORD_MANAGER_VALUE>'
 
 powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy/build_runtime_bundle.ps1 `
@@ -202,12 +205,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy/build_runti
   -Auth0Domain '<AUTH0_DOMAIN>' `
   -McpOboClientId '<MCP_OBO_CLIENT_ID>' `
   -CatalogM2mClientId '<CATALOG_M2M_CLIENT_ID>' `
+  -CatalogAccountDeletionClientId '<ACCOUNT_DELETION_M2M_CLIENT_ID>' `
+  -LegalOperatorName '<LEGAL_OPERATOR_NAME>' `
+  -PrivacyContactEmail '<PRIVACY_CONTACT_EMAIL>' `
+  -LegalEffectiveDate '2026-08-24' `
   -MediaBucket '<GCP_MEDIA_BUCKET>' `
   -BackupBucket '<GCP_BACKUP_BUCKET>'
+  -AccountDeletionJournalBucket '<ACCOUNT_DELETION_JOURNAL_BUCKET>'
 ```
 
 Upload the file directly with `gcloud secrets versions add`, verify the version is
-enabled, then securely remove it and clear the three process environment variables.
+enabled, then securely remove it and clear the four process environment variables.
 The helper prints status only, never generated or supplied values.
 
 The local verifier checks production Compose, Caddy, Terraform, shell syntax, and all

@@ -108,8 +108,11 @@ async def test_overlapping_mutations_advance_twice_and_stale_cache_key_misses(
         second_task = asyncio.create_task(
             rating_service.put_rating(second_session, subject, second_recipe_id, 5)
         )
-        await asyncio.wait_for(second_increment_started.wait(), timeout=1)
 
+        # The per-subject advisory lock now serializes the whole mutation,
+        # before the second transaction can reach its version increment.
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(second_increment_started.wait(), timeout=0.05)
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(second_commit_reached.wait(), timeout=0.05)
 
@@ -127,6 +130,7 @@ async def test_overlapping_mutations_advance_twice_and_stale_cache_key_misses(
         cache = RecipeQueryCache(MemoryRedis())
         assert await cache.set(user_id, first_version, request, page)
 
+        await asyncio.wait_for(second_increment_started.wait(), timeout=1)
         await asyncio.wait_for(second_commit_reached.wait(), timeout=1)
         allow_second_commit.set()
         await asyncio.wait_for(second_task, timeout=1)

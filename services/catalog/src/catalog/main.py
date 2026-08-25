@@ -1,19 +1,26 @@
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 
+from catalog.account_deletion_clients import (
+    AccountDeletionClients,
+    ClientCredentialsTokenProvider,
+)
+from catalog.account_deletion_saga import run_account_deletion_loop
 from catalog.auth import build_token_verifier
 from catalog.config import get_settings
 from catalog.cover_upload_limit import CoverUploadBodyLimitMiddleware
 from catalog.database import create_engine, create_session_factory
+from catalog.deletion_journal import GcsDeletionJournal
 from catalog.problems import PROBLEM_TYPE_BASE, install_problem_details, problem_response
 from catalog.rate_limits import RedisBurstLimiter
 from catalog.recipe_query_cache import RecipeQueryCache, create_redis_client
+from catalog.routes.account_deletions import router as account_deletions_router
 from catalog.routes.health import router as health_router
 from catalog.routes.internal_recipes import router as internal_recipes_router
 from catalog.routes.ratings import router as ratings_router
@@ -21,6 +28,7 @@ from catalog.routes.recipe_facets import router as recipe_facets_router
 from catalog.routes.recipe_images import router as recipe_images_router
 from catalog.routes.recipes import router as recipes_router
 from catalog.services.errors import (
+    AccountDeleted,
     CatalogError,
     CoverImageNotFound,
     IdempotencyConflict,
@@ -43,6 +51,8 @@ token_verifier = build_token_verifier(settings)
 
 
 def _status_for(exc: CatalogError) -> int:
+    if isinstance(exc, AccountDeleted):
+        return status.HTTP_410_GONE
     if isinstance(exc, RecipeNotFound | CoverImageNotFound):
         return status.HTTP_404_NOT_FOUND
     if isinstance(exc, MediaUnavailable | UnstableCatalogSnapshot | MutationRateLimitUnavailable):
@@ -66,7 +76,9 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
         raise exc
     detail = "Recipe not found." if isinstance(exc, RecipeNotFound) else str(exc)
     problem_type = (
-        f"{PROBLEM_TYPE_BASE}/stale_recipe_facet_cursor"
+        f"{PROBLEM_TYPE_BASE}/account_deleted"
+        if isinstance(exc, AccountDeleted)
+        else f"{PROBLEM_TYPE_BASE}/stale_recipe_facet_cursor"
         if isinstance(exc, StaleRecipeFacetCursor)
         else f"{PROBLEM_TYPE_BASE}/stale_recipe_query_cursor"
         if isinstance(exc, StaleRecipeQueryCursor)
@@ -88,7 +100,9 @@ async def catalog_error(request: Request, exc: Exception) -> JSONResponse:
     )
     extra: dict[str, object] | None = None
     headers = None
-    if isinstance(exc, StaleRecipeFacetCursor):
+    if isinstance(exc, AccountDeleted):
+        extra = {"errorCategory": "account_deleted"}
+    elif isinstance(exc, StaleRecipeFacetCursor):
         extra = {"errorCategory": "stale_recipe_facet_cursor"}
     elif isinstance(exc, StaleRecipeQueryCursor):
         extra = {"errorCategory": "stale_recipe_query_cursor"}
@@ -127,6 +141,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.token_verifier = token_verifier
     app.state.auth_resource_metadata_url = settings.resource_metadata_url
     runtime_settings = get_settings()
+    if (
+        runtime_settings.environment == "production"
+        and not runtime_settings.account_deletion_configured
+    ):
+        raise RuntimeError("Production account deletion configuration is incomplete")
+    app.state.account_deletion_journal = (
+        GcsDeletionJournal(runtime_settings.account_deletion_journal_bucket)
+        if runtime_settings.account_deletion_journal_bucket
+        else None
+    )
     app.state.redis_timeout_seconds = runtime_settings.redis_timeout_seconds
     app.state.redis = create_redis_client(
         runtime_settings.redis_url,
@@ -150,9 +174,45 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         app.state.recipe_image_store = None
     app.state.image_processing_semaphore = asyncio.Semaphore(1)
+    deletion_task: asyncio.Task[None] | None = None
+    deletion_stop = asyncio.Event()
+    if runtime_settings.account_deletion_configured:
+        internal_tokens = ClientCredentialsTokenProvider(
+            token_url=runtime_settings.account_deletion_token_url,
+            client_id=runtime_settings.account_deletion_client_id,
+            client_secret=runtime_settings.account_deletion_client_secret,
+            audience=runtime_settings.account_deletion_internal_audience,
+        )
+        auth0_tokens = ClientCredentialsTokenProvider(
+            token_url=runtime_settings.account_deletion_token_url,
+            client_id=runtime_settings.account_deletion_client_id,
+            client_secret=runtime_settings.account_deletion_client_secret,
+            audience=runtime_settings.account_deletion_auth0_audience,
+        )
+        deletion_clients = AccountDeletionClients(
+            ingestion_base_url=runtime_settings.account_deletion_internal_base_url,
+            auth0_management_base_url=(runtime_settings.account_deletion_auth0_management_base_url),
+            internal_tokens=internal_tokens,
+            auth0_tokens=auth0_tokens,
+        )
+        deletion_task = asyncio.create_task(
+            run_account_deletion_loop(
+                app.state.session_factory,
+                clients=deletion_clients,
+                redis=app.state.redis,
+                store=app.state.recipe_image_store,
+                stop=deletion_stop,
+                journal=app.state.account_deletion_journal,
+            )
+        )
     try:
         yield
     finally:
+        deletion_stop.set()
+        if deletion_task is not None:
+            deletion_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await deletion_task
         try:
             await app.state.mutation_burst_limiter.close()
         finally:
@@ -185,6 +245,7 @@ async def reject_oversized_query(request: Request, call_next: RequestResponseEnd
 app.add_middleware(CoverUploadBodyLimitMiddleware)
 install_problem_details(app)
 app.add_exception_handler(CatalogError, catalog_error)
+app.include_router(account_deletions_router)
 app.include_router(recipes_router)
 app.include_router(recipe_images_router)
 app.include_router(recipe_facets_router)

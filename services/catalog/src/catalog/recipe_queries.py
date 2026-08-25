@@ -74,6 +74,7 @@ class RecipeQueryRequest(ApiModel):
     max_total_minutes: Annotated[int | None, Field(ge=0)] = None
     min_rating: Annotated[int | None, Field(ge=1, le=5)] = None
     rating_state: Literal["any", "rated", "unrated"] = "any"
+    favorite: Literal[True] | None = None
     sort: Annotated[list[str], Field(max_length=6)] = Field(default_factory=list)
     cursor: Annotated[str | None, Field(max_length=1024)] = None
     limit: Annotated[int, Field(ge=1, le=100)] = 20
@@ -212,8 +213,11 @@ def validate_request_cursor(
 def canonical_query_json(request: RecipeQueryRequest, *, exclude_cursor: bool = False) -> bytes:
     if exclude_cursor:
         request = request.model_copy(update={"cursor": None})
+    payload = request.model_dump(by_alias=False, exclude_none=False)
+    if payload["favorite"] is None:
+        payload.pop("favorite")
     return json.dumps(
-        request.model_dump(by_alias=False, exclude_none=False),
+        payload,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,

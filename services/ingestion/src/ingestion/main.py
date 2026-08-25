@@ -16,6 +16,7 @@ from ingestion.database import create_engine
 from ingestion.problems import PROBLEM_TYPE_BASE, install_problem_details
 from ingestion.rate_limits import RedisBurstLimiter
 from ingestion.repositories.imports import ImportRepository
+from ingestion.routes.account_deletions import router as account_deletions_router
 from ingestion.routes.health import router as health_router
 from ingestion.routes.imports import router as imports_router
 from ingestion.routes.ingredient_normalizations import router as ingredient_normalizations_router
@@ -105,6 +106,7 @@ app = FastAPI(
 )
 install_problem_details(app)
 app.include_router(health_router)
+app.include_router(account_deletions_router)
 app.include_router(imports_router)
 app.include_router(ingredient_normalizations_router)
 app.add_middleware(

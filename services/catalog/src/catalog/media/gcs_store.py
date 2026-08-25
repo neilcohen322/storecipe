@@ -71,8 +71,13 @@ class GcsRecipeImageStore:
         expected = _as_int_generation(generation)
 
         def _delete() -> None:
+            from google.api_core.exceptions import NotFound
+
             blob = self._client.bucket(self._bucket_name).blob(key)
-            blob.delete(if_generation_match=expected, timeout=_TIMEOUT_SECONDS)
+            try:
+                blob.delete(if_generation_match=expected, timeout=_TIMEOUT_SECONDS)
+            except NotFound:
+                return
 
         await _run(_delete)
 

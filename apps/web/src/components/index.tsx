@@ -83,11 +83,14 @@ export function Section({ title, children, accessibilityRole, accessibilityLabel
   }
   return <View {...props} accessibilityRole={accessibilityRole} accessibilityLabel={accessibilityLabel} style={[{ marginBottom: theme.spacing.lg }, style]}>{heading}{children}</View>;
 }
-export function ResponsiveGrid({ children, minItemWidth = 240, ...props }: ComponentProps<typeof View> & { minItemWidth?: number }) {
+export function ResponsiveGrid({ children, minItemWidth = 240, columns, ...props }: ComponentProps<typeof View> & { minItemWidth?: number; columns?: 1 | 2 | 4 }) {
+  const itemStyle: ViewStyle = columns
+    ? { flexGrow: 1, flexShrink: 0, flexBasis: `${Math.floor(100 / columns) - 2}%`, maxWidth: `${Math.floor(100 / columns)}%`, minWidth: 0 }
+    : { flexGrow: 1, flexShrink: 1, flexBasis: minItemWidth, maxWidth: "100%", minWidth: 0 };
   return (
     <View {...props} style={[styles.grid, props.style]}>
       {React.Children.map(children, (child) => (
-        <View testID="responsive-grid-item" style={{ flexGrow: 1, flexShrink: 1, flexBasis: minItemWidth, maxWidth: "100%", minWidth: 0 }}>{child}</View>
+        <View testID="responsive-grid-item" style={itemStyle}>{child}</View>
       ))}
     </View>
   );

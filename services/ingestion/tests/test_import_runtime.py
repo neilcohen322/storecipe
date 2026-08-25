@@ -14,6 +14,7 @@ from ingestion.config import Settings
 from ingestion.crypto import PayloadCipher
 from ingestion.dispatcher import OutboxDispatcher
 from ingestion.models import (
+    AccountDeletionTombstone,
     Base,
     DispatchType,
     ImportDispatch,
@@ -282,6 +283,38 @@ async def test_reconciler_requeues_expired_current_receipt_once(session: AsyncSe
     )
     assert generations == [1, 2]
     assert target.dispatch_generation == 2
+
+
+@pytest.mark.asyncio
+async def test_reconciler_skips_residual_rows_for_tombstoned_subject(
+    session: AsyncSession,
+) -> None:
+    now = datetime(2026, 7, 27, tzinfo=UTC)
+    target = job(
+        now - timedelta(seconds=31),
+        status=ImportStatus.PROCESSING,
+        stage=ImportStage.FETCHING,
+        next_attempt_at=now - timedelta(seconds=1),
+        dispatch_generation=1,
+    )
+    session.add_all(
+        [
+            target,
+            AccountDeletionTombstone(
+                subject=target.owner_subject,
+                deleted_at=now - timedelta(seconds=1),
+                expires_at=now + timedelta(days=90),
+            ),
+        ]
+    )
+    await session.flush()
+
+    assert await ImportReconciler(session).reconcile(now=now) == 0
+    assert target.dispatch_generation == 1
+    assert (
+        await session.scalar(select(ImportDispatch).where(ImportDispatch.job_id == target.id))
+        is None
+    )
 
 
 @pytest.mark.asyncio

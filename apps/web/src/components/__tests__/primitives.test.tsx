@@ -103,6 +103,18 @@ describe("accessible token-driven primitives", () => {
     expect(getByRole("button", { name: "Save", includeHiddenElements: true }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ minHeight: 44 })]));
   });
 
+  it("uses explicit column counts without overflowing the viewport", async () => {
+    const { getAllByTestId } = await renderWithTheme(
+      <ResponsiveGrid testID="grid" columns={4}><Text>One</Text><Text>Two</Text></ResponsiveGrid>,
+    );
+    for (const item of getAllByTestId("responsive-grid-item")) {
+      expect(StyleSheet.flatten(item.props.style)).toEqual(expect.objectContaining({
+        flexBasis: "23%",
+        maxWidth: "25%",
+      }));
+    }
+  });
+
   it("keeps grid items shrinking inside the viewport instead of stretching off-screen", async () => {
     const { getAllByTestId } = await renderWithTheme(
       <ResponsiveGrid testID="grid"><Text>One</Text><Text>Two</Text><Text>Three</Text></ResponsiveGrid>,

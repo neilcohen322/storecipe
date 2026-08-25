@@ -33,10 +33,10 @@ jest.mock("../../theme/ThemeProvider", () => ({
   }),
 }));
 
-const recipe: Recipe = { id: "recipe-1", title: "Lemon pasta", sourceUrl: null, servings: 4, prepMinutes: 10, cookMinutes: 15, totalMinutes: 25, ingredients: [], instructions: [], tags: ["pasta"], rating: 4, coverImage: null };
+const recipe: Recipe = { id: "recipe-1", title: "Lemon pasta", sourceUrl: null, servings: 4, prepMinutes: 10, cookMinutes: 15, totalMinutes: 25, ingredients: [], instructions: [], tags: ["pasta"], rating: 4, coverImage: null, favorite: false, personalNotes: null, lastCookedAt: null };
 const secondRecipe: Recipe = { ...recipe, id: "recipe-2", title: "Tomato risotto" };
 type Page = { items: Recipe[]; nextCursor: string | null };
-type CatalogExtras = { listRecipeFacets?: jest.Mock; resolveRecipeFacetSelections?: jest.Mock; getCoverImage?: jest.Mock };
+type CatalogExtras = { listRecipeFacets?: jest.Mock; resolveRecipeFacetSelections?: jest.Mock; getCoverImage?: jest.Mock; patchRecipe?: jest.Mock };
 const hidden = { includeHiddenElements: true } as const;
 type Screen = Awaited<ReturnType<typeof render>>;
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; }); return { promise, resolve, reject }; }
@@ -65,6 +65,7 @@ function catalogWith(listRecipes: jest.Mock, extras: CatalogExtras = {}) {
     listRecipeFacets: extras.listRecipeFacets ?? jest.fn().mockResolvedValue(defaultFacetPage()),
     resolveRecipeFacetSelections: extras.resolveRecipeFacetSelections ?? jest.fn().mockImplementation(async (body: { ingredients?: string[]; tags?: string[] }) => echoResolve(body)),
     getCoverImage: extras.getCoverImage ?? jest.fn().mockResolvedValue({ blob: null, etag: null, notModified: false }),
+    patchRecipe: extras.patchRecipe ?? jest.fn().mockResolvedValue(recipe),
   } as unknown as React.ComponentProps<typeof RecipeListScreen>["catalog"];
 }
 const actions = { onOpenDetail: jest.fn(), onCreate: jest.fn(), onImport: jest.fn(), onLogout: jest.fn(), onUnauthorized: jest.fn() };
@@ -415,6 +416,33 @@ test("ignores duplicate load-more presses before a rerender and preserves the fi
   expect(listRecipes).toHaveBeenCalledTimes(2);
   await act(async () => next.resolve({ items: [recipe, secondRecipe], nextCursor: null }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Open Tomato risotto" })).toBeTruthy());
+});
+
+test("stale query cursor 409 clears the list and refetches page one once", async () => {
+  const listRecipes = jest.fn()
+    .mockResolvedValueOnce({ items: [recipe], nextCursor: "cursor-2" })
+    .mockRejectedValueOnce(new ApiError("stale", 409, "stale_recipe_query_cursor"))
+    .mockResolvedValueOnce({ items: [secondRecipe], nextCursor: null });
+  const screen = await renderScreen(listRecipes);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Load more recipes" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Load more recipes" }));
+  await waitFor(() => expect(screen.getByText("Tomato risotto")).toBeTruthy());
+  expect(screen.queryByText("Lemon pasta")).toBeNull();
+  expect(listRecipes).toHaveBeenCalledTimes(3);
+  expect(listRecipes.mock.calls[1][0]).toEqual(expect.objectContaining({ cursor: "cursor-2" }));
+  expect(listRecipes.mock.calls[2][0]).not.toHaveProperty("cursor");
+});
+
+test("query cursor 422 does not retry page one", async () => {
+  const listRecipes = jest.fn()
+    .mockResolvedValueOnce({ items: [recipe], nextCursor: "cursor-2" })
+    .mockRejectedValueOnce(new ApiError("invalid cursor", 422, "invalid_recipe_query_cursor"));
+  const screen = await renderScreen(listRecipes);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Load more recipes" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Load more recipes" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Load more recipes" }).props.accessibilityState.busy).toBe(false));
+  expect(screen.getByText("Lemon pasta")).toBeTruthy();
+  expect(listRecipes).toHaveBeenCalledTimes(2);
 });
 
 test("keeps a newer pagination guard active when a stale request finishes", () => {
@@ -829,10 +857,10 @@ test("does not join a pending ingredient search with the previous page cursor", 
   expect(searchCall?.[0]).not.toHaveProperty("ingredientCursor");
 });
 
-test("stale facet cursor 409 clears only that lane and restarts page one", async () => {
+test("category-qualified stale facet cursor 409 clears only that lane and restarts page one", async () => {
   const listRecipeFacets = jest.fn()
     .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))
-    .mockRejectedValueOnce(new ApiError("stale", 409))
+    .mockRejectedValueOnce(new ApiError("stale", 409, "stale_recipe_facet_cursor"))
     .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["garlic"], ingredientNextCursor: null }));
   const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
   await openFilters(screen);
@@ -842,6 +870,19 @@ test("stale facet cursor 409 clears only that lane and restarts page one", async
   expect(queryDialogButton(screen, "basil")).toBeNull();
   expect(listRecipeFacets).toHaveBeenCalledTimes(3);
   expect(listRecipeFacets.mock.calls[2][0]).not.toHaveProperty("ingredientCursor");
+});
+
+test("generic facet cursor 409 does not restart the lane", async () => {
+  const listRecipeFacets = jest.fn()
+    .mockResolvedValueOnce(defaultFacetPage({ ingredients: ["basil"], ingredientNextCursor: "cursor-1" }))
+    .mockRejectedValueOnce(new ApiError("conflict", 409, "recipe_conflict"));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }), { listRecipeFacets });
+  await openFilters(screen);
+  await waitFor(() => expect(dialogButton(screen, "Load more options")).toBeTruthy());
+  await fireEvent.press(dialogButton(screen, "Load more options"));
+  await waitFor(() => expect(screen.getByText("We couldn't load filter options. Please try again.", hidden)).toBeTruthy());
+  expect(dialogButton(screen, "basil")).toBeTruthy();
+  expect(listRecipeFacets).toHaveBeenCalledTimes(2);
 });
 
 test("any duration and no minimum omit params and unrated clears min rating", async () => {
@@ -1034,4 +1075,47 @@ test("requests recipes with ingredient and tag params from the URL", async () =>
   }));
   expect(listRecipes.mock.calls[0][0]).not.toHaveProperty("requiredIngredient");
   expect(listRecipes.mock.calls[0][0]).not.toHaveProperty("availableIngredient");
+});
+
+test("Favorites only applies favorite=true without touching the URL until Apply", async () => {
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
+  await openFilters(screen);
+  expect(dialogButton(screen, "All recipes").props.accessibilityState).toMatchObject({ selected: true });
+  await fireEvent.press(dialogButton(screen, "Favorites only"));
+  expect(mockPushRoute).not.toHaveBeenCalled();
+  await fireEvent.press(dialogButton(screen, "Apply"));
+  expect(mockPushRoute).toHaveBeenLastCalledWith({ pathname: "/recipes", params: { favorite: "true" } });
+});
+
+test("favorite filter counts as one active filter and uses a dedicated empty state", async () => {
+  mockRouteParams = { favorite: "true" };
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [], nextCursor: null }));
+  expect(screen.getByRole("button", { name: "Filters (1)" })).toBeTruthy();
+  await waitFor(() => expect(screen.getByText("No favorite recipes found.")).toBeTruthy());
+  await openFilters(screen);
+  expect(dialogButton(screen, "Favorites only").props.accessibilityState).toMatchObject({ selected: true });
+});
+
+test("favorite control patches then refetches page one without opening the card", async () => {
+  const patchRecipe = jest.fn().mockResolvedValue({ ...recipe, favorite: true });
+  const listRecipes = jest.fn()
+    .mockResolvedValueOnce({ items: [recipe], nextCursor: "cursor-2" })
+    .mockResolvedValueOnce({ items: [{ ...recipe, favorite: true }], nextCursor: null });
+  const screen = await renderScreen(listRecipes, { patchRecipe });
+  await waitFor(() => expect(screen.getByText("Lemon pasta")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Add Lemon pasta to favorites" }));
+  expect(actions.onOpenDetail).not.toHaveBeenCalled();
+  await waitFor(() => expect(patchRecipe).toHaveBeenCalledWith("recipe-1", { favorite: true }));
+  await waitFor(() => expect(listRecipes).toHaveBeenCalledTimes(2));
+  expect(listRecipes.mock.calls[1][0]).not.toHaveProperty("cursor");
+});
+
+test("failed favorite toggle rolls back and keeps a safe error", async () => {
+  const patchRecipe = jest.fn().mockRejectedValue(new Error("raw favorite error"));
+  const screen = await renderScreen(jest.fn().mockResolvedValue({ items: [recipe], nextCursor: null }), { patchRecipe });
+  await waitFor(() => expect(screen.getByText("Lemon pasta")).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Add Lemon pasta to favorites" }));
+  await waitFor(() => expect(screen.getByText("We couldn't update favorites. Please try again.")).toBeTruthy());
+  expect(screen.queryByText("raw favorite error")).toBeNull();
+  expect(screen.getByRole("button", { name: "Add Lemon pasta to favorites" })).toBeTruthy();
 });

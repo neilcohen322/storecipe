@@ -22,6 +22,9 @@ def test_automatic_release_waits_for_public_production_contract() -> None:
         "AUTH0_PUBLIC_CLIENT_ID",
         "AUTH0_API_AUDIENCE",
         "MCP_RESOURCE_URL",
+        "LEGAL_OPERATOR_NAME",
+        "PRIVACY_CONTACT_EMAIL",
+        "LEGAL_EFFECTIVE_DATE",
     ):
         assert f"vars.{variable} != ''" in text
 
@@ -53,9 +56,41 @@ def test_release_builds_four_images_and_emits_strict_manifest() -> None:
 
 def test_frontend_build_receives_only_public_configuration() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "EXPO_PUBLIC_AUTH0_DOMAIN" in text
-    assert "EXPO_PUBLIC_AUTH0_CLIENT_ID" in text
-    assert "EXPO_PUBLIC_AUTH0_AUDIENCE" in text
-    assert "EXPO_PUBLIC_CATALOG_API_URL" in text
-    assert "EXPO_PUBLIC_INGESTION_API_URL" in text
+    for variable in (
+        "EXPO_PUBLIC_AUTH0_DOMAIN",
+        "EXPO_PUBLIC_AUTH0_CLIENT_ID",
+        "EXPO_PUBLIC_AUTH0_AUDIENCE",
+        "EXPO_PUBLIC_CATALOG_API_URL",
+        "EXPO_PUBLIC_INGESTION_API_URL",
+        "EXPO_PUBLIC_LEGAL_OPERATOR_NAME",
+        "EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL",
+        "EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE",
+    ):
+        assert variable in text
     assert "EXPO_PUBLIC_CLIENT_SECRET" not in text
+
+
+def test_release_scans_exact_four_local_images_before_push_and_manifest() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    build = text.index("- name: Build four immutable images")
+    scan = text.index("- name: Scan the exact four release images")
+    push = text.index("- name: Push four immutable images")
+    manifest = text.index("- name: Build and validate release manifest")
+
+    assert build < scan < push < manifest
+    assert "aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241" in text
+    assert "version: v0.68.2" in text
+    assert (
+        "trivy image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1"
+        in text
+    )
+    assert "[[ ${#images[@]} -eq 4 ]]" in text
+    scanned = text[scan:push]
+    for image in (
+        "storecipe-web:$COMMIT",
+        "storecipe-catalog:$COMMIT",
+        "storecipe-ingestion:$COMMIT",
+        "storecipe-mcp:$COMMIT",
+    ):
+        assert scanned.count(image) == 1
+    assert "docker push" not in scanned

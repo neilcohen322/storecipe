@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from catalog.cors_origins import parse_cors_origins
@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     auth0_issuer: str = Field(default="", validation_alias="AUTH0_ISSUER")
     auth0_audience: str = Field(default="", validation_alias="AUTH0_AUDIENCE")
     auth0_jwks_url: str = Field(default="", validation_alias="AUTH0_JWKS_URL")
+    account_deletion_internal_base_url: str = "http://ingestion-api:8001"
+    account_deletion_token_url: str = ""
+    account_deletion_client_id: str = ""
+    account_deletion_client_secret: SecretStr = SecretStr("")
+    account_deletion_internal_audience: str = ""
+    account_deletion_auth0_audience: str = ""
+    account_deletion_auth0_management_base_url: str = ""
+    account_deletion_journal_bucket: str = ""
     # Comma-separated browser origins allowed to call Catalog from Expo web.
     cors_origins: str = Field(
         default="http://localhost:8081,http://127.0.0.1:8081",
@@ -56,6 +64,21 @@ class Settings(BaseSettings):
     @property
     def resource_metadata_url(self) -> str:
         return "/.well-known/oauth-protected-resource"
+
+    @property
+    def account_deletion_configured(self) -> bool:
+        return all(
+            (
+                self.account_deletion_internal_base_url,
+                self.account_deletion_token_url,
+                self.account_deletion_client_id,
+                self.account_deletion_client_secret.get_secret_value(),
+                self.account_deletion_internal_audience,
+                self.account_deletion_auth0_audience,
+                self.account_deletion_auth0_management_base_url,
+                self.account_deletion_journal_bucket,
+            )
+        )
 
 
 @lru_cache

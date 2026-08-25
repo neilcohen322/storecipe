@@ -10,6 +10,77 @@ def _contract() -> dict[str, object]:
         return yaml.safe_load(contract_file)
 
 
+def test_account_deletion_contract_is_subject_safe_and_tombstone_aware() -> None:
+    contract = _contract()
+    operation = contract["paths"]["/v1/account-deletions"]["post"]
+    request = contract["components"]["schemas"]["AccountDeletionRequest"]
+
+    assert operation["responses"]["202"]["description"] == (
+        "Deletion tombstone and durable job committed"
+    )
+    assert operation["responses"]["410"] == {"$ref": "#/components/responses/AccountDeleted"}
+    assert request["additionalProperties"] is False
+    assert set(request["properties"]) == {"confirmation"}
+    assert request["properties"]["confirmation"]["const"] == "DELETE MY ACCOUNT"
+
+    example = contract["components"]["responses"]["AccountDeleted"]["content"][
+        "application/problem+json"
+    ]["example"]
+    assert example["status"] == 410
+    assert example["errorCategory"] == "account_deleted"
+
+
+def test_recipe_personalization_contract_keeps_false_filter_invalid() -> None:
+    contract = _contract()
+    operation = contract["paths"]["/v1/recipes"]["get"]
+    favorite = next(
+        parameter for parameter in operation["parameters"] if parameter["name"] == "favorite"
+    )
+    recipe = contract["components"]["schemas"]["Recipe"]
+    patch = contract["components"]["schemas"]["RecipePatch"]
+
+    assert favorite["schema"] == {"type": "boolean", "const": True}
+    assert {"favorite", "personalNotes", "lastCookedAt"}.issubset(recipe["required"])
+    assert recipe["properties"]["personalNotes"]["maxLength"] == 5000
+    assert patch["properties"]["favorite"] == {"type": "boolean"}
+    assert patch["properties"]["personalNotes"] == {
+        "type": ["string", "null"],
+        "maxLength": 5000,
+    }
+    assert "/v1/recipes/{recipeId}/cooked" in contract["paths"]
+
+
+def test_import_history_contract_exposes_only_safe_retained_metadata() -> None:
+    contract = _contract()
+    operation = contract["paths"]["/v1/imports"]["get"]
+    item = contract["components"]["schemas"]["ImportHistoryItem"]
+
+    assert operation["operationId"] == "listImports"
+    assert set(item["properties"]) == {
+        "id",
+        "inputKind",
+        "createdAt",
+        "updatedAt",
+        "terminalAt",
+        "status",
+        "phase",
+    }
+    assert "stage" not in item["properties"]
+    assert "percent" not in item["properties"]
+    assert item["properties"]["phase"]["enum"] == [
+        "waiting",
+        "fetching",
+        "extracting",
+        "validating",
+        "saving",
+        "completed",
+        "review_required",
+        "failed",
+        "cancelled",
+        "timed_out",
+    ]
+
+
 def test_recipe_query_get_documents_stale_cursor_conflict() -> None:
     contract = _contract()
     operation = contract["paths"]["/v1/recipes"]["get"]

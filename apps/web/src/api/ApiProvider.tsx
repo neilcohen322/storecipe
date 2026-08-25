@@ -6,6 +6,7 @@ import { useAuth } from "../auth/AuthProvider";
 
 type ApiContextValue = {
   client: ReturnType<typeof createApiClient>;
+  accountDeletionClient: ReturnType<typeof createApiClient>;
 };
 
 const ApiContext = createContext<ApiContextValue | undefined>(undefined);
@@ -15,10 +16,14 @@ export function ApiProvider({ children }: PropsWithChildren) {
   const bases = useMemo(() => getApiBases(), []);
   const client = useMemo(
     () => createApiClient(auth.getAccessToken, bases),
-    [auth, bases],
+    [auth.getAccessToken, bases],
+  );
+  const accountDeletionClient = useMemo(
+    () => createApiClient(auth.getAccountDeletionAccessToken, bases),
+    [auth.getAccountDeletionAccessToken, bases],
   );
 
-  const value = useMemo(() => ({ client }), [client]);
+  const value = useMemo(() => ({ client, accountDeletionClient }), [accountDeletionClient, client]);
   return <ApiContext.Provider value={value}>{children}</ApiContext.Provider>;
 }
 

@@ -73,6 +73,7 @@ jobs:
         env:
           INGESTION_DATABASE_URL: postgresql+asyncpg://ingestion_app:local_ingestion_only@localhost:5432/storecipe
       - run: uv run pytest
+      - run: uv run pip-audit
       - run: uv run openapi-spec-validator contracts/openapi.yaml
       - run: docker compose config --quiet
 
@@ -93,6 +94,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod --audit-level=high
       - run: pnpm run typecheck
       - run: pnpm test --runInBand
       - name: Build and verify production web bundle
@@ -103,6 +105,9 @@ jobs:
           EXPO_PUBLIC_AUTH0_AUDIENCE: https://storecipe.example/api
           EXPO_PUBLIC_CATALOG_API_URL: https://storecipe.example
           EXPO_PUBLIC_INGESTION_API_URL: https://storecipe.example
+          EXPO_PUBLIC_LEGAL_OPERATOR_NAME: Storecipe CI Operator
+          EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL: privacy@storecipe.test
+          EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE: "2026-01-01"
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm run test:e2e
       - name: Upload Playwright failure diagnostics
@@ -127,7 +132,10 @@ jobs:
             --build-arg EXPO_PUBLIC_AUTH0_CLIENT_ID=ci-public-client \
             --build-arg EXPO_PUBLIC_AUTH0_AUDIENCE=https://storecipe.example/api \
             --build-arg EXPO_PUBLIC_CATALOG_API_URL=https://storecipe.example \
-            --build-arg EXPO_PUBLIC_INGESTION_API_URL=https://storecipe.example .
+            --build-arg EXPO_PUBLIC_INGESTION_API_URL=https://storecipe.example \
+            --build-arg "EXPO_PUBLIC_LEGAL_OPERATOR_NAME=Storecipe CI Operator" \
+            --build-arg EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL=privacy@storecipe.test \
+            --build-arg EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE=2026-01-01 .
 
   stack:
     runs-on: ubuntu-latest

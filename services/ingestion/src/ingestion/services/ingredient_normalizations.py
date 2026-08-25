@@ -29,12 +29,14 @@ from ingestion.models import (
     LlmInvocationState,
     LlmOperationKind,
 )
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.ingredient_normalizations import (
     IdempotencyKeyConflict,
     IngredientNormalizationRepository,
 )
 from ingestion.schemas import IngredientNormalizationResponse, IngredientView
+from ingestion.services.account_deletions import AccountDeleted
 
 PROVIDER_NAME = "openrouter"
 _MAX_ATTEMPTS = 2
@@ -160,6 +162,7 @@ class IngredientNormalizationService:
         self._deadline = timedelta(seconds=deadline_seconds)
         self._operations = IngredientNormalizationRepository(session)
         self._budgets = AiBudgetRepository(session)
+        self._account_deletions = AccountDeletionRepository(session)
 
     async def normalize(
         self,
@@ -167,6 +170,7 @@ class IngredientNormalizationService:
         idempotency_key: str,
         raw_lines: list[str],
     ) -> NormalizationSubmission:
+        await self._lock_and_require_active_subject(owner_subject)
         request_hash = compute_request_hash(raw_lines)
         operation, _ = await self._operations.get_or_create_operation(
             owner_subject=owner_subject,
@@ -258,6 +262,7 @@ class IngredientNormalizationService:
             )
             raise NormalizationUnavailable
 
+        await self._lock_and_require_active_subject(owner_subject)
         plaintext = _serialize_items(result.items)
         await self._operations.record_success(
             operation=operation,
@@ -289,6 +294,7 @@ class IngredientNormalizationService:
         error: IngredientNormalizationError,
         attempt_ordinal: int,
     ) -> None:
+        await self._lock_and_require_active_subject(operation.owner_subject)
         category = error.code.value
         retryable = error.code in _RETRYABLE_FAILURE_CODES
         await self._operations.fail_attempt(
@@ -320,6 +326,7 @@ class IngredientNormalizationService:
         outcome_category: str,
         attempt_ordinal: int,
     ) -> None:
+        await self._lock_and_require_active_subject(operation.owner_subject)
         await self._operations.mark_attempt_ambiguous(
             attempt,
             outcome_category=outcome_category,
@@ -329,6 +336,12 @@ class IngredientNormalizationService:
             operation.updated_at = datetime.now(UTC)
         await self._budgets.mark_ambiguous(invocation_id)
         await self._session.commit()
+
+    async def _lock_and_require_active_subject(self, owner_subject: str) -> None:
+        await self._account_deletions.acquire_subject_lock(owner_subject)
+        if await self._account_deletions.is_tombstoned(owner_subject):
+            await self._session.rollback()
+            raise AccountDeleted
 
     async def _expire_overdue_attempts(self, operation: IngredientNormalizationOperation) -> bool:
         active = await self._operations.get_active_attempt(operation.id)

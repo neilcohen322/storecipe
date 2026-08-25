@@ -44,9 +44,10 @@ resource "google_compute_instance" "production" {
     block-project-ssh-keys = "TRUE"
   }
   metadata_startup_script = templatefile("${path.module}/templates/startup.sh.tftpl", {
-    runtime_secret_name = google_secret_manager_secret.runtime.secret_id
-    media_bucket_name   = google_storage_bucket.media.name
-    backup_bucket_name  = google_storage_bucket.backup.name
+    runtime_secret_name                  = google_secret_manager_secret.runtime.secret_id
+    media_bucket_name                    = google_storage_bucket.media.name
+    backup_bucket_name                   = google_storage_bucket.backup.name
+    account_deletion_journal_bucket_name = google_storage_bucket.account_deletion_journal.name
   })
 
   service_account {

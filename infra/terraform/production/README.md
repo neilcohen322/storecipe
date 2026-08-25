@@ -18,6 +18,17 @@ Terraform creates the empty `storecipe-production-env` Secret Manager container.
 version only in the operator step after DNS/Auth0 values exist; never pass secret data to
 Terraform. Applying infrastructure is intentionally outside the agent-built phase.
 
+Terraform also creates the private `account_deletion_journal_bucket`, distinct from media,
+backups, and Terraform state. It uses uniform bucket-level access and enforced public-access
+prevention. Journal objects are retained for at least 90 days. Pending records are not
+lifecycle-deleted so unfinished deletions stay recoverable. Completed `.json`, `.committed`,
+and `.completed` records are deleted by Catalog after saga completion plus 90 days, once
+bucket retention allows it. Replay skips a completed journal only after that completed-at
+window, not the original request expiry. Object versioning and soft delete are disabled so
+they do not extend erasure semantics. The VM startup contract writes its name to
+`/etc/storecipe-host.conf` as `CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET`; deployment must pass
+that existing host binding into the Catalog runtime environment.
+
 The shared GitHub WIF provider admits only the `terraform.yml` and `deploy.yml`
 workflows from `master`. Service-account bindings then narrow authority again: the
 Terraform service account is bound only to the Terraform workflow identity, while the

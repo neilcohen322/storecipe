@@ -6,7 +6,7 @@ import { ApiError, ApiUnauthorizedError } from "../api/client";
 import type { RecipeCreate, RecipeCreateIngredient } from "../api/catalog";
 import type { createCatalogApi } from "../api/catalog";
 import type { createIngestionApi, ImportReviewDraft } from "../api/ingestion";
-import { Button, Field, InlineNotice, PageHeader, Screen, TextArea } from "../components";
+import { Button, Field, InlineNotice, PageHeader, Screen } from "../components";
 import {
   blobFromPickerUri,
   pickRecipeCoverImage,
@@ -14,6 +14,7 @@ import {
   type PickedCover,
 } from "../media/imagePicker";
 import type { LayoutMode } from "../navigation/types";
+import { RecipeFormFields } from "./RecipeFormFields";
 import { useTheme } from "../theme/ThemeProvider";
 import {
   resolveIdempotencySession,
@@ -545,32 +546,17 @@ export function CreateRecipeScreen({
           <InlineNotice tone="info" message={draftNotice} />
         ) : null}
         <View style={styles.form}>
-          <Field
-            label="Title"
-            hint="For example: Weeknight tomato soup"
-            error={formErrors.title}
-            control={
-              <TextInput
-                value={title}
-                onChangeText={handleTitleChange}
-                placeholder="Recipe title"
-                placeholderTextColor={theme.colors.mutedText}
-                returnKeyType="done"
-                onSubmitEditing={handlePrimaryAction}
-              />
-            }
-          />
-          <TextArea
-            label="Ingredients"
-            hint="One ingredient per line, for example: 2 cups tomatoes"
-            error={formErrors.ingredients}
-            value={ingredientsText}
-            onChangeText={handleIngredientsChange}
-            placeholder={"2 cups tomatoes\n1 tsp salt"}
-            placeholderTextColor={theme.colors.mutedText}
-            numberOfLines={6}
-          />
-          {isReviewed ? (
+          <RecipeFormFields
+            title={title}
+            onTitleChange={handleTitleChange}
+            titleError={formErrors.title}
+            ingredientsText={ingredientsText}
+            onIngredientsChange={handleIngredientsChange}
+            ingredientsError={formErrors.ingredients}
+            instructionsText={instructionsText}
+            onInstructionsChange={handleInstructionsChange}
+            instructionsError={formErrors.instructions}
+            afterIngredients={isReviewed ? (
             <View style={styles.reviewSection}>
               <Text style={[styles.reviewHeading, { color: theme.colors.text }]}>Review ingredients</Text>
               {reviewedAttempt.reviewedPayload.ingredients.map((ingredient, index) => (
@@ -623,18 +609,7 @@ export function CreateRecipeScreen({
                 </View>
               ))}
             </View>
-          ) : null}
-          <TextArea
-            label="Instructions"
-            hint="One step per line, for example: Simmer for 20 minutes."
-            error={formErrors.instructions}
-            value={instructionsText}
-            onChangeText={handleInstructionsChange}
-            placeholder={"Chop the vegetables.\nSimmer until tender."}
-            placeholderTextColor={theme.colors.mutedText}
-            numberOfLines={8}
-            returnKeyType="done"
-            blurOnSubmit
+            ) : null}
             onSubmitEditing={handlePrimaryAction}
           />
           {requestError ? <InlineNotice tone="error" message={requestError} /> : null}

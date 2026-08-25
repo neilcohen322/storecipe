@@ -300,6 +300,27 @@ def test_recipe_view_and_query_page_match_camel_case_response_contract() -> None
     assert page.model_dump(by_alias=True)["nextCursor"] is None
 
 
+def test_recipe_view_ignores_catalog_only_fields_without_emitting_them() -> None:
+    payload = {
+        **_recipe_view_payload(),
+        "coverImage": {"url": "https://secret.example/cover.jpg"},
+        "favorite": True,
+        "personalNotes": "private note",
+        "lastCookedAt": "2026-08-24T12:00:00Z",
+    }
+
+    recipe = RecipeView.model_validate(payload)
+    wire_payload = recipe.model_dump(mode="json", by_alias=True)
+
+    assert RecipeView.model_config["extra"] == "ignore"
+    assert {"coverImage", "favorite", "personalNotes", "lastCookedAt"}.isdisjoint(wire_payload)
+
+
+def test_recipe_view_is_the_only_recipe_model_that_ignores_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        RecipeCreate.model_validate({**_recipe_payload(), "favorite": True})
+
+
 @pytest.mark.parametrize(
     "field_name,value",
     [

@@ -108,8 +108,52 @@ def test_caddy_preserves_rest_routing_and_routes_mcp_to_gateway() -> None:
         in caddy
     )
     assert "handle /mcp* {\n        reverse_proxy mcp-gateway:8002" in caddy
-    assert "handle /internal" not in caddy
     assert caddy.count("reverse_proxy catalog-api:8000") == 1
+
+
+def test_caddy_blocks_all_internal_paths_before_spa_fallback() -> None:
+    caddy = CADDY_PATH.read_text(encoding="utf-8")
+
+    internal = caddy.index("handle /internal* {")
+    spa = caddy.index("try_files {path} /index.html")
+    assert internal < spa
+    assert "handle /internal* {\n        respond 404\n    }" in caddy
+    assert caddy[internal:spa].count("reverse_proxy") == 0
+
+
+def test_caddy_exposes_sanitized_gateway_readiness() -> None:
+    caddy = CADDY_PATH.read_text(encoding="utf-8")
+    readiness = caddy[caddy.index("handle /health/ready {") : caddy.index("handle /internal* {")]
+
+    assert "reverse_proxy mcp-gateway:8002" in readiness
+    assert "@ready status 2xx" in readiness
+    assert 'respond "ready" 200' in readiness
+    assert 'respond "unavailable" 503' in readiness
+
+
+def test_caddy_sets_security_headers_and_strict_csp() -> None:
+    caddy = CADDY_PATH.read_text(encoding="utf-8")
+    csp = next(line.strip() for line in caddy.splitlines() if "Content-Security-Policy" in line)
+
+    assert "script-src 'self';" in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
+    assert "style-src 'self' 'unsafe-inline';" in csp
+    assert "img-src 'self' blob: data:;" in csp
+    assert "connect-src 'self' {$AUTH0_ISSUER};" in csp
+    assert "frame-src {$AUTH0_ISSUER};" in csp
+    assert "worker-src 'none';" in csp
+    assert "object-src 'none';" in csp
+    assert "base-uri 'self';" in csp
+    assert "frame-ancestors 'none';" in csp
+    assert "form-action 'self' {$AUTH0_ISSUER};" in csp
+    assert "manifest-src 'self'" in csp
+    for header in (
+        "Permissions-Policy",
+        "Referrer-Policy",
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+    ):
+        assert header in caddy
 
 
 def test_public_resource_and_auth0_environment_contracts_are_coherent() -> None:

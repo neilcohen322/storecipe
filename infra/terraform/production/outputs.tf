@@ -18,6 +18,10 @@ output "backup_bucket" {
   value = google_storage_bucket.backup.name
 }
 
+output "account_deletion_journal_bucket" {
+  value = google_storage_bucket.account_deletion_journal.name
+}
+
 output "runtime_secret_name" {
   value = google_secret_manager_secret.runtime.secret_id
 }

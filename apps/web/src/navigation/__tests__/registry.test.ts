@@ -14,6 +14,11 @@ describe("navigation registry", () => {
     expect(href).toBe("/recipes/recipe-42");
   });
 
+  it("approves cooking session paths", () => {
+    expect(isApprovedAppPath("/recipes/recipe-42/cook")).toBe(true);
+    expect(isApprovedAppPath("/recipes/recipe-42/edit")).toBe(false);
+  });
+
   it("uses unique link paths and keeps actions free of hrefs", () => {
     expect(new Set(linkItems.map((item) => item.href)).size).toBe(linkItems.length);
     expect(actionItems.every((item) => !("href" in item))).toBe(true);

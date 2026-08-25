@@ -1,6 +1,8 @@
 import {
   ApiNetworkError,
   ApiUnauthorizedError,
+  ApiError,
+  accountDeletionScopeErrorMessage,
   createApiClient,
   isUnauthorizedCredentialError,
 } from "../client";
@@ -94,6 +96,28 @@ test("transient Auth0/network token failures are not unauthorized", async () => 
   await expect(client.getJson("/v1/recipes")).rejects.toBe(networkError);
 });
 
+test.each([
+  Object.assign(new Error("Missing scopes"), { name: "MissingScopesError" }),
+  Object.assign(new Error("Missing scopes"), { code: "missing_scopes" }),
+])("maps SDK deletion scope failures to a re-login instruction", (error) => {
+  expect(accountDeletionScopeErrorMessage(error)).toBe("Sign out and back in to enable account deletion. Your current session does not include the required permission.");
+});
+
+test("maps an API insufficient_scope challenge to a re-login instruction", async () => {
+  globalThis.fetch = jest.fn().mockResolvedValue(new Response(null, {
+    status: 403,
+    headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' },
+  })) as unknown as typeof fetch;
+  const client = createApiClient(async () => "token", { catalog: "http://catalog.test", ingestion: "http://ingestion.test" });
+
+  await expect(client.request("/v1/account-deletions", { method: "POST" })).rejects.toMatchObject({ status: 403, errorCategory: "insufficient_scope" } satisfies Partial<ApiError>);
+  try {
+    await client.request("/v1/account-deletions", { method: "POST" });
+  } catch (error) {
+    expect(accountDeletionScopeErrorMessage(error)).toBe("Sign out and back in to enable account deletion. Your current session does not include the required permission.");
+  }
+});
+
 test("wraps fetch transport failures in the closed ApiNetworkError type", async () => {
   const transportFailure = Object.assign(new TypeError("fetch failed"), { code: "ERR_NETWORK" });
   globalThis.fetch = jest.fn().mockRejectedValue(transportFailure) as unknown as typeof fetch;
@@ -141,6 +165,20 @@ test("createRecipe reuses caller-supplied idempotency key", async () => {
   );
 
   expect(keys).toEqual(["stable-key", "stable-key"]);
+});
+
+test("account deletion posts only the exact confirmation body", async () => {
+  const bodies: string[] = [];
+  globalThis.fetch = (async (_input: RequestInfo, init?: RequestInit) => {
+    bodies.push(String(init?.body));
+    return new Response(JSON.stringify({ deletionId: "deletion-1", status: "pending" }), { status: 202, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  const catalog = createCatalogApi(createApiClient(async () => "deletion-token", { catalog: "http://catalog.test", ingestion: "http://ingestion.test" }));
+
+  await catalog.requestAccountDeletion();
+
+  expect(bodies).toEqual([JSON.stringify({ confirmation: "DELETE MY ACCOUNT" })]);
+  expect(bodies[0]).not.toContain("subject");
 });
 
 test("url import keeps an explicit idempotency key across calls", async () => {

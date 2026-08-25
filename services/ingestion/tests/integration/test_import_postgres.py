@@ -15,8 +15,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ingestion.crypto import PayloadCipher
-from ingestion.import_models import FetchedDocument
+from ingestion.import_models import FetchedDocument, ParseError, ParseFailureCode
 from ingestion.models import (
+    AccountDeletionTombstone,
     AiDailyUsage,
     AttemptState,
     ImportDispatch,
@@ -24,14 +25,17 @@ from ingestion.models import (
     ImportJob,
     ImportStage,
     ImportStatus,
+    LlmInvocation,
     LlmOperationKind,
     ProviderAttempt,
 )
 from ingestion.orchestration import LeaseToken, StaleLease
-from ingestion.pipeline import ImportAdapters, ImportPipeline
+from ingestion.pipeline import AiBudgetPolicy, ImportAdapters, ImportPipeline
 from ingestion.reconciler import ImportReconciler
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.imports import ImportRepository
+from ingestion.services.account_deletions import AccountDeleted, AccountDeletionService
 from ingestion.services.imports import ActiveUrlImportExists, ImportService
 from ingestion.worker import _renew_lease_loop
 
@@ -83,9 +87,30 @@ class BlockingFetcher:
         return FetchedDocument(url, url, "<html>Soup</html>", "text/html", 17)
 
 
+class ImmediateFetcher:
+    async def fetch(self, url: str) -> FetchedDocument:
+        return FetchedDocument(url, url, "<html>Soup</html>", "text/html", 17)
+
+
 class FailingDeterministicExtractor:
     async def extract(self, document: FetchedDocument) -> object:
         raise RuntimeError("stop after heartbeat check")
+
+
+class NoRecipeExtractor:
+    async def extract(self, document: FetchedDocument) -> object:
+        raise ParseError(ParseFailureCode.NO_RECIPE_FOUND)
+
+
+class BlockingModelExtractor:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def extract(self, *, source_text: str, trusted_source_url: str | None) -> object:
+        self.started.set()
+        await self.release.wait()
+        raise TimeoutError
 
 
 @pytest.mark.asyncio
@@ -156,6 +181,133 @@ async def test_concurrent_same_owner_url_creates_one_active_job() -> None:
     finally:
         async with factory.begin() as session:
             await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_deletion_committing_first_blocks_a_concurrent_text_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|deletion-wins|{uuid4()}"
+    inserted = asyncio.Event()
+    release_deletion = asyncio.Event()
+    original_upsert = AccountDeletionRepository.upsert
+
+    async def pausing_upsert(
+        repository: AccountDeletionRepository,
+        subject: str,
+        *,
+        deleted_at: datetime,
+        expires_at: datetime,
+    ) -> AccountDeletionTombstone:
+        tombstone = await original_upsert(
+            repository,
+            subject,
+            deleted_at=deleted_at,
+            expires_at=expires_at,
+        )
+        inserted.set()
+        await release_deletion.wait()
+        return tombstone
+
+    monkeypatch.setattr(AccountDeletionRepository, "upsert", pausing_upsert)
+
+    async def delete_account() -> None:
+        async with factory() as session:
+            await AccountDeletionService(session).tombstone(owner)
+
+    async def submit_import() -> None:
+        async with factory() as session:
+            await ImportService(session, make_test_cipher()).submit_text(owner, "Soup")
+
+    deletion_task = asyncio.create_task(delete_account())
+    try:
+        await asyncio.wait_for(inserted.wait(), timeout=10)
+        import_task = asyncio.create_task(submit_import())
+        await asyncio.sleep(0.1)
+        assert not import_task.done()
+
+        release_deletion.set()
+        await deletion_task
+        with pytest.raises(AccountDeleted):
+            await import_task
+
+        async with factory.begin() as session:
+            job_count = await session.scalar(
+                select(func.count()).select_from(ImportJob).where(ImportJob.owner_subject == owner)
+            )
+            assert job_count == 0
+    finally:
+        release_deletion.set()
+        if not deletion_task.done():
+            await deletion_task
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+            await session.execute(
+                delete(AccountDeletionTombstone).where(AccountDeletionTombstone.subject == owner)
+            )
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_import_committing_first_precedes_a_concurrent_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|import-wins|{uuid4()}"
+    staged = asyncio.Event()
+    release_import = asyncio.Event()
+    original_create_job = ImportRepository.create_job
+
+    async def pausing_create_job(
+        repository: ImportRepository,
+        **kwargs: object,
+    ) -> ImportJob:
+        job = await original_create_job(repository, **kwargs)  # type: ignore[arg-type]
+        staged.set()
+        await release_import.wait()
+        return job
+
+    monkeypatch.setattr(ImportRepository, "create_job", pausing_create_job)
+
+    async def submit_import() -> UUID:
+        async with factory() as session:
+            result = await ImportService(session, make_test_cipher()).submit_url(
+                owner,
+                "https://recipes.example/soup",
+            )
+            return result.job.id
+
+    async def delete_account() -> None:
+        async with factory() as session:
+            await AccountDeletionService(session).tombstone(owner)
+
+    import_task = asyncio.create_task(submit_import())
+    try:
+        await asyncio.wait_for(staged.wait(), timeout=10)
+        deletion_task = asyncio.create_task(delete_account())
+        await asyncio.sleep(0.1)
+        assert not deletion_task.done()
+
+        release_import.set()
+        job_id = await import_task
+        await deletion_task
+
+        async with factory.begin() as session:
+            assert await session.get(ImportJob, job_id) is not None
+            assert await session.get(AccountDeletionTombstone, owner) is not None
+    finally:
+        release_import.set()
+        if not import_task.done():
+            await import_task
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+            await session.execute(
+                delete(AccountDeletionTombstone).where(AccountDeletionTombstone.subject == owner)
+            )
         await engine.dispose()
 
 
@@ -360,6 +512,66 @@ async def test_heartbeat_renews_while_fetch_call_is_blocked() -> None:
             await heartbeat_task
         async with factory.begin() as session:
             await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_tombstone_while_model_is_blocked_prevents_return_persistence() -> None:
+    engine = create_async_engine(database_url(), pool_size=5)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    owner = f"integration|delete-during-model|{uuid4()}"
+    job_id, token = await create_claimed_job(factory, owner)
+    model = BlockingModelExtractor()
+
+    async def run_pipeline() -> None:
+        async with factory() as session:
+            await ImportPipeline(
+                ImportRepository(session),
+                make_test_cipher(),
+                budgets=AiBudgetRepository(session),
+                budget_policy=AiBudgetPolicy(
+                    daily_limit=1_000_000,
+                    reservation_tokens=275_000,
+                    provider_name="integration",
+                    model_name="integration",
+                    prompt_version="integration",
+                ),
+            ).run(
+                job_id,
+                token,
+                ImportAdapters(ImmediateFetcher(), NoRecipeExtractor(), model, None),  # type: ignore[arg-type]
+            )
+
+    pipeline_task = asyncio.create_task(run_pipeline())
+    try:
+        await asyncio.wait_for(model.started.wait(), timeout=10)
+        async with factory() as deletion_session:
+            await asyncio.wait_for(
+                AccountDeletionService(deletion_session).tombstone(owner), timeout=10
+            )
+        model.release.set()
+        with pytest.raises(AccountDeleted):
+            await pipeline_task
+
+        async with factory.begin() as observer:
+            assert await observer.get(ImportJob, job_id) is None
+            invocation_count = await observer.scalar(
+                select(func.count())
+                .select_from(LlmInvocation)
+                .where(LlmInvocation.owner_subject == owner)
+            )
+            assert invocation_count == 0
+    finally:
+        model.release.set()
+        if not pipeline_task.done():
+            with pytest.raises(AccountDeleted):
+                await pipeline_task
+        async with factory.begin() as session:
+            await session.execute(delete(ImportJob).where(ImportJob.owner_subject == owner))
+            await session.execute(delete(AiDailyUsage).where(AiDailyUsage.owner_subject == owner))
+            await session.execute(
+                delete(AccountDeletionTombstone).where(AccountDeletionTombstone.subject == owner)
+            )
         await engine.dispose()
 
 

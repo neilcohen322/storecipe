@@ -174,7 +174,12 @@ export function useRecipeFacetOptions({ catalog, onUnauthorized }: UseRecipeFace
         patchLane(id, { loading: false, loadingMore: false });
         return;
       }
-      if (error instanceof ApiError && error.status === 409 && cursor) {
+      if (
+        error instanceof ApiError
+        && error.status === 409
+        && error.errorCategory === "stale_recipe_facet_cursor"
+        && cursor
+      ) {
         void fetchLane(id, search, null, "restart");
         return;
       }

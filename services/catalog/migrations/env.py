@@ -8,6 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import catalog.account_deletion_models  # noqa: F401 - register deletion tables
 from catalog.models import Base
 
 config = context.config

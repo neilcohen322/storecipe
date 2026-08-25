@@ -28,6 +28,18 @@ def test_restore_is_disposable_and_always_cleaned() -> None:
     assert "ingestion.alembic_version_ingestion" in text
     assert "docker rm -f" in text
     assert "trap cleanup EXIT" in text
+    assert "CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET" in text
+    assert "account-deletions/" in text
+    assert "account_deletion_tombstones" in text
+    assert "python3" in text
+    assert "2>/dev/null" not in text
+    assert "matched no objects" in text
+    assert "Failed to list account-deletion journal objects" in text
+    assert "media_snapshot" in text
+    assert ".completed" in text
+    assert "COALESCE(EXCLUDED.media_snapshot" in text
+    assert ".committed" in text
+    assert "completedAt" in text
 
 
 def test_local_restore_proof_uses_disposable_synthetic_data() -> None:
@@ -38,3 +50,8 @@ def test_local_restore_proof_uses_disposable_synthetic_data() -> None:
     assert "catalog.alembic_version_catalog" in text
     assert "ingestion.alembic_version_ingestion" in text
     assert "gs://fake-storecipe/" in text
+    assert "auth0|deleted-chef" in text
+    assert "account-deletions/" in text
+    assert "CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET=fake-storecipe" in text
+    assert "docker exec -i" in text
+    assert ".committed" in text

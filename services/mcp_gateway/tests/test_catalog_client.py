@@ -244,6 +244,36 @@ async def test_query_recipes_serializes_exact_ordered_repeated_query_tuples() ->
     assert "subject-secret" not in str(request.url)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["query", "get"])
+async def test_recipe_reads_drop_catalog_only_and_personal_fields(operation: str) -> None:
+    recipe_payload = {
+        **_recipe_view_payload(),
+        "coverImage": {"url": "https://secret.example/cover.jpg"},
+        "favorite": True,
+        "personalNotes": "private note",
+        "lastCookedAt": "2026-08-24T12:00:00Z",
+    }
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        body = (
+            {"items": [recipe_payload], "nextCursor": None}
+            if operation == "query"
+            else recipe_payload
+        )
+        return httpx.Response(200, json=body)
+
+    async with _catalog_client(handler) as client:
+        if operation == "query":
+            result = await client.query_recipes(RecipeQueryRequest(), TOKEN)
+            recipe = result.items[0]
+        else:
+            recipe = await client.get_recipe(RECIPE_ID, TOKEN)
+
+    wire_payload = recipe.model_dump(mode="json", by_alias=True)
+    assert {"coverImage", "favorite", "personalNotes", "lastCookedAt"}.isdisjoint(wire_payload)
+
+
 def test_recipe_facet_browse_cursors_allow_2048_characters() -> None:
     RecipeFacetBrowseRequest.model_validate(
         {"ingredientCursor": "x" * 2048, "tagCursor": "y" * 2048}
@@ -577,6 +607,37 @@ async def test_server_error_is_retryable_and_makes_one_upstream_call() -> None:
     assert captured.value.retryable is True
     assert calls == 1
     assert all(secret not in str(captured.value) for secret in SECRET_VALUES)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "expected_category"),
+    [
+        ({"errorCategory": "account_deleted"}, "account_deleted"),
+        ({"errorCategory": "some_other_gone_reason"}, "resource_gone"),
+    ],
+)
+async def test_gone_is_safe_nonretryable_and_only_preserves_account_deleted(
+    body: dict[str, object], expected_category: str
+) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            410,
+            json={
+                **body,
+                "detail": "token=secret-token body=secret-body-value",
+            },
+        )
+
+    async with _catalog_client(handler) as client:
+        with pytest.raises(CatalogClientError) as captured:
+            await client.get_recipe(RECIPE_ID, TOKEN)
+
+    error = captured.value
+    assert error.category == expected_category
+    assert error.retryable is False
+    assert "temporary" not in error.category
+    assert all(secret not in str(error) for secret in SECRET_VALUES)
 
 
 @pytest.mark.asyncio

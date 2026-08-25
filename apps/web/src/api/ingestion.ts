@@ -54,6 +54,57 @@ export type ImportReviewDraft = {
   tags: string[];
 };
 
+export type ImportHistoryPhase =
+  | "waiting"
+  | "fetching"
+  | "extracting"
+  | "validating"
+  | "saving"
+  | "completed"
+  | "review_required"
+  | "failed"
+  | "cancelled"
+  | "timed_out";
+
+export type ImportHistoryItem = {
+  id: string;
+  inputKind: "url" | "text";
+  createdAt: string;
+  updatedAt: string;
+  terminalAt: string | null;
+  status: ImportJobStatus;
+  phase: ImportHistoryPhase;
+};
+
+export type ImportHistoryPage = {
+  items: ImportHistoryItem[];
+  nextCursor: string | null;
+};
+
+export type ListImportsParams = {
+  cursor?: string | null;
+  limit?: number;
+};
+
+export type ListImportsOptions = {
+  signal?: AbortSignal;
+};
+
+export function buildImportHistoryPath(params?: ListImportsParams): string {
+  if (!params) {
+    return "/v1/imports";
+  }
+  const search = new URLSearchParams();
+  if (params.cursor) {
+    search.set("cursor", params.cursor);
+  }
+  if (params.limit !== undefined) {
+    search.set("limit", String(params.limit));
+  }
+  const query = search.toString();
+  return query ? `/v1/imports?${query}` : "/v1/imports";
+}
+
 type ImportCreateOptions = {
   idempotencyKey?: string;
 };
@@ -118,6 +169,32 @@ export function createIngestionApi(client: ReturnType<typeof createApiClient>) {
       service: "ingestion",
     });
 
+  const listImports = async (
+    params?: ListImportsParams,
+    options: ListImportsOptions = {},
+  ): Promise<ImportHistoryPage> => {
+    const page = await client.getJson<unknown>(buildImportHistoryPath(params), {
+      service: "ingestion",
+      signal: options.signal,
+    });
+    if (!page || typeof page !== "object" || !Array.isArray((page as { items?: unknown }).items)) {
+      throw new Error("Invalid import history response");
+    }
+    return {
+      items: (page as { items: ImportHistoryItem[] }).items,
+      nextCursor: typeof (page as { nextCursor?: unknown }).nextCursor === "string"
+        ? (page as { nextCursor: string }).nextCursor
+        : null,
+    };
+  };
+
+  const cancelImport = async (jobId: string): Promise<void> => {
+    await client.request(`/v1/imports/${jobId}`, {
+      service: "ingestion",
+      method: "DELETE",
+    });
+  };
+
   const normalizeIngredients = async (
     ingredients: Array<{ rawText: string }>,
     idempotencyKey: string,
@@ -134,5 +211,5 @@ export function createIngestionApi(client: ReturnType<typeof createApiClient>) {
     return (await response.json()) as IngredientNormalizationResponse;
   };
 
-  return { createUrlImport, createTextImport, getImport, getImportDraft, normalizeIngredients };
+  return { createUrlImport, createTextImport, getImport, getImportDraft, listImports, cancelImport, normalizeIngredients };
 }

@@ -12,6 +12,7 @@ from ingestion.rate_limits import BurstLimiter, RateLimitDecision
 from ingestion.repositories.budgets import BudgetExceeded
 from ingestion.repositories.ingredient_normalizations import IdempotencyKeyConflict
 from ingestion.schemas import IngredientNormalizationRequest, IngredientNormalizationResponse
+from ingestion.services.account_deletions import AccountDeleted, AccountDeletionService
 from ingestion.services.ingredient_normalizations import (
     IngredientNormalizationService,
     NormalizationInProgress,
@@ -60,6 +61,16 @@ def _rate_limit_headers(decision: RateLimitDecision) -> dict[str, str]:
     }
 
 
+def _account_deleted_response(request: Request) -> Response:
+    return problem_response(
+        request,
+        status.HTTP_410_GONE,
+        detail="The account has been deleted.",
+        problem_type=f"{PROBLEM_TYPE_BASE}/account-deleted",
+        extra={"errorCategory": "account_deleted"},
+    )
+
+
 async def _admit_normalization(
     request: Request, response: Response, subject: str
 ) -> Response | None:
@@ -105,6 +116,8 @@ async def normalize_ingredients(
     session: Annotated[Any, Depends(get_session)],
     idempotency_key: RequiredIdempotencyKey,
 ) -> IngredientNormalizationResponse | Response:
+    if await AccountDeletionService(session).is_deleted(principal.subject):
+        return _account_deleted_response(request)
     rejection = await _admit_normalization(request, response, principal.subject)
     if rejection is not None:
         return rejection
@@ -113,6 +126,8 @@ async def normalize_ingredients(
     service = _service(request, session)
     try:
         result = await service.normalize(principal.subject, idempotency_key, raw_lines)
+    except AccountDeleted:
+        return _account_deleted_response(request)
     except IdempotencyKeyConflict:
         return problem_response(
             request,

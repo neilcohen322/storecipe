@@ -490,6 +490,38 @@ async def test_catalog_error_is_unwrapped_and_translated_without_cause_leak(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "expected_message"),
+    [
+        ("account_deleted", "This account has been deleted."),
+        ("resource_gone", "The requested resource is no longer available."),
+    ],
+)
+async def test_catalog_gone_errors_map_to_fixed_non_outage_messages(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    category: str,
+    expected_message: str,
+) -> None:
+    class GoneCatalog(RecordingCatalog):
+        async def get_recipe(self, recipe_id: UUID, token: str) -> RecipeView:
+            raise CatalogClientError(category, retryable=False) from RuntimeError(
+                "secret upstream body and token"
+            )
+
+    server = _server(settings, GoneCatalog())
+    monkeypatch.setattr(mcp_auth, "get_access_token", lambda: _access_token("recipes:read"))
+
+    result = await server.call_tool("get_recipe", {"recipe_id": str(RECIPE_ID)})
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is True
+    assert result.content[0].text == expected_message
+    assert "temporarily unavailable" not in result.content[0].text
+    assert "secret upstream body" not in result.content[0].text
+
+
+@pytest.mark.asyncio
 async def test_stale_recipe_facet_cursor_maps_to_fixed_message_without_body_leakage(
     settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
@@ -669,6 +701,8 @@ async def test_create_recipe_skips_catalog_when_ingestion_raises(
         ("insufficient_scope", "Additional authorization is required."),
         ("invalid_input", "The request is invalid."),
         ("idempotency_conflict", "The idempotency key conflicts with an existing normalization."),
+        ("account_deleted", "This account has been deleted."),
+        ("resource_gone", "The requested resource is no longer available."),
         ("ingestion_rate_limited", "Ingredient normalization is rate limited. Try again later."),
         ("ingredient_normalization_invalid_output", "Ingredient normalization failed."),
         ("temporary_ingestion_failure", "Ingredient normalization is temporarily unavailable."),

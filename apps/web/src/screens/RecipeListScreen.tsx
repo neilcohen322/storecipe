@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, t
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { StyleSheet, TextInput, View } from "react-native";
 
-import { ApiNetworkError, ApiUnauthorizedError } from "../api/client";
+import { ApiError, ApiNetworkError, ApiUnauthorizedError } from "../api/client";
 import type { createCatalogApi, ListRecipesParams, Recipe, RecipeSort } from "../api/catalog";
 import type { FacetPickerSelection } from "../components/FacetPicker";
 import { DurationFilter } from "../components/DurationFilter";
 import { FacetPicker } from "../components/FacetPicker";
+import { FavoriteFilter } from "../components/FavoriteFilter";
 import { FilterDialog, type FilterDraft } from "../components/FilterDialog";
 import { RatingFilter } from "../components/RatingFilter";
 import { RecipeCard } from "../components/RecipeCard";
@@ -84,6 +85,7 @@ function draftFromParams(params: ListRecipesParams): FilterDraft {
     maxTotalMinutes: params.maxTotalMinutes,
     minRating: params.minRating,
     ratingState: params.ratingState ?? "any",
+    ...(params.favorite ? { favorite: true as const } : {}),
   };
 }
 
@@ -92,7 +94,8 @@ export function activeFilterCount(source: FilterDraft): number {
     + (source.tag?.length ?? 0)
     + (source.maxTotalMinutes != null ? 1 : 0)
     + (source.minRating != null ? 1 : 0)
-    + (source.ratingState && source.ratingState !== "any" ? 1 : 0);
+    + (source.ratingState && source.ratingState !== "any" ? 1 : 0)
+    + (source.favorite ? 1 : 0);
 }
 
 function decorateDraftChips(values: string[] | undefined, committed: FacetPickerSelection[]): FacetPickerSelection[] {
@@ -140,7 +143,9 @@ export function RecipeListScreen({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const [draft, setDraft] = useState<FilterDraft>(emptyDraft);
+  const [favoriteError, setFavoriteError] = useState<string | null>(null);
   const mounted = useRef(true);
+  const favoriteInFlight = useRef(new Set<string>());
   const requestId = useRef(0);
   const controller = useRef<AbortController | null>(null);
   const paginationGuard = useRef(createPaginationRequestGuard());
@@ -205,6 +210,7 @@ export function RecipeListScreen({
       maxTotalMinutes: draft.maxTotalMinutes == null ? undefined : String(draft.maxTotalMinutes),
       minRating: draft.minRating == null ? undefined : String(draft.minRating),
       ratingState: draft.ratingState,
+      favorite: draft.favorite ? "true" : undefined,
     });
     pushFilters(next);
     setFiltersOpen(false);
@@ -229,12 +235,56 @@ export function RecipeListScreen({
       setNextCursor(page.nextCursor);
     } catch (caught) {
       if (!mounted.current || id !== requestId.current || isAbortError(caught)) return;
+      if (
+        caught instanceof ApiError
+        && caught.status === 409
+        && caught.errorCategory === "stale_recipe_query_cursor"
+        && cursor
+      ) {
+        setItems([]);
+        setNextCursor(null);
+        setLoading(true);
+        void request();
+        return;
+      }
       if (caught instanceof ApiUnauthorizedError) onUnauthorizedRef.current(); else setError(isOfflineError(caught) ? "offline" : "generic");
     } finally {
       if (pagination) paginationGuard.current.finish(id);
       if (mounted.current && id === requestId.current) { setLoading(false); setLoadingMore(false); }
     }
   }, [catalog, params]);
+
+  const toggleFavorite = async (recipe: Recipe) => {
+    if (favoriteInFlight.current.has(recipe.id)) return;
+    favoriteInFlight.current.add(recipe.id);
+    const nextFavorite = !recipe.favorite;
+    setFavoriteError(null);
+    setItems((current) => {
+      const updated = current.map((item) => (item.id === recipe.id ? { ...item, favorite: nextFavorite } : item));
+      return params.favorite && !nextFavorite ? updated.filter((item) => item.id !== recipe.id) : updated;
+    });
+    try {
+      await catalog.patchRecipe(recipe.id, { favorite: nextFavorite });
+      if (!mounted.current) return;
+      void request();
+    } catch (caught) {
+      if (!mounted.current) return;
+      if (caught instanceof ApiUnauthorizedError) {
+        onUnauthorizedRef.current();
+        return;
+      }
+      setItems((current) => {
+        if (current.some((item) => item.id === recipe.id)) {
+          return current.map((item) => (item.id === recipe.id ? { ...item, favorite: recipe.favorite } : item));
+        }
+        return [...current, { ...recipe, favorite: recipe.favorite }];
+      });
+      setFavoriteError("We couldn't update favorites. Please try again.");
+    } finally {
+      favoriteInFlight.current.delete(recipe.id);
+    }
+  };
+
   useEffect(() => { mounted.current = true; void request(); return () => { mounted.current = false; controller.current?.abort(); requestId.current += 1; paginationGuard.current.reset(); }; }, [queryKey, request]);
 
   const errorContent = error === "offline"
@@ -246,7 +296,7 @@ export function RecipeListScreen({
   return (
     <>
     <Screen accessibilityElementsHidden={filtersOpen || sortOpen} importantForAccessibility={filtersOpen || sortOpen ? "no-hide-descendants" : "auto"}>
-      <PageHeader title="Recipes" />
+      <PageHeader title="Your cookbook" />
       <View style={styles.toolbar}>
         <TextInput
           accessibilityLabel="Search recipes"
@@ -271,10 +321,16 @@ export function RecipeListScreen({
         : error !== "none" && items.length === 0
           ? errorContent
           : items.length === 0
-            ? <EmptyState title="Your recipe library is empty." description="Create or import a recipe to start building your library." />
-            : view === "card"
-              ? <ResponsiveGrid testID="recipe-results-card">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="card" loadCoverImage={loadCoverImage} />)}</ResponsiveGrid>
-              : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="list" loadCoverImage={loadCoverImage} />)}</View>}
+            ? <EmptyState
+                title={params.favorite ? "No favorite recipes found." : "Your recipe library is empty."}
+                description={params.favorite ? "Star recipes from your library to see them here." : "Create or import a recipe to start building your library."}
+              />
+            : <>
+                {favoriteError ? <InlineNotice tone="error" message={favoriteError} /> : null}
+                {view === "card"
+                  ? <ResponsiveGrid testID="recipe-results-card" columns={layoutMode === "compact" ? 1 : layoutMode === "medium" ? 2 : 4}>{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="card" loadCoverImage={loadCoverImage} onToggleFavorite={(recipe) => void toggleFavorite(recipe)} />)}</ResponsiveGrid>
+                  : <View testID="recipe-results-list" accessibilityRole="list">{items.map((item) => <RecipeCard key={item.id} item={item} onOpen={onOpenDetail} view="list" loadCoverImage={loadCoverImage} onToggleFavorite={(recipe) => void toggleFavorite(recipe)} />)}</View>}
+              </>}
       {nextCursor ? <Button label="Load more recipes" loading={loadingMore} onPress={() => void request(nextCursor)} /> : null}
     </Screen>
     <FilterDialog
@@ -333,6 +389,10 @@ export function RecipeListScreen({
           ratingState={draft.ratingState ?? "any"}
           onMinRating={(value) => setDraft({ ...draft, minRating: value })}
           onRatingState={(value) => setDraft({ ...draft, ratingState: value, ...(value === "unrated" ? { minRating: null } : {}) })}
+        />
+        <FavoriteFilter
+          value={draft.favorite}
+          onChange={(value) => setDraft({ ...draft, favorite: value })}
         />
       </FilterDialog>
       <SortMenu

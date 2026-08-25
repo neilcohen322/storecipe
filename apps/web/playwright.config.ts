@@ -20,7 +20,13 @@ export default defineConfig({
   },
   webServer: {
     command: "pnpm exec expo export --platform web --clear && pnpm exec serve -s dist -l 4173",
-    env: { ...process.env, EXPO_PUBLIC_E2E_MODE: "true" },
+    env: {
+      ...process.env,
+      EXPO_PUBLIC_E2E_MODE: "true",
+      EXPO_PUBLIC_LEGAL_OPERATOR_NAME: process.env.EXPO_PUBLIC_LEGAL_OPERATOR_NAME || "Storecipe Ltd.",
+      EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL: process.env.EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL || "privacy@storecipe.test",
+      EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE: process.env.EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE || "2026-08-24",
+    },
     url: baseURL,
     reuseExistingServer: false,
     timeout: 180_000,

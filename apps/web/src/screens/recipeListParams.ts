@@ -68,6 +68,7 @@ export function normalizeRecipeListParams(route: RouteQuery): ListRecipesParams 
     ...(maxTotalMinutes !== null ? { maxTotalMinutes } : {}),
     ...(minRating !== null ? { minRating } : {}),
     ...(ratingState !== "any" ? { ratingState } : {}),
+    ...(route.favorite === "true" ? { favorite: true as const } : {}),
     sort: sort.length ? sort : DEFAULT_SORT,
     limit: 20,
   };
@@ -83,6 +84,7 @@ export function serializeRecipeListParams(params: ListRecipesParams): Record<str
     "maxTotalMinutes",
     "minRating",
     "ratingState",
+    "favorite",
     "sort",
   ] as const) {
     const value = query[key];
@@ -92,6 +94,7 @@ export function serializeRecipeListParams(params: ListRecipesParams): Record<str
       || value === ""
       || (Array.isArray(value) && value.length === 0)
       || (key === "ratingState" && value === "any")
+      || (key === "favorite" && value !== true)
       || (key === "sort" && Array.isArray(value) && value.join("|") === DEFAULT_SORT.join("|"))
     ) {
       continue;

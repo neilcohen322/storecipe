@@ -47,6 +47,32 @@ printf '%s\n' '{"data-root":"/var/lib/storecipe/docker","log-driver":"json-file"
 systemctl enable --now docker
 systemctl restart docker
 
+if ! [ "$(dpkg-query -W -f='${Status}' google-cloud-ops-agent 2>/dev/null)" = "install ok installed" ]; then
+  curl -fsSLo /tmp/add-google-cloud-ops-agent-repo.sh \
+    https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+  bash /tmp/add-google-cloud-ops-agent-repo.sh --also-install
+  rm -f /tmp/add-google-cloud-ops-agent-repo.sh
+fi
+install -d -m 0755 /etc/google-cloud-ops-agent
+cat >/etc/google-cloud-ops-agent/config.yaml <<'YAML'
+logging:
+  receivers:
+    docker_json:
+      type: files
+      include_paths:
+        - /var/lib/storecipe/docker/containers/*/*-json.log
+  processors:
+    parse_docker_json:
+      type: parse_json
+  service:
+    pipelines:
+      docker_json:
+        receivers: [docker_json]
+        processors: [parse_docker_json]
+YAML
+systemctl enable --now google-cloud-ops-agent
+systemctl reload-or-restart google-cloud-ops-agent
+
 if [[ ! -e /swapfile ]]; then
   fallocate -l 2G "$DATA_MOUNT/swapfile"
   chmod 0600 "$DATA_MOUNT/swapfile"

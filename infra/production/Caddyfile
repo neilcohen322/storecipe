@@ -25,6 +25,15 @@ http://127.0.0.1, http://localhost {
 	}
 
 	route {
+		header {
+			-Server
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' {$AUTH0_ISSUER}; frame-src {$AUTH0_ISSUER}; worker-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' {$AUTH0_ISSUER}; manifest-src 'self'"
+			Permissions-Policy "camera=(), geolocation=(), microphone=()"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+		}
+
 		@coverUpload {
 			method PUT
 			path /v1/recipes/*/cover-image
@@ -47,6 +56,24 @@ http://127.0.0.1, http://localhost {
 
 		handle /mcp* {
 			reverse_proxy mcp-gateway:8002
+		}
+
+		handle /health/ready {
+			reverse_proxy mcp-gateway:8002 {
+				@ready status 2xx
+				handle_response @ready {
+					respond "ready" 200
+				}
+
+				handle_response {
+					respond "unavailable" 503
+				}
+			}
+		}
+
+		# Internal service routes must never fall through to the public SPA.
+		handle /internal* {
+			respond 404
 		}
 
 		handle /api {

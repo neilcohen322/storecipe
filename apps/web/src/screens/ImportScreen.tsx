@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TextInput, View } from "react-native";
 
 import { Button, Field, InlineNotice, PageHeader, Screen, Section, TextArea } from "../components";
+import { RecipeReadyReveal } from "../components/RecipeReadyReveal";
 import { useImportSession } from "../imports/ImportSessionProvider";
 import { getImportPresentation } from "../utils/importPolling";
 
@@ -55,7 +56,8 @@ export function ImportScreen({ onBack, onContinueExtractedRecipe }: ImportScreen
     </Section>
     {tab === "url" ? <Field label="Recipe URL" control={<TextInput value={url} onChangeText={setUrl} autoCapitalize="none" autoCorrect={false} placeholder="https://example.com/recipe" />} /> : <TextArea label="Recipe text" value={text} onChangeText={setText} numberOfLines={10} placeholder="Paste recipe text…" />}
     {activePresentation ? <InlineNotice tone="info" message={activePresentation.label} /> : null}
-    {session.terminalSummary ? <InlineNotice tone={session.terminalSummary.status === "completed" ? "success" : session.terminalSummary.status === "failed" ? "error" : session.terminalSummary.status === "review_required" || session.terminalSummary.status === "timed_out" ? "warning" : "info"} message={terminalCopy(session.terminalSummary)} /> : null}
+    {session.terminalSummary?.status === "completed" ? <RecipeReadyReveal visible /> : null}
+    {session.terminalSummary && session.terminalSummary.status !== "completed" ? <InlineNotice tone={session.terminalSummary.status === "failed" ? "error" : session.terminalSummary.status === "review_required" || session.terminalSummary.status === "timed_out" ? "warning" : "info"} message={terminalCopy(session.terminalSummary)} /> : null}
     {session.terminalSummary?.status === "review_required" && session.terminalSummary.hasCandidate ? <Button label="Continue with extracted recipe" onPress={() => { const jobId = session.terminalSummary?.jobId; if (typeof onContinueExtractedRecipe === "function" && jobId) onContinueExtractedRecipe(jobId); }} /> : null}
     {session.terminalSummary?.canRetry ? <Button label="Retry import" variant="secondary" onPress={() => void session.retryImport()} /> : null}
     {validationError ? <InlineNotice tone="error" message={validationError} /> : null}
