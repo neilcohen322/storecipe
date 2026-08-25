@@ -297,7 +297,9 @@ async def test_import_committing_first_precedes_a_concurrent_deletion(
         await deletion_task
 
         async with factory.begin() as session:
-            assert await session.get(ImportJob, job_id) is not None
+            # Import acquired the lock and committed first, then deletion erased
+            # that job with the rest of the subject's retained data.
+            assert await session.get(ImportJob, job_id) is None
             assert await session.get(AccountDeletionTombstone, owner) is not None
     finally:
         release_import.set()
