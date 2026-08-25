@@ -45,7 +45,7 @@ jobs:
       INGESTION_TEST_DATABASE_URL: postgresql+asyncpg://ingestion_app:local_ingestion_only@localhost:5432/storecipe
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
         with:
           version: "0.11.28"
           enable-cache: true
