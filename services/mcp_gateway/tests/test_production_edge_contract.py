@@ -15,9 +15,50 @@ def test_edge_routes_are_ordered_and_internal_is_hidden() -> None:
     assert "reverse_proxy ingestion-api:8001" in caddy
     assert "reverse_proxy catalog-api:8000" in caddy
     assert "reverse_proxy mcp-gateway:8002" in caddy
-    assert "handle /internal" not in caddy
+    internal = caddy.index("handle /internal* {")
+    spa = caddy.index("try_files {path} /index.html")
+    assert internal < spa
+    assert "handle /internal* {\n\t\t\trespond 404\n\t\t}" in caddy
+    assert caddy[internal:spa].count("reverse_proxy") == 0
     assert "handle /api" in caddy
     assert "respond 404" in caddy
+
+
+def test_edge_exposes_sanitized_gateway_readiness() -> None:
+    caddy = PRODUCTION_CADDY.read_text(encoding="utf-8")
+    readiness = caddy[caddy.index("handle /health/ready {") : caddy.index("handle /internal* {")]
+
+    assert "reverse_proxy mcp-gateway:8002" in readiness
+    assert "@ready status 2xx" in readiness
+    assert 'respond "ready" 200' in readiness
+    assert 'respond "unavailable" 503' in readiness
+
+
+def test_edge_sets_security_headers_and_strict_csp() -> None:
+    caddy = PRODUCTION_CADDY.read_text(encoding="utf-8")
+    csp = next(line.strip() for line in caddy.splitlines() if "Content-Security-Policy" in line)
+
+    assert "default-src 'self';" in csp
+    assert "script-src 'self';" in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
+    assert "style-src 'self' 'unsafe-inline';" in csp
+    assert "img-src 'self' blob: data:;" in csp
+    assert "font-src 'self';" in csp
+    assert "connect-src 'self' {$AUTH0_ISSUER};" in csp
+    assert "frame-src {$AUTH0_ISSUER};" in csp
+    assert "worker-src 'none';" in csp
+    assert "object-src 'none';" in csp
+    assert "base-uri 'self';" in csp
+    assert "frame-ancestors 'none';" in csp
+    assert "form-action 'self' {$AUTH0_ISSUER};" in csp
+    assert "manifest-src 'self'" in csp
+    for header in (
+        "Permissions-Policy",
+        "Referrer-Policy",
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+    ):
+        assert header in caddy
 
 
 def test_cover_upload_has_eight_mb_edge_limit() -> None:

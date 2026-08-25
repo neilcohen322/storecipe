@@ -83,3 +83,8 @@ variable "deletion_protection" {
   default     = true
   description = "Protect the production VM from accidental Terraform deletion."
 }
+
+variable "public_hostname" {
+  type        = string
+  description = "Public HTTPS hostname used by uptime checks against /health/ready."
+}

@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[3]
 COMPOSE = ROOT / "infra" / "production" / "compose.yaml"
+WEB_DOCKERFILE = ROOT / "infra" / "production" / "Dockerfile.web"
 POSTGRES_INIT = ROOT / "infra" / "production" / "postgres-init" / "001-production-roles.sh"
 
 
@@ -23,6 +24,40 @@ def test_only_edge_publishes_ports() -> None:
     assert text.count("ports:") == 1
     assert '"80:80"' in text
     assert '"443:443"' in text
+
+
+def test_edge_receives_auth0_issuer_for_csp_expansion() -> None:
+    text = COMPOSE.read_text(encoding="utf-8")
+    edge = text[text.index("  edge:") : text.index("  postgres:")]
+    assert "AUTH0_ISSUER: ${AUTH0_ISSUER:?required}" in edge
+
+
+def test_catalog_receives_dedicated_account_deletion_m2m_contract() -> None:
+    text = COMPOSE.read_text(encoding="utf-8")
+    catalog = text[text.index("  catalog-api:") : text.index("  catalog-migrate:")]
+    for variable in (
+        "CATALOG_ACCOUNT_DELETION_TOKEN_URL",
+        "CATALOG_ACCOUNT_DELETION_CLIENT_ID",
+        "CATALOG_ACCOUNT_DELETION_CLIENT_SECRET",
+        "CATALOG_ACCOUNT_DELETION_INTERNAL_AUDIENCE",
+        "CATALOG_ACCOUNT_DELETION_AUTH0_AUDIENCE",
+        "CATALOG_ACCOUNT_DELETION_AUTH0_MANAGEMENT_BASE_URL",
+    ):
+        assert f"{variable}: ${{{variable}:?required}}" in catalog
+
+
+def test_web_image_requires_non_placeholder_legal_build_inputs() -> None:
+    text = WEB_DOCKERFILE.read_text(encoding="utf-8")
+    for variable in (
+        "EXPO_PUBLIC_LEGAL_OPERATOR_NAME",
+        "EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL",
+        "EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE",
+    ):
+        assert f"ARG {variable}" in text
+        assert f"{variable}=${{{variable}}}" in text
+    assert "*'<'*|*'>'*" in text
+    assert "^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$" in text
+    assert "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" in text
 
 
 def test_services_are_bounded_and_operationally_configured() -> None:

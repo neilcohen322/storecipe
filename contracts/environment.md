@@ -25,12 +25,15 @@
 | `INGESTION_INGREDIENT_NORMALIZATION_RESERVATION_TOKENS` | Ingestion API/worker | no | Tokens reserved before one ingredient-normalization invocation; defaults to 64,000 and cannot exceed the daily budget |
 | `INGESTION_PAYLOAD_ACTIVE_KEY_ID` | Ingestion/worker | yes | Key ID used for new encrypted payload writes |
 | `INGESTION_PAYLOAD_KEYRING` | Ingestion/worker | yes | Secret `key-id=base64-key` mapping for retained payloads |
-| `AUTH0_ISSUER` | APIs/MCP | protected routes / complete gateway auth | Expected JWT issuer; required in the gateway auth all-or-none bundle (cannot be replaced by `MCP_OBO_TOKEN_URL`) |
+| `AUTH0_ISSUER` | APIs/MCP/production edge | protected routes / complete gateway auth / production CSP | Expected JWT issuer; required in the gateway auth all-or-none bundle and passed to Caddy as the allowed Auth0 CSP origin (cannot be replaced by `MCP_OBO_TOKEN_URL`) |
 | `AUTH0_AUDIENCE` | Catalog/Ingestion/MCP OBO | protected routes / complete gateway auth | Canonical Storecipe API resource; distinct from the public MCP resource URL |
 | `AUTH0_JWKS_URL` | APIs/MCP | no | Optional JWKS override; defaults to `<issuer>/.well-known/jwks.json` |
 | `EXPO_PUBLIC_AUTH0_DOMAIN` | Web (Expo) | Auth0 login | Auth0 tenant domain for Universal Login SPA |
 | `EXPO_PUBLIC_AUTH0_CLIENT_ID` | Web (Expo) | Auth0 login | Public Auth0 SPA client ID |
 | `EXPO_PUBLIC_AUTH0_AUDIENCE` | Web (Expo) | Auth0 login | Storecipe API resource for access tokens; use `AUTH0_AUDIENCE`, not `MCP_RESOURCE_URL` |
+| `EXPO_PUBLIC_LEGAL_OPERATOR_NAME` | Web (Expo) | production build | Required non-placeholder legal operator identity baked into the privacy and terms pages |
+| `EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL` | Web (Expo) | production build | Required non-placeholder public privacy contact email baked into the privacy and terms pages |
+| `EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE` | Web (Expo) | production build | Required valid `YYYY-MM-DD` effective date baked into the privacy and terms pages |
 | `MCP_PORT` | Compose | no | Optional host port mapped to the gateway's internal port `8002` |
 | `MCP_CATALOG_API_URL` | MCP gateway | yes | Trusted Catalog REST base URL; defaults to `http://catalog-api:8000` |
 | `MCP_INGESTION_API_URL` | MCP gateway | yes | Trusted Ingestion REST base URL; defaults to `http://ingestion-api:8001` |
@@ -52,6 +55,13 @@
 | `CATALOG_M2M_CLIENT_ID` | Ingestion API/worker | source lookup/catalog stage | M2M client ID |
 | `CATALOG_M2M_CLIENT_SECRET` | Ingestion API/worker | source lookup/catalog stage | M2M client secret |
 | `CATALOG_M2M_AUDIENCE` | Ingestion API/worker | source lookup/catalog stage | M2M token audience |
+| `CATALOG_ACCOUNT_DELETION_TOKEN_URL` | Catalog | account-deletion worker | Auth0 tenant OAuth token URL shared by the internal-service and Management API token requests |
+| `CATALOG_ACCOUNT_DELETION_CLIENT_ID` | Catalog | account-deletion worker | Dedicated confidential client ID shared by the internal-service and Auth0 Management token requests; keep separate from `CATALOG_M2M_CLIENT_ID` |
+| `CATALOG_ACCOUNT_DELETION_CLIENT_SECRET` | Catalog | account-deletion worker | Secret for the dedicated account-deletion client; supplied only through the runtime secret bundle |
+| `CATALOG_ACCOUNT_DELETION_INTERNAL_AUDIENCE` | Catalog | account-deletion worker | Storecipe API audience for the Ingestion deletion call; the M2M grant must include `accounts:internal:delete` |
+| `CATALOG_ACCOUNT_DELETION_AUTH0_AUDIENCE` | Catalog | account-deletion worker | Auth0 Management API audience, normally `https://<tenant>/api/v2/`; the M2M grant must include `delete:users` |
+| `CATALOG_ACCOUNT_DELETION_AUTH0_MANAGEMENT_BASE_URL` | Catalog | account-deletion worker | Auth0 Management API base URL, normally `https://<tenant>/api/v2`; kept distinct from its audience because the audience has a required trailing slash |
+| `CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET` | Catalog/replay | account deletion and restore | Dedicated private write-once GCS journal bucket retained for 90 days; never reuse media, backup, or Terraform-state storage |
 | `INGESTION_TEST_DATABASE_URL` | PostgreSQL integration tests | opt-in | Disposable migrated PostgreSQL DSN for concurrency and transaction checks |
 | `CATALOG_TEST_DATABASE_URL` | PostgreSQL integration tests | opt-in | Disposable migrated PostgreSQL DSN for Catalog version-concurrency checks |
 | `CATALOG_TEST_MEDIA_BUCKET` | GCS integration tests | opt-in | Private GCS bucket used only after deployment creates it; skipped when unset |
@@ -70,6 +80,9 @@ Production values are injected by the deployment environment. `.env` is local on
 `.env.example` contains names and harmless defaults but no secrets. Catalog talks to GCS
 with Application Default Credentials when a media bucket is configured; do not commit
 ADC files or a JSON service-account key path.
+The account-deletion M2M application may hold both required grants, but Catalog must cache
+its internal-service token and Auth0 Management token independently by audience. The legal
+`EXPO_PUBLIC_*` values are public, build-time-only inputs and are not runtime secrets.
 Leaving Auth0/OBO fully unset keeps gateway readiness available for local infrastructure
 (`obo_config: not_required`). Any Auth0/OBO value requires the complete gateway auth
 bundle. Protected endpoints fail closed while the Auth0 issuer or audience is empty.

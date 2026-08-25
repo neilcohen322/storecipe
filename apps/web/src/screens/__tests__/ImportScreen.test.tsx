@@ -82,3 +82,25 @@ test("does not offer a missing extract when the daily AI budget is exhausted", a
   expect(screen.getByRole("button", { name: "Retry import" })).toBeTruthy();
   expect(screen.queryByText("daily_ai_budget_exceeded")).toBeNull();
 });
+
+test("shows a reduced-motion-safe Recipe ready reveal on first successful import", async () => {
+  const ingestion = ingestionWith({
+    getImport: jest.fn().mockResolvedValue({
+      id: "job-1",
+      status: "completed",
+      attemptCount: 1,
+      createdRecipeId: "recipe-1",
+      errorCategory: null,
+      cancellationRequested: false,
+      hasCandidate: false,
+    }),
+  });
+  const screen = await renderScreen(ingestion);
+  await fireEvent.changeText(screen.getByLabelText("Recipe URL"), "https://example.com/soup");
+  await fireEvent.press(screen.getByRole("button", { name: "Start import" }));
+
+  await waitFor(() => expect(screen.getByTestId("recipe-ready-reveal")).toBeTruthy());
+  expect(screen.getByRole("header", { name: "Recipe ready" })).toBeTruthy();
+  expect(screen.getByText("Your recipe import is complete.")).toBeTruthy();
+  expect(screen.queryByText(/confetti/i)).toBeNull();
+});

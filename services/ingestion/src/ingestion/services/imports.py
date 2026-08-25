@@ -1,5 +1,8 @@
 """Owner-scoped import submission, replay, lookup, and cancellation behavior."""
 
+import base64
+import binascii
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -13,9 +16,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ingestion.catalog_client import CatalogError, CatalogFailureCode
 from ingestion.crypto import PayloadCipher
-from ingestion.models import ImportInputKind, ImportJob, ImportStatus
+from ingestion.models import ImportInputKind, ImportJob, ImportStage, ImportStatus
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 from ingestion.repositories.imports import ImportRepository
-from ingestion.schemas import DuplicatePolicy, ImportReviewDraft
+from ingestion.schemas import (
+    DuplicatePolicy,
+    ImportHistoryItem,
+    ImportHistoryPage,
+    ImportPhase,
+    ImportReviewDraft,
+)
+from ingestion.services.account_deletions import AccountDeleted
 
 _ACTIVE_URL_INDEX = "uq_import_jobs_owner_active_url_fingerprint"
 _IDEMPOTENCY_KEY_INDEX = "uq_import_jobs_owner_idempotency_key"
@@ -67,6 +78,10 @@ class ImportDraftUnavailable(Exception):
     pass
 
 
+class InvalidImportHistoryCursor(Exception):
+    pass
+
+
 class SourceLookup(Protocol):
     async def find_existing_source(
         self, owner_subject: str, source_fingerprint: str
@@ -92,6 +107,7 @@ class ImportService:
         if deadline_seconds < 1:
             raise ValueError("deadline_seconds must be positive")
         self._repository = ImportRepository(session)
+        self._account_deletions = AccountDeletionRepository(session)
         self._payload_cipher = payload_cipher
         self._source_lookup = source_lookup
         self._deadline = timedelta(seconds=deadline_seconds)
@@ -140,6 +156,9 @@ class ImportService:
         deadline_at = datetime.now(UTC) + self._deadline
         active_winner: ImportJob | None = None
         async with self._repository.transaction():
+            await self._account_deletions.acquire_subject_lock(owner_subject)
+            if await self._account_deletions.is_tombstoned(owner_subject):
+                raise AccountDeleted
             if idempotency_key is not None:
                 existing = await self._repository.get_owned_idempotency_job(
                     owner_subject, idempotency_key
@@ -237,6 +256,27 @@ class ImportService:
             raise ImportNotFound
         return job
 
+    async def list_history(
+        self,
+        owner_subject: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> ImportHistoryPage:
+        before = _decode_history_cursor(cursor) if cursor is not None else None
+        jobs = await self._repository.list_owned_jobs(
+            owner_subject,
+            limit=limit + 1,
+            before=before,
+        )
+        page_jobs = jobs[:limit]
+        return ImportHistoryPage(
+            items=[_history_item(job) for job in page_jobs],
+            next_cursor=(
+                _encode_history_cursor(page_jobs[-1]) if len(jobs) > limit and page_jobs else None
+            ),
+        )
+
     async def get_review_draft(self, owner_subject: str, job_id: UUID) -> ImportReviewDraft:
         job = await self.get(owner_subject, job_id)
         if job.status is not ImportStatus.REVIEW_REQUIRED:
@@ -261,6 +301,73 @@ class ImportService:
             if active is not None:
                 return active, True
             raise ImportNotCancellable
+
+
+_TERMINAL_PHASES = {
+    ImportStatus.COMPLETED: ImportPhase.COMPLETED,
+    ImportStatus.REVIEW_REQUIRED: ImportPhase.REVIEW_REQUIRED,
+    ImportStatus.FAILED: ImportPhase.FAILED,
+    ImportStatus.CANCELLED: ImportPhase.CANCELLED,
+    ImportStatus.TIMED_OUT: ImportPhase.TIMED_OUT,
+}
+_PROCESSING_PHASES = {
+    ImportStage.FETCHING: ImportPhase.FETCHING,
+    ImportStage.EXTRACTING: ImportPhase.EXTRACTING,
+    ImportStage.MODEL_EXTRACTING: ImportPhase.EXTRACTING,
+    ImportStage.VALIDATING: ImportPhase.VALIDATING,
+    ImportStage.CATALOG_PENDING: ImportPhase.SAVING,
+}
+
+
+def _safe_history_phase(job: ImportJob) -> ImportPhase:
+    terminal_phase = _TERMINAL_PHASES.get(job.status)
+    if terminal_phase is not None:
+        return terminal_phase
+    if job.status is ImportStatus.PROCESSING:
+        return _PROCESSING_PHASES.get(job.stage, ImportPhase.WAITING)
+    return ImportPhase.WAITING
+
+
+def _history_item(job: ImportJob) -> ImportHistoryItem:
+    return ImportHistoryItem(
+        id=job.id,
+        input_kind=job.input_kind,
+        created_at=_as_utc(job.created_at),
+        updated_at=_as_utc(job.updated_at),
+        terminal_at=_as_utc(job.terminal_at) if job.terminal_at is not None else None,
+        status=job.status,
+        phase=_safe_history_phase(job),
+    )
+
+
+def _encode_history_cursor(job: ImportJob) -> str:
+    payload = json.dumps(
+        {"v": 1, "createdAt": _as_utc(job.created_at).isoformat(), "id": str(job.id)},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_history_cursor(cursor: str) -> tuple[datetime, UUID]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
+        payload = json.loads(decoded)
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            raise ValueError
+        created_at = datetime.fromisoformat(payload["createdAt"])
+        job_id = UUID(payload["id"])
+        if created_at.tzinfo is None:
+            raise ValueError
+    except (binascii.Error, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        raise InvalidImportHistoryCursor from None
+    return created_at, job_id
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _draft_from_candidate_payload(payload: bytes) -> ImportReviewDraft:

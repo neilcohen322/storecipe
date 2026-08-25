@@ -17,6 +17,7 @@ from catalog.models import (
     RecipeTag,
     Tag,
     User,
+    utc_now,
 )
 from catalog.recipe_creation_idempotency import recipe_payload_hash
 from catalog.recipe_queries import normalize_query_text
@@ -220,6 +221,8 @@ async def update_recipe(
         "prep_minutes",
         "cook_minutes",
         "total_minutes",
+        "favorite",
+        "personal_notes",
     }
     for field in scalar_fields & payload.model_fields_set:
         value = getattr(payload, field)
@@ -239,6 +242,16 @@ async def update_recipe(
     if "tags" in payload.model_fields_set and payload.tags is not None:
         recipe.recipe_tags = await _build_recipe_tags(session, payload.tags)
 
+    await advance_catalog_version(session, user.id)
+    await session.commit()
+    loaded = await _reload_recipe(session, user.id, recipe.id)
+    return _recipe_view(loaded, user.id)
+
+
+async def mark_recipe_cooked(session: AsyncSession, subject: str, recipe_id: UUID) -> RecipeView:
+    user = await resolve_user(session, subject)
+    recipe = await get_owned_recipe(session, user.id, recipe_id)
+    recipe.last_cooked_at = utc_now()
     await advance_catalog_version(session, user.id)
     await session.commit()
     loaded = await _reload_recipe(session, user.id, recipe.id)

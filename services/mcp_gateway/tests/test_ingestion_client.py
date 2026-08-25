@@ -307,6 +307,37 @@ async def test_server_error_is_retryable_and_makes_one_upstream_call() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "expected_category"),
+    [
+        ({"errorCategory": "account_deleted"}, "account_deleted"),
+        ({"errorCategory": "some_other_gone_reason"}, "resource_gone"),
+    ],
+)
+async def test_gone_is_safe_nonretryable_and_only_preserves_account_deleted(
+    body: dict[str, object], expected_category: str
+) -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            410,
+            json={
+                **body,
+                "detail": f"rawText={SECRET_INGREDIENT}",
+            },
+        )
+
+    async with _ingestion_client(handler) as client:
+        with pytest.raises(IngestionClientError) as captured:
+            await client.normalize_ingredients(_normalization_request(), "idem-secret-key", TOKEN)
+
+    error = captured.value
+    assert error.category == expected_category
+    assert error.retryable is False
+    assert "temporary" not in error.category
+    assert all(secret not in str(error) for secret in SECRET_VALUES)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", [400, 405, 418])
 async def test_unlisted_client_errors_use_the_safe_nonretryable_fallback(status: int) -> None:
     async def handler(_: httpx.Request) -> httpx.Response:

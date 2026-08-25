@@ -8,6 +8,7 @@ import { mobilePrimaryItems } from "../navigation/registry";
 import type { NavigationLink } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
 import { getTheme } from "../theme/tokens";
+import { webDataset } from "../utils/webDataset";
 
 export const COMPACT_NAVIGATION_HEIGHT = getTheme("light").sizing.control;
 type ViewAccessibilityRole = NonNullable<ComponentProps<typeof View>["accessibilityRole"]>;
@@ -22,7 +23,7 @@ export function BottomNavigation() {
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const router = useRouter();
-  return <View testID="bottom-navigation" accessibilityRole={navigationRole} accessibilityLabel="Primary navigation" style={[styles.nav, { minHeight: COMPACT_NAVIGATION_HEIGHT, backgroundColor: theme.colors.elevatedSurface, borderColor: theme.colors.border, paddingBottom: insets.bottom }]}>{mobilePrimaryItems().map((item) => {
+  return <View testID="bottom-navigation" {...webDataset({ printHide: true })} accessibilityRole={navigationRole} accessibilityLabel="Primary navigation" style={[styles.nav, { minHeight: COMPACT_NAVIGATION_HEIGHT, backgroundColor: theme.colors.elevatedSurface, borderColor: theme.colors.border, paddingBottom: insets.bottom }]}>{mobilePrimaryItems().map((item) => {
     const active = isActive(item, pathname);
     return <Pressable key={item.id} accessibilityRole="link" accessibilityLabel={item.label} accessibilityHint={active ? "Current page" : "Navigate to page"} accessibilityState={{ selected: active }} onPress={() => router.push(item.href)} style={[styles.item, { minWidth: COMPACT_NAVIGATION_HEIGHT, minHeight: COMPACT_NAVIGATION_HEIGHT }]}>
       <Ionicons name={item.icon} size={theme.sizing.icon} color={active ? theme.colors.brand : theme.colors.mutedText} />

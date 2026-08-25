@@ -19,6 +19,7 @@ from catalog.errors import (
 
 __all__ = [
     "CatalogError",
+    "AccountDeleted",
     "CoverImageNotFound",
     "IdempotencyConflict",
     "ImageTooLarge",
@@ -33,6 +34,13 @@ __all__ = [
     "StaleRecipeQueryCursor",
     "UnstableCatalogSnapshot",
 ]
+
+
+class AccountDeleted(CatalogError):
+    """The authenticated subject is protected by a deletion tombstone."""
+
+    def __init__(self) -> None:
+        super().__init__("This account has been deleted.")
 
 
 class RecipeNotFound(CatalogError):

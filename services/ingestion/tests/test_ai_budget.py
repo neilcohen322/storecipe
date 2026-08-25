@@ -9,6 +9,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from ingestion.models import (
+    AccountDeletionTombstone,
     AiDailyUsage,
     AttemptState,
     Base,
@@ -211,6 +212,27 @@ async def test_fail_releases_and_ambiguity_settles_conservatively(session: Async
     assert usage is not None and usage.reserved_tokens == 100
     assert await budgets.settle_expired_ambiguities(datetime.now(UTC) + timedelta(minutes=1)) == 1
     assert (usage.reserved_tokens, usage.consumed_tokens) == (0, 100)
+
+
+@pytest.mark.asyncio
+async def test_ambiguity_settlement_skips_tombstoned_subject(session: AsyncSession) -> None:
+    owner = "auth0|deleted"
+    budgets, reservation, _ = await reservation_fixture(session, owner)
+    await budgets.mark_ambiguous(reservation.invocation_id)
+    now = datetime.now(UTC)
+    session.add(
+        AccountDeletionTombstone(
+            subject=owner,
+            deleted_at=now,
+            expires_at=now + timedelta(days=90),
+        )
+    )
+    await session.flush()
+
+    assert await budgets.settle_expired_ambiguities(now + timedelta(minutes=1)) == 0
+    usage = await session.get(AiDailyUsage, (owner, reservation.budget_date))
+    assert usage is not None
+    assert (usage.reserved_tokens, usage.consumed_tokens) == (100, 0)
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,9 @@ const recipe: Recipe = {
   tags: ["weeknight", "pasta"],
   rating: 4,
   coverImage: null,
+  favorite: false,
+  personalNotes: null,
+  lastCookedAt: null,
 };
 
 test("opens a recipe from an accessible stable card with deterministic theme media", async () => {
@@ -33,9 +36,10 @@ test("opens a recipe from an accessible stable card with deterministic theme med
 
   expect(onOpen).toHaveBeenCalledWith("recipe-1");
   expect(initialMediaStyle).toEqual(expect.arrayContaining([expect.objectContaining({ backgroundColor: "#b7791f" })]));
-  expect(StyleSheet.flatten(initialMediaStyle)).toEqual(expect.objectContaining({ minHeight: 240, width: "100%" }));
-  expect(first.getByText("25 min · 4/5")).toBeTruthy();
-  expect(StyleSheet.flatten(first.getByText("Lemon pasta").props.style).color).toBe("#ffffff");
+  expect(StyleSheet.flatten(initialMediaStyle)).toEqual(expect.objectContaining({ aspectRatio: 4 / 3, width: "100%" }));
+  expect(first.getByText("25 min · Serves 4 · 4/5")).toBeTruthy();
+  expect(StyleSheet.flatten(first.getByText("Lemon pasta").props.style).color).toBe("#1c1410");
+  expect(first.getByText("weeknight · pasta")).toBeTruthy();
 });
 
 test("loads a private cover when metadata and a loader are present", async () => {
@@ -68,4 +72,30 @@ test("uses the Pressable activation path without a custom keyboard handler", asy
   } finally {
     Object.defineProperty(Platform, "OS", { configurable: true, value: originalPlatform });
   }
+});
+
+test("shows at most two tags beneath the card title", async () => {
+  const screen = await render(
+    <RecipeCard item={{ ...recipe, tags: ["weeknight", "pasta", "lemon"] }} onOpen={jest.fn()} view="card" />,
+  );
+  expect(screen.getByText("weeknight · pasta")).toBeTruthy();
+  expect(screen.queryByText(/lemon/)).toBeNull();
+});
+
+test("favorite control does not open the recipe", async () => {
+  const onOpen = jest.fn();
+  const onToggleFavorite = jest.fn();
+  const screen = await render(<RecipeCard item={recipe} onOpen={onOpen} view="card" onToggleFavorite={onToggleFavorite} />);
+  await fireEvent.press(screen.getByRole("button", { name: "Add Lemon pasta to favorites" }));
+  expect(onToggleFavorite).toHaveBeenCalledWith(recipe);
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
+test("favorite control reflects the current state", async () => {
+  const screen = await render(
+    <RecipeCard item={{ ...recipe, favorite: true }} onOpen={jest.fn()} view="list" onToggleFavorite={jest.fn()} />,
+  );
+  expect(screen.getByRole("button", { name: "Remove Lemon pasta from favorites" }).props.accessibilityState).toMatchObject({
+    selected: true,
+  });
 });

@@ -7,7 +7,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import distinct, func, select, update
+from sqlalchemy import distinct, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import Select
@@ -128,6 +128,29 @@ class ImportRepository:
             )
         )
         return result
+
+    async def list_owned_jobs(
+        self,
+        owner_subject: str,
+        *,
+        limit: int,
+        before: tuple[datetime, UUID] | None = None,
+    ) -> list[ImportJob]:
+        """Return one bounded, newest-first page of retained owner metadata."""
+
+        statement = select(ImportJob).where(ImportJob.owner_subject == owner_subject)
+        if before is not None:
+            created_at, job_id = before
+            statement = statement.where(
+                or_(
+                    ImportJob.created_at < created_at,
+                    (ImportJob.created_at == created_at) & (ImportJob.id < job_id),
+                )
+            )
+        result = await self.session.scalars(
+            statement.order_by(ImportJob.created_at.desc(), ImportJob.id.desc()).limit(limit)
+        )
+        return list(result)
 
     async def get_owned_idempotency_job(
         self, owner_subject: str, idempotency_key: str

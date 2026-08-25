@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from catalog.auth import Principal, require_scopes
 from catalog.database import SessionDependency
@@ -77,11 +77,19 @@ class RecipeQueryParameters(RecipeQueryRequest):
     max_total_minutes: int | None = Field(default=None, ge=0, alias="maxTotalMinutes")
     min_rating: int | None = Field(default=None, ge=1, le=5, alias="minRating")
     rating_state: Literal["any", "rated", "unrated"] = Field(default="any", alias="ratingState")
+    favorite: bool | None = None  # type: ignore[assignment]
     sort: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(
         default_factory=list, max_length=6
     )
     cursor: Annotated[str | None, Field(max_length=1024)] = None
     limit: Annotated[int, Field(ge=1, le=100)] = 20
+
+    @field_validator("favorite")
+    @classmethod
+    def reject_false_favorite(cls, value: bool | None) -> bool | None:
+        if value is False:
+            raise ValueError("favorite may only be true")
+        return value
 
 
 @router.post("", response_model=RecipeView, status_code=status.HTTP_201_CREATED)
@@ -132,6 +140,15 @@ async def update_recipe(
     principal: RecipeMutationPrincipal,
 ) -> RecipeView:
     return await recipe_service.update_recipe(session, principal.subject, recipe_id, payload)
+
+
+@router.post("/{recipe_id}/cooked", response_model=RecipeView)
+async def mark_recipe_cooked(
+    recipe_id: UUID,
+    session: SessionDependency,
+    principal: RecipeMutationPrincipal,
+) -> RecipeView:
+    return await recipe_service.mark_recipe_cooked(session, principal.subject, recipe_id)
 
 
 @router.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)

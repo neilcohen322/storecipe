@@ -64,11 +64,20 @@ class Recipe(Base):
         CheckConstraint("prep_minutes IS NULL OR prep_minutes >= 0", name="nonnegative_prep"),
         CheckConstraint("cook_minutes IS NULL OR cook_minutes >= 0", name="nonnegative_cook"),
         CheckConstraint("total_minutes IS NULL OR total_minutes >= 0", name="nonnegative_total"),
+        CheckConstraint(
+            "personal_notes IS NULL OR length(personal_notes) <= 5000",
+            name="personal_notes_length",
+        ),
         Index(
             "ix_recipes_user_source_fingerprint",
             "user_id",
             "source_fingerprint",
             postgresql_where=text("source_fingerprint IS NOT NULL"),
+        ),
+        Index(
+            "ix_recipes_user_favorite",
+            "user_id",
+            postgresql_where=text("favorite IS TRUE"),
         ),
         {"schema": CATALOG_SCHEMA},
     )
@@ -85,6 +94,9 @@ class Recipe(Base):
     prep_minutes: Mapped[int | None] = mapped_column(nullable=True)
     cook_minutes: Mapped[int | None] = mapped_column(nullable=True)
     total_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    favorite: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+    personal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_cooked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now

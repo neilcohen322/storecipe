@@ -46,7 +46,7 @@ test("validates, reviews, and creates a recipe", async ({ page }, testInfo) => {
 test("commits search and atomic filters without debounce", async ({ page }) => {
   const errors = captureConsoleErrors(page);
   await page.goto("/recipes");
-  await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your cookbook" })).toBeVisible();
   await expect(page.getByText("Required ingredients")).toHaveCount(0);
   await expect(page.getByText("requiredIngredient")).toHaveCount(0);
 
@@ -169,5 +169,23 @@ test("renders a private cover on the library card and recipe detail", async ({ p
   await expect(page.getByTestId("recipe-cover-image")).toBeVisible();
   await expect(page.getByRole("button", { name: "Replace cover image" })).toBeVisible();
   await assertNoSensitiveMediaLeak(page);
+  await assertStablePageQuality(page, errors);
+});
+
+test("opens cooking mode, print, favorites, and serving scale from a recipe", async ({ page }) => {
+  const errors = captureConsoleErrors(page);
+  await page.goto("/recipes");
+  await page.getByRole("button", { name: "Open Weeknight tomato pasta" }).click();
+  await expect(page.getByRole("heading", { name: "Weeknight tomato pasta" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Print" })).toBeVisible();
+  await page.getByRole("button", { name: "Add Weeknight tomato pasta to favorites" }).click();
+  await expect(page.getByRole("button", { name: "Remove Weeknight tomato pasta from favorites" })).toBeVisible();
+  await expect(page.getByLabel("2 cups tomatoes")).toBeVisible();
+  await page.getByRole("button", { name: "Increase servings" }).click();
+  await expect(page.getByLabel("2 1/2 cups tomatoes")).toBeVisible();
+  await page.getByRole("button", { name: "Start cooking" }).click();
+  await expect(page).toHaveURL(/\/recipes\/recipe-weeknight-pasta\/cook$/);
+  await expect(page.getByRole("heading", { name: "Cooking Weeknight tomato pasta" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start timer" })).toBeVisible();
   await assertStablePageQuality(page, errors);
 });

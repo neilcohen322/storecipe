@@ -1,5 +1,6 @@
 """Serialize ORM recipes into API ``RecipeView`` schemas."""
 
+from datetime import UTC
 from uuid import UUID
 
 from catalog.models import Recipe, RecipeImage
@@ -22,6 +23,9 @@ def to_cover_image_view(recipe_id: UUID, image: RecipeImage) -> CoverImageView:
 def to_recipe_view(recipe: Recipe, *, rating: int | None) -> RecipeView:
     """Map a loaded recipe graph to the public recipe view."""
     cover = recipe.cover_image
+    last_cooked_at = recipe.last_cooked_at
+    if last_cooked_at is not None and last_cooked_at.tzinfo is None:
+        last_cooked_at = last_cooked_at.replace(tzinfo=UTC)
     return RecipeView(
         id=recipe.id,
         title=recipe.title,
@@ -46,4 +50,7 @@ def to_recipe_view(recipe: Recipe, *, rating: int | None) -> RecipeView:
         tags=sorted(recipe_tag.tag.name for recipe_tag in recipe.recipe_tags),
         rating=rating,
         cover_image=to_cover_image_view(recipe.id, cover) if cover is not None else None,
+        favorite=recipe.favorite is True,
+        personal_notes=recipe.personal_notes,
+        last_cooked_at=last_cooked_at,
     )

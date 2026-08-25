@@ -437,6 +437,8 @@ def _catalog_error_result(
         "idempotency_conflict": "The idempotency key conflicts with an existing recipe.",
         "stale_recipe_query_cursor": "The recipe query cursor is stale.",
         "stale_recipe_facet_cursor": "The recipe facet cursor is stale.",
+        "account_deleted": "This account has been deleted.",
+        "resource_gone": "The requested resource is no longer available.",
         "catalog_rate_limited": "Catalog is rate limited. Try again later.",
         "temporary_catalog_failure": "Catalog is temporarily unavailable.",
     }
@@ -474,6 +476,8 @@ def _ingestion_error_result(
     messages = {
         "invalid_input": "The request is invalid.",
         "idempotency_conflict": "The idempotency key conflicts with an existing normalization.",
+        "account_deleted": "This account has been deleted.",
+        "resource_gone": "The requested resource is no longer available.",
         "ingestion_rate_limited": "Ingredient normalization is rate limited. Try again later.",
         "ingredient_normalization_invalid_output": "Ingredient normalization failed.",
         "temporary_ingestion_failure": "Ingredient normalization is temporarily unavailable.",

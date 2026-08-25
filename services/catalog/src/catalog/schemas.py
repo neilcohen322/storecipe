@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -9,6 +10,7 @@ MAX_INGREDIENTS = 256
 MAX_INSTRUCTIONS = 256
 MAX_TAGS = 64
 MAX_LINE_CHARS = 4_096
+MAX_PERSONAL_NOTES_CHARS = 5_000
 
 
 def to_camel(value: str) -> str:
@@ -86,12 +88,14 @@ class RecipePatch(ApiModel):
         list[BoundedLine] | None, Field(min_length=1, max_length=MAX_INSTRUCTIONS)
     ] = None
     tags: Annotated[list[TagName] | None, Field(max_length=MAX_TAGS)] = None
+    favorite: bool | None = None
+    personal_notes: Annotated[str | None, Field(max_length=MAX_PERSONAL_NOTES_CHARS)] = None
 
     @model_validator(mode="after")
     def reject_null_for_nonnullable_fields(self) -> Self:
         if not self.model_fields_set:
             raise ValueError("At least one field must be provided")
-        nonnullable = {"title", "ingredients", "instructions", "tags"}
+        nonnullable = {"title", "ingredients", "instructions", "tags", "favorite"}
         explicit_nulls = {
             name for name in nonnullable & self.model_fields_set if getattr(self, name) is None
         }
@@ -129,6 +133,9 @@ class RecipeView(ApiModel):
     tags: list[str]
     rating: int | None = None
     cover_image: CoverImageView | None = None
+    favorite: bool = False
+    personal_notes: str | None = None
+    last_cooked_at: datetime | None = None
 
 
 class RecipePage(ApiModel):

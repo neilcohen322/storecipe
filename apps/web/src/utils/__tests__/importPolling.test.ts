@@ -54,7 +54,7 @@ function createFakeTimers() {
       }
     });
     return id as unknown as ReturnType<typeof setTimeout>;
-  }) as typeof setTimeout;
+  }) as unknown as typeof setTimeout;
 
   const clearTimeoutFn = ((handle: ReturnType<typeof setTimeout>) => {
     timers.delete(Number(handle));

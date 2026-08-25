@@ -18,6 +18,7 @@ from ingestion.models import (
     ImportStage,
     ImportStatus,
 )
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 from ingestion.repositories.budgets import AiBudgetRepository
 from ingestion.repositories.imports import ImportRepository
 from ingestion.telemetry import ImportEvent, emit_import_event, queue_import_event
@@ -45,6 +46,7 @@ class CatalogPendingAlert:
 class ImportReconciler:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+        self._account_deletions = AccountDeletionRepository(session)
 
     async def reconcile(self, *, now: datetime | None = None, limit: int = 100) -> int:
         current = now or datetime.now(UTC)
@@ -55,10 +57,37 @@ class ImportReconciler:
                 logger,
                 ImportEvent(name="budget.ambiguity_settled", status="completed"),
             )
-        jobs = list(
-            await self._session.scalars(
+        candidates = list(
+            (
+                await self._session.execute(
+                    select(ImportJob.id, ImportJob.owner_subject)
+                    .where(
+                        ImportJob.status.not_in(TERMINAL),
+                        or_(
+                            ImportJob.next_attempt_at.is_(None),
+                            ImportJob.next_attempt_at <= current,
+                        ),
+                        or_(
+                            ImportJob.lease_expires_at.is_(None),
+                            ImportJob.lease_expires_at <= current,
+                        ),
+                    )
+                    .order_by(ImportJob.owner_subject, ImportJob.created_at, ImportJob.id)
+                    .limit(limit)
+                )
+            ).all()
+        )
+        scheduled = 0
+        events: list[ImportEvent] = []
+        scheduled_events: list[ImportEvent] = []
+        for job_id, owner_subject in candidates:
+            await self._account_deletions.acquire_subject_lock(owner_subject)
+            if await self._account_deletions.is_tombstoned(owner_subject):
+                continue
+            job = await self._session.scalar(
                 select(ImportJob)
                 .where(
+                    ImportJob.id == job_id,
                     ImportJob.status.not_in(TERMINAL),
                     or_(ImportJob.next_attempt_at.is_(None), ImportJob.next_attempt_at <= current),
                     or_(
@@ -66,15 +95,10 @@ class ImportReconciler:
                         ImportJob.lease_expires_at <= current,
                     ),
                 )
-                .order_by(ImportJob.created_at)
-                .limit(limit)
                 .with_for_update(skip_locked=True)
             )
-        )
-        scheduled = 0
-        events: list[ImportEvent] = []
-        scheduled_events: list[ImportEvent] = []
-        for job in jobs:
+            if job is None:
+                continue
             if job.cancel_requested_at is not None and job.catalog_pending_since is None:
                 job.status = ImportStatus.CANCELLED
                 job.stage = ImportStage.CANCELLED
@@ -263,17 +287,34 @@ class ImportReconciler:
     async def reencrypt_payloads(self, cipher: PayloadCipher, *, limit: int = 100) -> int:
         """Rewrite retained payloads encrypted under an older configured key."""
 
-        payloads = list(
-            await self._session.scalars(
-                select(ImportPayload)
-                .where(ImportPayload.encryption_key_id != cipher.active_key_id)
-                .order_by(ImportPayload.updated_at, ImportPayload.id)
-                .limit(limit)
-                .with_for_update(skip_locked=True)
-            )
+        candidates = list(
+            (
+                await self._session.execute(
+                    select(ImportPayload.id, ImportJob.owner_subject)
+                    .join(ImportJob, ImportJob.id == ImportPayload.job_id)
+                    .where(ImportPayload.encryption_key_id != cipher.active_key_id)
+                    .order_by(
+                        ImportJob.owner_subject,
+                        ImportPayload.updated_at,
+                        ImportPayload.id,
+                    )
+                    .limit(limit)
+                )
+            ).all()
         )
         rewritten = 0
-        for payload in payloads:
+        for payload_id, owner_subject in candidates:
+            await self._account_deletions.acquire_subject_lock(owner_subject)
+            if await self._account_deletions.is_tombstoned(owner_subject):
+                continue
+            payload = await self._session.scalar(
+                select(ImportPayload)
+                .where(ImportPayload.encryption_key_id != cipher.active_key_id)
+                .where(ImportPayload.id == payload_id)
+                .with_for_update(skip_locked=True)
+            )
+            if payload is None:
+                continue
             plaintext = cipher.decrypt(
                 EncryptedPayload(
                     key_id=payload.encryption_key_id,

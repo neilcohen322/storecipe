@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -421,6 +422,87 @@ async def test_recipe_crud_round_trip(api_client: AsyncClient) -> None:
     delete_response = await api_client.delete(f"/v1/recipes/{recipe_id}")
     assert delete_response.status_code == 204
     assert (await api_client.get(f"/v1/recipes/{recipe_id}")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_recipe_personalization_patch_filter_and_cooked_round_trip(
+    api_client: AsyncClient,
+) -> None:
+    created_response = await api_client.post(
+        "/v1/recipes",
+        headers={"Idempotency-Key": "personalization-round-trip-key"},
+        json=recipe_payload(),
+    )
+    assert created_response.status_code == 201
+    created = created_response.json()
+    recipe_id = created["id"]
+    assert created["favorite"] is False
+    assert created["personalNotes"] is None
+    assert created["lastCookedAt"] is None
+
+    before_favorite = await api_client.get("/v1/recipes", params={"favorite": "true"})
+    rejected_false = await api_client.get("/v1/recipes", params={"favorite": "false"})
+    assert before_favorite.status_code == 200
+    assert before_favorite.json()["items"] == []
+    assert rejected_false.status_code == 422
+
+    combined = await api_client.patch(
+        f"/v1/recipes/{recipe_id}",
+        json={"favorite": True, "personalNotes": "Serve with lemon."},
+    )
+    assert combined.status_code == 200
+    assert combined.json()["favorite"] is True
+    assert combined.json()["personalNotes"] == "Serve with lemon."
+
+    async with app.state.catalog_test_session_factory() as session:
+        version = await session.scalar(
+            select(User.catalog_version).where(User.auth_subject == "auth0|default-user")
+        )
+    assert version == 2
+
+    listed = await api_client.get("/v1/recipes", params={"favorite": "true"})
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [recipe_id]
+    assert listed.json()["items"][0]["personalNotes"] == "Serve with lemon."
+
+    cooked = await api_client.post(f"/v1/recipes/{recipe_id}/cooked")
+    assert cooked.status_code == 200
+    cooked_at = datetime.fromisoformat(cooked.json()["lastCookedAt"].replace("Z", "+00:00"))
+    assert cooked_at.tzinfo is not None
+    assert cooked.json()["personalNotes"] == "Serve with lemon."
+
+    cleared = await api_client.patch(
+        f"/v1/recipes/{recipe_id}",
+        json={"personalNotes": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["personalNotes"] is None
+    assert cleared.json()["favorite"] is True
+
+    async with app.state.catalog_test_session_factory() as session:
+        version = await session.scalar(
+            select(User.catalog_version).where(User.auth_subject == "auth0|default-user")
+        )
+    assert version == 4
+
+
+@pytest.mark.asyncio
+async def test_recipe_personalization_validation(api_client: AsyncClient) -> None:
+    created = (
+        await api_client.post(
+            "/v1/recipes",
+            headers={"Idempotency-Key": "personalization-validation-key"},
+            json=recipe_payload(),
+        )
+    ).json()
+
+    null_favorite = await api_client.patch(f"/v1/recipes/{created['id']}", json={"favorite": None})
+    oversized_notes = await api_client.patch(
+        f"/v1/recipes/{created['id']}", json={"personalNotes": "x" * 5001}
+    )
+
+    assert null_favorite.status_code == 422
+    assert oversized_notes.status_code == 422
 
 
 @pytest.mark.asyncio

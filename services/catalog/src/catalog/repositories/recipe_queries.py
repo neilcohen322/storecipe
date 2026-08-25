@@ -120,6 +120,9 @@ def build_recipe_query(user_id: UUID, request: RecipeQueryRequest) -> QueryColum
     elif request.rating_state == "unrated":
         statement = statement.where(Rating.value.is_(None))
 
+    if request.favorite is True:
+        statement = statement.where(Recipe.favorite.is_(True))
+
     expressions: dict[SortField, ColumnElement[Any]] = {
         SortField.RATING: cast(ColumnElement[Any], Rating.value),
         SortField.TOTAL_MINUTES: cast(ColumnElement[Any], Recipe.total_minutes),

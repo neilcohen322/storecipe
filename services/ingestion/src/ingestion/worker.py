@@ -9,14 +9,18 @@ from typing import TypedDict
 from uuid import UUID
 
 from celery import Celery
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ingestion.config import Settings
 from ingestion.import_models import DeterministicRecipeCandidate, FetchedDocument
 from ingestion.jsonld import parse_recipe_jsonld
+from ingestion.models import ImportJob
 from ingestion.orchestration import LeaseToken
 from ingestion.pipeline import AiBudgetPolicy, ImportAdapters
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 from ingestion.repositories.imports import ImportRepository
+from ingestion.services.account_deletions import AccountDeleted
 from ingestion.telemetry import ImportEvent, emit_import_event, queue_import_event
 
 
@@ -108,6 +112,11 @@ async def _record_receipt_and_claim(
     lease_seconds: int = 60,
 ) -> LeaseToken | None:
     started = time.monotonic()
+    owner_subject = await repository.session.scalar(
+        select(ImportJob.owner_subject).where(ImportJob.id == job_id)
+    )
+    if owner_subject is not None:
+        await _lock_and_require_active_subject(repository.session, owner_subject)
     token = await repository.record_receipt_and_claim(
         job_id,
         owner,
@@ -142,11 +151,26 @@ async def _renew_lease_loop(
         await asyncio.sleep(interval_seconds)
         async with factory() as session:
             try:
+                owner_subject = await session.scalar(
+                    select(ImportJob.owner_subject).where(ImportJob.id == token.job_id)
+                )
+                if owner_subject is None:
+                    await session.rollback()
+                    return
+                await _lock_and_require_active_subject(session, owner_subject)
                 await ImportRepository(session).renew_lease(token, lease_seconds=60)
                 await session.commit()
-            except StaleLease:
+            except (AccountDeleted, StaleLease):
                 await session.rollback()
                 return
+
+
+async def _lock_and_require_active_subject(session: AsyncSession, owner_subject: str) -> None:
+    account_deletions = AccountDeletionRepository(session)
+    await account_deletions.acquire_subject_lock(owner_subject)
+    if await account_deletions.is_tombstoned(owner_subject):
+        await session.rollback()
+        raise AccountDeleted
 
 
 def configure_import_runner(runner: ImportRunner) -> None:
@@ -194,13 +218,26 @@ def build_import_runner() -> ImportRunner:
                 await ImportRepository(validation_session).assert_payload_keys_available(cipher)
             async with factory() as session:
                 repository = ImportRepository(session)
-                token = await _record_receipt_and_claim(
-                    repository,
-                    job_id,
-                    owner,
-                    dispatch_generation,
-                    lease_seconds=60,
-                )
+                try:
+                    token = await _record_receipt_and_claim(
+                        repository,
+                        job_id,
+                        owner,
+                        dispatch_generation,
+                        lease_seconds=60,
+                    )
+                except AccountDeleted:
+                    await session.rollback()
+                    emit_import_event(
+                        logger,
+                        ImportEvent(
+                            name="worker.aborted",
+                            job_id=str(job_id),
+                            dispatch_generation=dispatch_generation,
+                            error_category="account_deleted",
+                        ),
+                    )
+                    return
                 if token is None:
                     return
                 await session.commit()
@@ -217,15 +254,23 @@ def build_import_runner() -> ImportRunner:
                         token,
                         _build_import_adapters(settings, model, catalog),
                     )
-                except StaleLease:
+                except (AccountDeleted, StaleLease) as error:
                     await session.rollback()
                     emit_import_event(
                         logger,
                         ImportEvent(
-                            name="worker.stale",
+                            name=(
+                                "worker.aborted"
+                                if isinstance(error, AccountDeleted)
+                                else "worker.stale"
+                            ),
                             job_id=str(job_id),
                             dispatch_generation=dispatch_generation,
-                            error_category="stale_lease",
+                            error_category=(
+                                "account_deleted"
+                                if isinstance(error, AccountDeleted)
+                                else "stale_lease"
+                            ),
                         ),
                     )
                     return

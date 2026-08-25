@@ -35,6 +35,7 @@ _RATING_SCOPE = "ratings:write"
 _ALLOWLISTED_CONFLICT_CATEGORIES = frozenset(
     {"idempotency_conflict", "stale_recipe_query_cursor", "stale_recipe_facet_cursor"}
 )
+_ACCOUNT_DELETED_CATEGORY = "account_deleted"
 _IDEMPOTENCY_KEY_ADAPTER = TypeAdapter(RecipeCreateIdempotencyKey)
 
 QueryValue = str | int | float | bool | None
@@ -352,6 +353,10 @@ def _map_response_error(
         if category is not None:
             return CatalogClientError(category, retryable=False)
         return CatalogClientError("temporary_catalog_failure", retryable=False)
+    if status == 410:
+        if _problem_category(response) == _ACCOUNT_DELETED_CATEGORY:
+            return CatalogClientError(_ACCOUNT_DELETED_CATEGORY, retryable=False)
+        return CatalogClientError("resource_gone", retryable=False)
     if status == 429:
         return CatalogClientError(
             "catalog_rate_limited",
@@ -369,6 +374,13 @@ def _map_response_error(
 
 
 def _allowlisted_problem_category(response: _BufferedResponse) -> str | None:
+    category = _problem_category(response)
+    if category in _ALLOWLISTED_CONFLICT_CATEGORIES:
+        return category
+    return None
+
+
+def _problem_category(response: _BufferedResponse) -> str | None:
     try:
         body = response.json()
     except (TypeError, ValueError):
@@ -376,7 +388,7 @@ def _allowlisted_problem_category(response: _BufferedResponse) -> str | None:
     if not isinstance(body, Mapping):
         return None
     category = body.get("errorCategory")
-    if isinstance(category, str) and category in _ALLOWLISTED_CONFLICT_CATEGORIES:
+    if isinstance(category, str):
         return category
     return None
 

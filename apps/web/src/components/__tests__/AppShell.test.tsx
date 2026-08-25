@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 import { StyleSheet, Text } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { AppShell, getLayoutMode } from "../AppShell";
+import { AppShell, getLayoutMode, isCookingPath } from "../AppShell";
 import { ThemeProvider } from "../../theme/ThemeProvider";
 import { CreateRecipeScreen } from "../../screens/CreateRecipeScreen";
 
@@ -65,12 +65,17 @@ describe("AppShell", () => {
   });
 
   it.each([768, 1440])("keeps the desktop sidebar compact at %s", async (width) => {
-    const { getByTestId } = await renderShell(width);
+    const { getByTestId, queryByTestId } = await renderShell(width);
     expect(StyleSheet.flatten(getByTestId("desktop-sidebar").props.style)).toEqual(expect.objectContaining({
       width: 176,
       flexGrow: 0,
       flexShrink: 0,
     }));
+    if (width === 1440) {
+      expect(getByTestId("sidebar-line-art", { includeHiddenElements: true })).toBeTruthy();
+    } else {
+      expect(queryByTestId("sidebar-line-art", { includeHiddenElements: true })).toBeNull();
+    }
   });
 
   it.each([768, 1440])("suppresses Create navigation and shows the desktop page action at %s", async (width) => {
@@ -136,6 +141,18 @@ describe("AppShell", () => {
     expect(getByRole("link", { name: "Recipes" }).props.accessibilityHint).toBe("Current page");
     fireEvent.press(getByLabelText("Collapse workspace navigation"));
     await waitFor(() => expect(getByLabelText("Expand workspace navigation")).toBeTruthy());
+  });
+
+  it("hides workspace navigation while cooking", async () => {
+    expect(isCookingPath("/recipes/recipe-1/cook")).toBe(true);
+    expect(isCookingPath("/recipes/recipe-1")).toBe(false);
+    mockPathname = "/recipes/recipe-1/cook";
+    const compact = await renderShell(390);
+    expect(compact.queryByTestId("bottom-navigation")).toBeNull();
+    await compact.unmount();
+    const desktop = await renderShell(1440);
+    expect(desktop.queryByTestId("desktop-sidebar")).toBeNull();
+    expect(desktop.queryByTestId("page-create-action")).toBeNull();
   });
 
   it("exposes system, light, and dark theme choices", async () => {

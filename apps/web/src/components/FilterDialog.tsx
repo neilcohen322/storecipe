@@ -9,7 +9,7 @@ import { Button } from "./index";
 
 export type FilterDraft = Pick<
   ListRecipesParams,
-  "ingredient" | "tag" | "maxTotalMinutes" | "minRating" | "ratingState"
+  "ingredient" | "tag" | "maxTotalMinutes" | "minRating" | "ratingState" | "favorite"
 >;
 
 type Focusable = { focus: () => void };

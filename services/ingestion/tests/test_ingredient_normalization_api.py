@@ -33,12 +33,14 @@ from ingestion.models import (
     ProviderAttempt,
 )
 from ingestion.rate_limits import RateLimitDecision
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 from ingestion.repositories.budgets import AiBudgetRepository
 from ingestion.schemas import (
     MAX_INGREDIENT_LINE_CHARS,
     MAX_INGREDIENT_LINES,
     MAX_INGREDIENT_TOTAL_BYTES,
 )
+from ingestion.services.account_deletions import AccountDeletionService
 from ingestion.services.ingredient_normalizations import compute_request_hash
 
 SECRET_MARKER = "SECRET_INGREDIENT_MARKER_XYZ"
@@ -589,6 +591,79 @@ async def test_attempt_is_committed_before_provider_returns(api_client: AsyncCli
     first = await task
     assert first.status_code == 200
     assert normalizer.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "provider_error", "unresolved_error"])
+async def test_deletion_during_provider_prevents_post_provider_persistence(
+    api_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    lock_subjects: list[str] = []
+    original_acquire = AccountDeletionRepository.acquire_subject_lock
+
+    async def recording_acquire(
+        repository: AccountDeletionRepository,
+        subject: str,
+    ) -> None:
+        lock_subjects.append(subject)
+        await original_acquire(repository, subject)
+
+    monkeypatch.setattr(AccountDeletionRepository, "acquire_subject_lock", recording_acquire)
+
+    class BlockingNormalizer:
+        async def normalize(self, raw_lines: list[str]) -> IngredientNormalizationResult:
+            started.set()
+            await release.wait()
+            if outcome == "provider_error":
+                raise IngredientNormalizationError(
+                    IngredientNormalizationFailureCode.PROVIDER_REQUEST_FAILED,
+                    provider_request_started=True,
+                )
+            if outcome == "unresolved_error":
+                raise RuntimeError("provider disappeared")
+            return IngredientNormalizationResult(
+                items=_items("1 egg"),
+                model="fake-model",
+                prompt_version="ingredient-normalization-v1",
+                usage=OpenRouterUsage(
+                    prompt_tokens=100,
+                    completion_tokens=50,
+                    total_tokens=150,
+                    cost=Decimal("0.00001"),
+                ),
+                latency_ms=12,
+            )
+
+    _install_normalizer(BlockingNormalizer())
+    request_task = asyncio.create_task(
+        api_client.post(
+            "/v1/ingredient-normalizations",
+            json=_payload("1 egg"),
+            headers={"Idempotency-Key": f"delete-during-provider-{outcome}"},
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    async with app.state.session_factory() as session:
+        await AccountDeletionService(session).tombstone("auth0|owner-a")
+
+    release.set()
+    response = await request_task
+
+    assert response.status_code == 410
+    assert response.json()["errorCategory"] == "account_deleted"
+    async with app.state.session_factory() as session:
+        operation = await session.scalar(select(IngredientNormalizationOperation))
+        attempt = await session.scalar(select(IngredientNormalizationAttempt))
+        invocation = await session.scalar(select(LlmInvocation))
+    assert operation is None
+    assert attempt is None
+    assert invocation is None
+    assert lock_subjects == ["auth0|owner-a", "auth0|owner-a", "auth0|owner-a"]
 
 
 @pytest.mark.asyncio

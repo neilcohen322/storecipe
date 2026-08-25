@@ -1,15 +1,68 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
-if [[ $# -ne 4 || $1 != storage || $2 != cp ]]; then
-  echo "The local restore fixture supports only: gcloud storage cp SOURCE DEST" >&2
-  exit 2
-fi
 : "${FAKE_GCS_ROOT:?FAKE_GCS_ROOT is required}"
 
-source_path=$3
-destination=$4
-if [[ $source_path == gs://fake-storecipe/* ]]; then
-  source_path="$FAKE_GCS_ROOT/${source_path#gs://fake-storecipe/}"
+to_local() {
+  local path=${1%/}
+  if [[ $path == gs://fake-storecipe ]]; then
+    printf '%s\n' "$FAKE_GCS_ROOT"
+  elif [[ $path == gs://fake-storecipe/* ]]; then
+    printf '%s\n' "$FAKE_GCS_ROOT/${path#gs://fake-storecipe/}"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+if [[ ${1:-} != storage ]]; then
+  echo "The local restore fixture supports only gcloud storage commands" >&2
+  exit 2
 fi
-cp "$source_path" "$destination"
+shift
+command=${1:-}
+shift || true
+
+case $command in
+  ls)
+    src=$(to_local "${1:-}")
+    if [[ ! -e $src ]]; then
+      echo "ERROR: (gcloud.storage.ls) ${1:-} not found" >&2
+      exit 1
+    fi
+    if [[ -d $src ]]; then
+      mapfile -t files < <(find "$src" -maxdepth 1 -type f | sort)
+      if (( ${#files[@]} == 0 )); then
+        echo "ERROR: (gcloud.storage.ls) One or more URLs matched no objects." >&2
+        exit 1
+      fi
+      for file in "${files[@]}"; do
+        printf 'gs://fake-storecipe/%s\n' "${file#"$FAKE_GCS_ROOT"/}"
+      done
+    fi
+    ;;
+  cp)
+    recursive=0
+    if [[ ${1:-} == --recursive ]]; then
+      recursive=1
+      shift
+    fi
+    if [[ $# -ne 2 ]]; then
+      echo "usage: gcloud storage cp [--recursive] SOURCE DEST" >&2
+      exit 2
+    fi
+    src=$(to_local "$1")
+    dest=$(to_local "$2")
+    if (( recursive )); then
+      mkdir -p "$dest"
+      if [[ -d $src ]]; then
+        find "$src" -maxdepth 1 -type f -exec cp {} "$dest" \;
+      fi
+    else
+      mkdir -p "$(dirname "$dest")"
+      cp "$src" "$dest"
+    fi
+    ;;
+  *)
+    echo "The local restore fixture does not implement gcloud storage $command" >&2
+    exit 2
+    ;;
+esac

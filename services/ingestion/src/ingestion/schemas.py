@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
@@ -10,7 +11,7 @@ from ingestion.import_models import (
     MAX_INGREDIENT_TOTAL_BYTES,
     MAX_SOURCE_URL_LENGTH,
 )
-from ingestion.models import ImportStatus
+from ingestion.models import ImportInputKind, ImportStatus
 
 MAX_TEXT_BYTES = 256 * 1024
 
@@ -27,6 +28,17 @@ class ApiModel(BaseModel):
 class DuplicatePolicy(StrEnum):
     WARN = "warn"
     ALLOW = "allow"
+
+
+class AccountDeletionRequest(ApiModel):
+    subject: Annotated[str, Field(min_length=1, max_length=255)]
+
+    @field_validator("subject")
+    @classmethod
+    def _subject_is_not_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("subject must contain non-whitespace content")
+        return value
 
 
 class UrlImportRequest(ApiModel):
@@ -67,6 +79,34 @@ class ImportJobView(ApiModel):
     error_category: str | None
     cancellation_requested: bool = False
     has_candidate: bool = False
+
+
+class ImportPhase(StrEnum):
+    WAITING = "waiting"
+    FETCHING = "fetching"
+    EXTRACTING = "extracting"
+    VALIDATING = "validating"
+    SAVING = "saving"
+    COMPLETED = "completed"
+    REVIEW_REQUIRED = "review_required"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+
+
+class ImportHistoryItem(ApiModel):
+    id: UUID
+    input_kind: ImportInputKind
+    created_at: datetime
+    updated_at: datetime
+    terminal_at: datetime | None
+    status: ImportStatus
+    phase: ImportPhase
+
+
+class ImportHistoryPage(ApiModel):
+    items: list[ImportHistoryItem]
+    next_cursor: str | None = None
 
 
 class RawIngredientInput(ApiModel):

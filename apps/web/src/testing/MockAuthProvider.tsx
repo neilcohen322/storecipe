@@ -25,6 +25,7 @@ export function MockAuthProvider({ children }: PropsWithChildren) {
   const login = useCallback(async () => { writeFixtureSession(true); setIsAuthenticated(true); }, []);
   const logout = useCallback(async () => { writeFixtureSession(false); setIsAuthenticated(false); }, []);
   const getAccessToken = useCallback(async () => "e2e-intercepted-api-token", []);
+  const getAccountDeletionAccessToken = useCallback(async () => "e2e-intercepted-api-token", []);
   const value = useMemo<AuthContextValue>(() => ({
     isLoading: false,
     isAuthenticated,
@@ -33,7 +34,8 @@ export function MockAuthProvider({ children }: PropsWithChildren) {
     login,
     logout,
     getAccessToken,
-  }), [getAccessToken, isAuthenticated, login, logout]);
+    getAccountDeletionAccessToken,
+  }), [getAccessToken, getAccountDeletionAccessToken, isAuthenticated, login, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

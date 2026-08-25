@@ -8,6 +8,7 @@ dependencies = [
     "asyncpg>=0.30,<0.31",
     "fastapi>=0.141,<0.142",
     "google-cloud-storage>=3.13,<4",
+    "httpx>=0.28,<0.29",
     "limits>=5.8,<6",
     "pillow>=12.3,<13",
     "python-multipart>=0.0.32,<0.1",

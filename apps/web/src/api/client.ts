@@ -27,6 +27,32 @@ export class ApiNetworkError extends Error {
   }
 }
 
+const ACCOUNT_DELETION_SCOPE_ERROR_COPY =
+  "Sign out and back in to enable account deletion. Your current session does not include the required permission.";
+
+/** Returns the actionable reauthorization message for account-deletion scope failures. */
+export function accountDeletionScopeErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as {
+    name?: unknown;
+    type?: unknown;
+    code?: unknown;
+    error?: unknown;
+    status?: unknown;
+    errorCategory?: unknown;
+  };
+  const markers = [candidate.name, candidate.type, candidate.code, candidate.error]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.toLowerCase());
+  if (markers.some((value) => value === "missingscopeserror" || value === "missing_scopes" || value === "missing_scopes_error")) {
+    return ACCOUNT_DELETION_SCOPE_ERROR_COPY;
+  }
+  if (candidate.status === 403 && candidate.errorCategory === "insufficient_scope") {
+    return ACCOUNT_DELETION_SCOPE_ERROR_COPY;
+  }
+  return null;
+}
+
 /** Credential states that require re-login; network/transient Auth0 failures stay retryable. */
 const UNAUTHORIZED_CREDENTIAL_MARKERS = new Set([
   "NO_CREDENTIALS",
@@ -137,10 +163,15 @@ export function createApiClient(
       if (response.status === 401) {
         throw new ApiUnauthorizedError(problem.detail);
       }
+      const errorCategory = problem.errorCategory ?? (
+        response.status === 403 && /\berror\s*=\s*"insufficient_scope"/i.test(response.headers.get("WWW-Authenticate") ?? "")
+          ? "insufficient_scope"
+          : null
+      );
       throw new ApiError(
         problem.detail ?? `API request failed with status ${response.status}`,
         response.status,
-        problem.errorCategory,
+        errorCategory,
       );
     }
 

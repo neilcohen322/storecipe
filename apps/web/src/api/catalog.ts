@@ -42,6 +42,9 @@ export type Recipe = {
   tags: string[];
   rating: number | null;
   coverImage: CoverImage | null;
+  favorite: boolean;
+  personalNotes: string | null;
+  lastCookedAt: string | null;
 };
 
 export type RecipeCreate = {
@@ -54,6 +57,20 @@ export type RecipeCreate = {
   ingredients: RecipeCreateIngredient[];
   instructions: string[];
   tags?: string[];
+};
+
+export type RecipePatch = {
+  title?: string;
+  sourceUrl?: string | null;
+  servings?: number | null;
+  prepMinutes?: number | null;
+  cookMinutes?: number | null;
+  totalMinutes?: number | null;
+  ingredients?: RecipeCreateIngredient[];
+  instructions?: string[];
+  tags?: string[];
+  favorite?: boolean;
+  personalNotes?: string | null;
 };
 
 export type RecipeQueryPage = {
@@ -84,6 +101,7 @@ export type ListRecipesParams = {
   maxTotalMinutes?: number | null;
   minRating?: number | null;
   ratingState?: "any" | "rated" | "unrated";
+  favorite?: true;
   sort?: RecipeSort[];
   cursor?: string | null;
   limit?: number;
@@ -209,10 +227,24 @@ function parseRecipe(value: unknown): Recipe {
   return {
     ...recipe,
     coverImage: parseCoverImage((value as { coverImage?: unknown }).coverImage),
+    favorite: recipe.favorite === true,
+    personalNotes: typeof recipe.personalNotes === "string" ? recipe.personalNotes : null,
+    lastCookedAt: typeof recipe.lastCookedAt === "string" ? recipe.lastCookedAt : null,
   };
 }
 
 export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
+  const requestAccountDeletion = async (): Promise<void> => {
+    const response = await client.request("/v1/account-deletions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation: "DELETE MY ACCOUNT" }),
+    });
+    if (response.status !== 202) {
+      throw new Error(`Unexpected account deletion response: ${response.status}`);
+    }
+  };
+
   const listRecipes = async (params?: ListRecipesParams, options: ListRecipesOptions = {}): Promise<RecipeQueryPage> => {
     const page = await client.getJson<unknown>(buildRecipeQueryPath(params), options);
     if (!page || typeof page !== "object" || !Array.isArray((page as { items?: unknown }).items)) {
@@ -226,6 +258,24 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
 
   const getRecipe = async (id: string): Promise<Recipe> =>
     parseRecipe(await client.getJson<unknown>(`/v1/recipes/${id}`));
+
+  const patchRecipe = async (recipeId: string, body: RecipePatch): Promise<Recipe> => {
+    const response = await client.request(`/v1/recipes/${recipeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return parseRecipe(await response.json());
+  };
+
+  const deleteRecipe = async (recipeId: string): Promise<void> => {
+    await client.request(`/v1/recipes/${recipeId}`, { method: "DELETE" });
+  };
+
+  const markRecipeCooked = async (recipeId: string): Promise<Recipe> => {
+    const response = await client.request(`/v1/recipes/${recipeId}/cooked`, { method: "POST" });
+    return parseRecipe(await response.json());
+  };
 
   const createRecipe = async (
     body: RecipeCreate,
@@ -316,9 +366,13 @@ export function createCatalogApi(client: ReturnType<typeof createApiClient>) {
   };
 
   return {
+    requestAccountDeletion,
     listRecipes,
     getRecipe,
     createRecipe,
+    patchRecipe,
+    deleteRecipe,
+    markRecipeCooked,
     putRating,
     uploadCoverImage,
     getCoverImage,

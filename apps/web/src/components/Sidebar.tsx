@@ -5,6 +5,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { desktopNavigationItems } from "../navigation/registry";
 import type { NavigationLink } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
+import { webDataset } from "../utils/webDataset";
+import { DecorativeLineArt } from "./DecorativeLineArt";
 import { ThemeControl } from "./ThemeControl";
 
 export const SIDEBAR_EXPANDED_WIDTH = 176;
@@ -13,12 +15,12 @@ function isActive(item: NavigationLink, pathname: string): boolean {
   return item.routeMatch === "exact" ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+export function Sidebar({ collapsed, onToggle, showLineArt = false }: { collapsed: boolean; onToggle: () => void; showLineArt?: boolean }) {
   const { theme } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
   const items = desktopNavigationItems();
-  return <View testID="desktop-sidebar" style={[styles.sidebar, { width: collapsed ? theme.sizing.touchTarget + theme.spacing.sm : SIDEBAR_EXPANDED_WIDTH, backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+  return <View testID="desktop-sidebar" {...webDataset({ printHide: true })} style={[styles.sidebar, { width: collapsed ? theme.sizing.touchTarget + theme.spacing.sm : SIDEBAR_EXPANDED_WIDTH, backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
     <Pressable accessibilityRole="button" accessibilityLabel={collapsed ? "Expand workspace navigation" : "Collapse workspace navigation"} onPress={onToggle} style={styles.toggle}>
       <Text style={{ color: theme.colors.text, fontSize: theme.type.subtitle }}>{collapsed ? ">" : "<"}</Text>
     </Pressable>
@@ -29,7 +31,10 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         {!collapsed && <Text style={{ color: theme.colors.text }}>{item.label}</Text>}
       </Pressable>;
     })}</View>
-    {!collapsed && <View style={styles.theme}><ThemeControl /></View>}
+    <View style={styles.footer}>
+      {!collapsed && <View style={styles.theme}><ThemeControl /></View>}
+      <DecorativeLineArt visible={showLineArt && !collapsed} />
+    </View>
   </View>;
 }
 
@@ -38,5 +43,6 @@ const styles = StyleSheet.create({
   toggle: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   group: { gap: 4 },
   link: { minWidth: 44, minHeight: 44, borderRadius: 8, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 8 },
-  theme: { marginTop: "auto" },
+  theme: {},
+  footer: { marginTop: "auto", gap: 8, alignItems: "center" },
 });

@@ -12,10 +12,13 @@ import {
   useAuth0,
 } from "react-native-auth0";
 
+import { clearAllCookingSessions } from "../cooking/session";
 import { getAuth0Config } from "./config";
 
-const AUTH_SCOPE =
+export const BASE_SCOPE =
   "openid profile email offline_access recipes:read recipes:write ratings:write";
+export const ACCOUNT_DELETION_SCOPE = "account:delete";
+const INTERACTIVE_LOGIN_SCOPE = `${BASE_SCOPE} ${ACCOUNT_DELETION_SCOPE}`;
 
 export type AuthContextValue = {
   isLoading: boolean;
@@ -25,6 +28,7 @@ export type AuthContextValue = {
   login(): Promise<void>;
   logout(): Promise<void>;
   getAccessToken(): Promise<string>;
+  getAccountDeletionAccessToken(): Promise<string>;
 };
 
 export const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -53,18 +57,24 @@ function AuthSession({
     await authorize({
       audience,
       connection: "google-oauth2",
-      scope: AUTH_SCOPE,
+      scope: INTERACTIVE_LOGIN_SCOPE,
       ...(redirectUrl ? { redirectUrl } : {}),
     });
   }, [audience, authorize]);
 
   const logout = useCallback(async () => {
+    clearAllCookingSessions();
     const returnToUrl = webRedirectUrl();
     await clearSession(returnToUrl ? { returnToUrl } : undefined);
   }, [clearSession]);
 
   const getAccessToken = useCallback(async () => {
-    const credentials = await getApiCredentials(audience, AUTH_SCOPE);
+    const credentials = await getApiCredentials(audience, BASE_SCOPE);
+    return credentials.accessToken;
+  }, [audience, getApiCredentials]);
+
+  const getAccountDeletionAccessToken = useCallback(async () => {
+    const credentials = await getApiCredentials(audience, ACCOUNT_DELETION_SCOPE);
     return credentials.accessToken;
   }, [audience, getApiCredentials]);
 
@@ -77,8 +87,9 @@ function AuthSession({
       login,
       logout,
       getAccessToken,
+      getAccountDeletionAccessToken,
     }),
-    [error?.message, getAccessToken, isLoading, login, logout, user],
+    [error?.message, getAccessToken, getAccountDeletionAccessToken, isLoading, login, logout, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

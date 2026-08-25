@@ -13,6 +13,7 @@ import { getLayoutMode } from "../components/AppShell";
 import { ImportScreen } from "../screens/ImportScreen";
 import { ImportHistoryScreen } from "../screens/ImportHistoryScreen";
 import { LandingScreen } from "../screens/LandingScreen";
+import { CookingScreen } from "../screens/CookingScreen";
 import { RecipeDetailScreen } from "../screens/RecipeDetailScreen";
 import { RecipeListScreen } from "../screens/RecipeListScreen";
 
@@ -99,9 +100,32 @@ export function RecipeDetailRouteAdapter() {
   const router = useRouter();
   const onUnauthorized = useUnauthorizedHandler();
   const { recipeId } = useLocalSearchParams<{ recipeId?: string | string[] }>();
+  const id = Array.isArray(recipeId) ? recipeId[0] : recipeId;
   return (
     <AuthGate>
       <RecipeDetailScreen
+        recipeId={recipeId}
+        catalog={catalog}
+        onBack={() => router.back()}
+        onUnauthorized={onUnauthorized}
+        onStartCooking={
+          typeof id === "string" && id
+            ? () => router.push({ pathname: "/recipes/[recipeId]/cook", params: { recipeId: id } })
+            : undefined
+        }
+      />
+    </AuthGate>
+  );
+}
+
+export function CookingRouteAdapter() {
+  const { catalog } = useLegacyApis();
+  const router = useRouter();
+  const onUnauthorized = useUnauthorizedHandler();
+  const { recipeId } = useLocalSearchParams<{ recipeId?: string | string[] }>();
+  return (
+    <AuthGate>
+      <CookingScreen
         recipeId={recipeId}
         catalog={catalog}
         onBack={() => router.back()}
@@ -112,10 +136,16 @@ export function RecipeDetailRouteAdapter() {
 }
 
 export function ImportsRouteAdapter() {
+  const { ingestion } = useLegacyApis();
   const router = useRouter();
+  const onUnauthorized = useUnauthorizedHandler();
   return (
     <AuthGate>
-      <ImportHistoryScreen onNewImport={() => router.push("/imports/new")} />
+      <ImportHistoryScreen
+        ingestion={ingestion}
+        onNewImport={() => router.push("/imports/new")}
+        onUnauthorized={onUnauthorized}
+      />
     </AuthGate>
   );
 }

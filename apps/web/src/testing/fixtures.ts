@@ -13,10 +13,13 @@ export const fixtureRecipe: Recipe = {
     { rawText: "2 cups tomatoes", name: "tomatoes", canonicalName: "tomatoes", quantity: 2, unit: "cups" },
     { rawText: "300 g pasta", name: "pasta", canonicalName: "pasta", quantity: 300, unit: "g" },
   ],
-  instructions: ["Boil the pasta.", "Simmer the tomatoes and combine."],
+  instructions: ["Boil the pasta for 10 minutes.", "Simmer the tomatoes and combine."],
   tags: ["weeknight", "vegetarian"],
   rating: 4,
   coverImage: null,
+  favorite: false,
+  personalNotes: null,
+  lastCookedAt: null,
 };
 
 export const fixtureRecipePage: RecipeQueryPage = {

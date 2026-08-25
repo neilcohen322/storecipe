@@ -36,6 +36,7 @@ const recipe: Recipe = {
     { rawText: "1 lemon", name: "lemon", canonicalName: "lemon" },
   ],
   instructions: ["Boil the pasta.", "Toss with lemon."], tags: ["quick", "pasta"], rating: 3, coverImage: null,
+  favorite: false, personalNotes: null, lastCookedAt: null,
 };
 const secondRecipe: Recipe = { ...recipe, id: "recipe-2", title: "Tomato risotto", rating: 2 };
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((next, fail) => { resolve = next; reject = fail; }); return { promise, resolve, reject }; }
@@ -46,6 +47,9 @@ function catalogWith(getRecipe: jest.Mock, putRating = jest.fn(), extras: Record
     getCoverImage: extras.getCoverImage ?? jest.fn().mockResolvedValue({ blob: null, etag: null, notModified: false }),
     uploadCoverImage: extras.uploadCoverImage ?? jest.fn(),
     deleteCoverImage: extras.deleteCoverImage ?? jest.fn(),
+    patchRecipe: extras.patchRecipe ?? jest.fn(),
+    deleteRecipe: extras.deleteRecipe ?? jest.fn(),
+    markRecipeCooked: extras.markRecipeCooked ?? jest.fn(),
   } as unknown as React.ComponentProps<typeof RecipeDetailScreen>["catalog"];
 }
 const actions = { onBack: jest.fn(), onUnauthorized: jest.fn() };
@@ -216,4 +220,123 @@ test("keeps the current cover while a replacement fails and cancels removal", as
   await fireEvent.press(screen.getByRole("button", { name: "Remove cover image" }));
   await fireEvent.press(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.getByRole("button", { name: "Replace cover image" })).toBeTruthy();
+});
+
+test("shows personal notes and last-cooked empty states", async () => {
+  const screen = await renderScreen(jest.fn().mockResolvedValue(recipe));
+  await waitFor(() => expect(screen.getByRole("header", { name: "Lemon pasta" })).toBeTruthy());
+  expect(screen.getByText("Not cooked yet")).toBeTruthy();
+  expect(screen.getByText("No personal notes yet.")).toBeTruthy();
+});
+
+test("marks a recipe cooked and displays the returned timestamp", async () => {
+  const markRecipeCooked = jest.fn().mockResolvedValue({ ...recipe, lastCookedAt: "2026-08-24T12:00:00.000Z" });
+  const screen = await render(
+    <RecipeDetailScreen
+      recipeId="recipe-1"
+      catalog={catalogWith(jest.fn().mockResolvedValue(recipe), jest.fn(), { markRecipeCooked })}
+      {...actions}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Mark as cooked" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Mark as cooked" }));
+  await waitFor(() => expect(markRecipeCooked).toHaveBeenCalledWith("recipe-1"));
+  await waitFor(() => expect(screen.getByText(/Last cooked/)).toBeTruthy());
+});
+
+test("edits a recipe through the shared form including personal notes", async () => {
+  const patchRecipe = jest.fn().mockResolvedValue({
+    ...recipe,
+    title: "Lemon pasta with basil",
+    personalNotes: "Salt the pasta water well.",
+  });
+  const screen = await render(
+    <RecipeDetailScreen
+      recipeId="recipe-1"
+      catalog={catalogWith(jest.fn().mockResolvedValue(recipe), jest.fn(), { patchRecipe })}
+      {...actions}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit recipe" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Edit recipe" }));
+  await fireEvent.changeText(screen.getByLabelText("Title"), "Lemon pasta with basil");
+  await fireEvent.changeText(screen.getByLabelText("Personal notes"), "Salt the pasta water well.");
+  await fireEvent.press(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(patchRecipe).toHaveBeenCalledWith("recipe-1", expect.objectContaining({
+    title: "Lemon pasta with basil",
+    personalNotes: "Salt the pasta water well.",
+    instructions: ["Boil the pasta.", "Toss with lemon."],
+  })));
+  await waitFor(() => expect(screen.getByRole("header", { name: "Lemon pasta with basil" })).toBeTruthy());
+  expect(screen.getByText("Salt the pasta water well.")).toBeTruthy();
+});
+
+test("requires the exact title before deleting a recipe", async () => {
+  const deleteRecipe = jest.fn().mockResolvedValue(undefined);
+  const screen = await render(
+    <RecipeDetailScreen
+      recipeId="recipe-1"
+      catalog={catalogWith(jest.fn().mockResolvedValue(recipe), jest.fn(), { deleteRecipe })}
+      {...actions}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Delete recipe" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Delete recipe" }));
+  expect(screen.getByRole("button", { name: "Delete this recipe" }).props.accessibilityState).toMatchObject({ disabled: true });
+  await fireEvent.changeText(screen.getByLabelText("Type Lemon pasta to confirm"), "lemon pasta");
+  expect(screen.getByRole("button", { name: "Delete this recipe" }).props.accessibilityState).toMatchObject({ disabled: true });
+  await fireEvent.changeText(screen.getByLabelText("Type Lemon pasta to confirm"), "Lemon pasta");
+  await fireEvent.press(screen.getByRole("button", { name: "Delete this recipe" }));
+  await waitFor(() => expect(deleteRecipe).toHaveBeenCalledWith("recipe-1"));
+  await waitFor(() => expect(actions.onBack).toHaveBeenCalledTimes(1));
+});
+
+test("scales agreed ingredient quantities without mutating uncertain lines", async () => {
+  const scalable: Recipe = {
+    ...recipe,
+    servings: 4,
+    ingredients: [
+      { rawText: "2 cups tomatoes", name: "tomatoes", canonicalName: "tomatoes", quantity: 2 },
+      { rawText: "200g spaghetti", name: "spaghetti", canonicalName: "spaghetti" },
+    ],
+  };
+  const screen = await render(
+    <RecipeDetailScreen recipeId="recipe-1" catalog={catalogWith(jest.fn().mockResolvedValue(scalable))} {...actions} />,
+  );
+  await waitFor(() => expect(screen.getByLabelText("2 cups tomatoes")).toBeTruthy());
+  expect(screen.getByLabelText("200g spaghetti")).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: "Increase servings" }));
+  await waitFor(() => expect(screen.getByLabelText("2 1/2 cups tomatoes")).toBeTruthy());
+  expect(screen.getByLabelText("200g spaghetti")).toBeTruthy();
+});
+
+test("shows Start cooking when the route provides a handler", async () => {
+  const onStartCooking = jest.fn();
+  const screen = await render(
+    <RecipeDetailScreen
+      recipeId="recipe-1"
+      catalog={catalogWith(jest.fn().mockResolvedValue(recipe))}
+      {...actions}
+      onStartCooking={onStartCooking}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Start cooking" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Start cooking" }));
+  expect(onStartCooking).toHaveBeenCalledTimes(1);
+});
+
+test("toggles favorite from detail without leaving the recipe", async () => {
+  const patchRecipe = jest.fn().mockResolvedValue({ ...recipe, favorite: true });
+  const screen = await render(
+    <RecipeDetailScreen
+      recipeId="recipe-1"
+      catalog={catalogWith(jest.fn().mockResolvedValue(recipe), jest.fn(), { patchRecipe })}
+      {...actions}
+    />,
+  );
+  await waitFor(() => expect(screen.getByRole("button", { name: "Add Lemon pasta to favorites" })).toBeTruthy());
+  await fireEvent.press(screen.getByRole("button", { name: "Add Lemon pasta to favorites" }));
+  await waitFor(() => expect(patchRecipe).toHaveBeenCalledWith("recipe-1", { favorite: true }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Remove Lemon pasta from favorites" })).toBeTruthy());
+  expect(actions.onBack).not.toHaveBeenCalled();
 });

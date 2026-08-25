@@ -11,6 +11,25 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /v1/account-deletions:
+    post:
+      operationId: requestAccountDeletion
+      description: Requires `account:delete`. The account subject is taken only from the JWT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AccountDeletionRequest"}
+      responses:
+        "202":
+          description: Deletion tombstone and durable job committed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AccountDeletionAccepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/recipes:
     get:
       operationId: queryRecipes
@@ -40,6 +59,10 @@ paths:
         - name: ratingState
           in: query
           schema: {type: string, enum: [any, rated, unrated], default: any}
+        - name: favorite
+          in: query
+          description: Favorites-only filter. Omit for all recipes; `false` is invalid.
+          schema: {type: boolean, const: true}
         - name: sort
           in: query
           style: form
@@ -64,6 +87,7 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "422": {$ref: "#/components/responses/ValidationError"}
         "409": {$ref: "#/components/responses/StaleRecipeQueryCursor"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
         "414": {$ref: "#/components/responses/UriTooLong"}
     post:
       operationId: createRecipe
@@ -89,6 +113,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "409": {$ref: "#/components/responses/IdempotencyConflict"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
         "413": {$ref: "#/components/responses/RequestTooLarge"}
         "422": {$ref: "#/components/responses/ValidationError"}
         "429": {$ref: "#/components/responses/CatalogRateLimited"}
@@ -104,6 +129,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
     patch:
       operationId: updateRecipe
       description: Requires the `recipes:write` scope.
@@ -117,6 +143,7 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
         "413": {$ref: "#/components/responses/RequestTooLarge"}
         "422": {$ref: "#/components/responses/ValidationError"}
         "429": {$ref: "#/components/responses/CatalogRateLimited"}
@@ -129,6 +156,21 @@ paths:
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
+        "429": {$ref: "#/components/responses/CatalogRateLimited"}
+        "503": {$ref: "#/components/responses/RateLimitUnavailable"}
+  /v1/recipes/{recipeId}/cooked:
+    parameters:
+      - {$ref: "#/components/parameters/RecipeId"}
+    post:
+      operationId: markRecipeCooked
+      description: Requires `recipes:write`; records the server time as the last cooked time.
+      responses:
+        "200": {description: Updated recipe, content: {application/json: {schema: {$ref: "#/components/schemas/Recipe"}}}}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
         "429": {$ref: "#/components/responses/CatalogRateLimited"}
         "503": {$ref: "#/components/responses/RateLimitUnavailable"}
   /v1/recipes/{recipeId}/cover-image:
@@ -262,6 +304,23 @@ paths:
         "403": {$ref: "#/components/responses/Forbidden"}
         "422": {$ref: "#/components/responses/ValidationError"}
         "503": {$ref: "#/components/responses/ServiceUnavailable"}
+  /v1/imports:
+    get:
+      operationId: listImports
+      description: Requires `recipes:read`; lists only retained owner metadata.
+      parameters:
+        - {name: cursor, in: query, schema: {type: [string, "null"], maxLength: 1024}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        "200":
+          description: Retained import history
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportHistoryPage"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
+        "422": {$ref: "#/components/responses/ValidationError"}
   /v1/imports/url:
     post:
       operationId: importRecipeFromUrl
@@ -294,6 +353,7 @@ paths:
               schema: {$ref: "#/components/schemas/ImportJob"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
         "409":
           description: >-
             `active_url_import_exists` includes `existingJobId`; `recipe_source_exists`
@@ -339,6 +399,7 @@ paths:
               schema: {$ref: "#/components/schemas/ImportJob"}
         "401": {$ref: "#/components/responses/Unauthorized"}
         "403": {$ref: "#/components/responses/Forbidden"}
+        "410": {$ref: "#/components/responses/AccountDeleted"}
         "409": {$ref: "#/components/responses/Conflict"}
         "429": {$ref: "#/components/responses/ImportBurstExceeded"}
         "413": {$ref: "#/components/responses/RequestTooLarge"}
@@ -466,6 +527,18 @@ components:
       content:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
+    AccountDeleted:
+      description: The authenticated subject is protected by a deletion tombstone.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+          example:
+            type: https://docs.storecipe.example/problems/account_deleted
+            title: Gone
+            status: 410
+            detail: This account has been deleted.
+            request_id: 01JEXAMPLEACCOUNTDELETED
+            errorCategory: account_deleted
     NotFound:
       description: Resource not found or not owned by the authenticated user
       content:
@@ -639,6 +712,18 @@ components:
         application/problem+json:
           schema: {$ref: "#/components/schemas/Problem"}
   schemas:
+    AccountDeletionRequest:
+      type: object
+      additionalProperties: false
+      required: [confirmation]
+      properties:
+        confirmation: {type: string, const: "DELETE MY ACCOUNT"}
+    AccountDeletionAccepted:
+      type: object
+      required: [deletionId, status]
+      properties:
+        deletionId: {type: string, format: uuid}
+        status: {type: string, enum: [pending, processing, completed]}
     RatingInput:
       type: object
       required: [value]
@@ -698,6 +783,8 @@ components:
           type: array
           maxItems: 64
           items: {type: string, minLength: 1, maxLength: 64}
+        favorite: {type: boolean}
+        personalNotes: {type: [string, "null"], maxLength: 5000}
     CoverImage:
       type: object
       required: [url, etag, byteSize, contentType]
@@ -708,7 +795,7 @@ components:
         contentType: {type: string, enum: [image/webp]}
     Recipe:
       type: object
-      required: [id, title, sourceUrl, servings, prepMinutes, cookMinutes, totalMinutes, ingredients, instructions, tags, rating, coverImage]
+      required: [id, title, sourceUrl, servings, prepMinutes, cookMinutes, totalMinutes, ingredients, instructions, tags, rating, coverImage, favorite, personalNotes, lastCookedAt]
       properties:
         id: {type: string, format: uuid}
         title: {type: string, minLength: 1, maxLength: 200}
@@ -725,6 +812,9 @@ components:
           anyOf:
             - {$ref: "#/components/schemas/CoverImage"}
             - {type: "null"}
+        favorite: {type: boolean}
+        personalNotes: {type: [string, "null"], maxLength: 5000}
+        lastCookedAt: {type: [string, "null"], format: date-time}
     Ingredient:
       type: object
       required: [rawText, name, canonicalName]
@@ -844,6 +934,23 @@ components:
         errorCategory: {type: [string, "null"]}
         cancellationRequested: {type: boolean}
         hasCandidate: {type: boolean}
+    ImportHistoryItem:
+      type: object
+      required: [id, inputKind, createdAt, updatedAt, terminalAt, status, phase]
+      properties:
+        id: {type: string, format: uuid}
+        inputKind: {type: string, enum: [url, text]}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        terminalAt: {type: [string, "null"], format: date-time}
+        status: {type: string, enum: [queued, processing, completed, review_required, failed, cancelled, timed_out]}
+        phase: {type: string, enum: [waiting, fetching, extracting, validating, saving, completed, review_required, failed, cancelled, timed_out]}
+    ImportHistoryPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/ImportHistoryItem"}}
+        nextCursor: {type: [string, "null"], maxLength: 1024}
     ImportReviewDraft:
       type: object
       required: [ingredients, instructions]

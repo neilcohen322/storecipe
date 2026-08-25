@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from ingestion.auth import Principal, require_scopes
@@ -13,11 +13,13 @@ from ingestion.problems import PROBLEM_TYPE_BASE, problem_response
 from ingestion.rate_limits import BurstLimiter, RateLimitDecision
 from ingestion.schemas import (
     ImportAccepted,
+    ImportHistoryPage,
     ImportJobView,
     ImportReviewDraft,
     TextImportRequest,
     UrlImportRequest,
 )
+from ingestion.services.account_deletions import AccountDeleted, AccountDeletionService
 from ingestion.services.imports import (
     ActiveUrlImportExists,
     ExistingRecipeSource,
@@ -26,6 +28,7 @@ from ingestion.services.imports import (
     ImportNotCancellable,
     ImportNotFound,
     ImportService,
+    InvalidImportHistoryCursor,
     SourceLookup,
     SourceLookupUnavailable,
 )
@@ -70,6 +73,22 @@ def _view(job: Any) -> ImportJobView:
         cancellation_requested=job.cancel_requested_at is not None,
         has_candidate=job.candidate_content_hash is not None,
     )
+
+
+def _account_deleted_response(request: Request) -> Response:
+    return problem_response(
+        request,
+        status.HTTP_410_GONE,
+        detail="The account has been deleted.",
+        problem_type=f"{PROBLEM_TYPE_BASE}/account-deleted",
+        extra={"errorCategory": "account_deleted"},
+    )
+
+
+async def _fast_reject_deleted(request: Request, session: Any, subject: str) -> Response | None:
+    if await AccountDeletionService(session).is_deleted(subject):
+        return _account_deleted_response(request)
+    return None
 
 
 async def _admit_import(request: Request, response: Response, subject: str) -> Response | None:
@@ -121,6 +140,9 @@ async def submit_url(
     session: Annotated[Any, Depends(get_session)],
     idempotency_key: IdempotencyKey = None,
 ) -> ImportAccepted | ImportJobView | Response:
+    deleted = await _fast_reject_deleted(request, session, principal.subject)
+    if deleted is not None:
+        return deleted
     rejection = await _admit_import(request, response, principal.subject)
     if rejection is not None:
         return rejection
@@ -137,6 +159,8 @@ async def submit_url(
             status_code=status.HTTP_409_CONFLICT,
             detail="Idempotency key is already used for a different request.",
         ) from exc
+    except AccountDeleted:
+        return _account_deleted_response(request)
     except ActiveUrlImportExists as exc:
         return problem_response(
             request,
@@ -187,6 +211,9 @@ async def submit_text(
     session: Annotated[Any, Depends(get_session)],
     idempotency_key: IdempotencyKey = None,
 ) -> ImportAccepted | ImportJobView | Response:
+    deleted = await _fast_reject_deleted(request, session, principal.subject)
+    if deleted is not None:
+        return deleted
     rejection = await _admit_import(request, response, principal.subject)
     if rejection is not None:
         return rejection
@@ -198,11 +225,37 @@ async def submit_text(
             status_code=status.HTTP_409_CONFLICT,
             detail="Idempotency key is already used for a different request.",
         ) from exc
+    except AccountDeleted:
+        return _account_deleted_response(request)
     response.headers["Location"] = f"/v1/imports/{result.job.id}"
     if result.replayed:
         response.status_code = status.HTTP_200_OK
         return _view(result.job)
     return _accepted(result.job.id, result.job.status)
+
+
+@router.get("", response_model=ImportHistoryPage)
+async def list_imports(
+    request: Request,
+    principal: ReadPrincipal,
+    session: Annotated[Any, Depends(get_session)],
+    cursor: Annotated[str | None, Query(max_length=1024)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> ImportHistoryPage | Response:
+    deleted = await _fast_reject_deleted(request, session, principal.subject)
+    if deleted is not None:
+        return deleted
+    try:
+        return await _service(request, session).list_history(
+            principal.subject,
+            cursor=cursor,
+            limit=limit,
+        )
+    except InvalidImportHistoryCursor as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid import history cursor.",
+        ) from exc
 
 
 @router.get("/{job_id}", response_model=ImportJobView)
@@ -211,7 +264,10 @@ async def get_import(
     request: Request,
     principal: ReadPrincipal,
     session: Annotated[Any, Depends(get_session)],
-) -> ImportJobView:
+) -> ImportJobView | Response:
+    deleted = await _fast_reject_deleted(request, session, principal.subject)
+    if deleted is not None:
+        return deleted
     try:
         job = await _service(request, session).get(principal.subject, job_id)
     except ImportNotFound as exc:
@@ -228,7 +284,10 @@ async def get_import_draft(
     request: Request,
     principal: ReadPrincipal,
     session: Annotated[Any, Depends(get_session)],
-) -> ImportReviewDraft:
+) -> ImportReviewDraft | Response:
+    deleted = await _fast_reject_deleted(request, session, principal.subject)
+    if deleted is not None:
+        return deleted
     try:
         return await _service(request, session).get_review_draft(principal.subject, job_id)
     except (ImportNotFound, ImportDraftUnavailable) as exc:
@@ -245,6 +304,9 @@ async def cancel_import(
     principal: WritePrincipal,
     session: Annotated[Any, Depends(get_session)],
 ) -> Response:
+    deleted = await _fast_reject_deleted(request, session, principal.subject)
+    if deleted is not None:
+        return deleted
     try:
         job, cooperative = await _service(request, session).cancel(principal.subject, job_id)
     except ImportNotFound as exc:

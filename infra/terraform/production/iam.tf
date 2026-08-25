@@ -33,6 +33,37 @@ resource "google_storage_bucket_iam_member" "runtime_backup" {
   member = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+resource "google_project_iam_custom_role" "account_deletion_journal_runtime" {
+  project     = var.project_id
+  role_id     = "storecipeAccountDeletionJournalRuntime"
+  title       = "Storecipe account-deletion journal runtime"
+  description = "Write, list, read, and delete completed account-deletion journal objects after retention."
+  permissions = [
+    "storage.objects.create",
+    "storage.objects.get",
+    "storage.objects.list",
+    "storage.objects.delete",
+  ]
+}
+
+resource "google_storage_bucket_iam_member" "runtime_account_deletion_journal" {
+  bucket = google_storage_bucket.account_deletion_journal.name
+  role   = google_project_iam_custom_role.account_deletion_journal_runtime.name
+  member = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_project_iam_member" "runtime_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_project_iam_member" "runtime_metric_writer" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
 resource "google_service_account_iam_member" "deploy_wif" {
   service_account_id = google_service_account.deploy.name
   role               = "roles/iam.workloadIdentityUser"

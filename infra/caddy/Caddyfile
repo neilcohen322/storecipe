@@ -1,6 +1,15 @@
 {$PUBLIC_HOST:localhost} {
     encode zstd gzip
 
+    header {
+        -Server
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; connect-src 'self' {$AUTH0_ISSUER}; frame-src {$AUTH0_ISSUER}; worker-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self' {$AUTH0_ISSUER}; manifest-src 'self'"
+        Permissions-Policy "camera=(), geolocation=(), microphone=()"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+    }
+
     # Routes mirror contracts/openapi.yaml: one public host, /v1/* paths split
     # by resource owner (contracts/ownership.md). Imports belong to Ingestion;
     # every other /v1 resource belongs to Catalog. handle blocks are mutually
@@ -23,7 +32,24 @@
         reverse_proxy mcp-gateway:8002
     }
 
-    # The internal catalog route is intentionally not proxied.
+    handle /health/ready {
+        reverse_proxy mcp-gateway:8002 {
+            @ready status 2xx
+            handle_response @ready {
+                respond "ready" 200
+            }
+
+            handle_response {
+                respond "unavailable" 503
+            }
+        }
+    }
+
+    # Internal service routes must never fall through to the public SPA.
+    handle /internal* {
+        respond 404
+    }
+
     handle {
         root * /srv/web
         try_files {path} /index.html

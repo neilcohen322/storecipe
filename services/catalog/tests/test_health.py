@@ -175,6 +175,9 @@ async def test_catalog_shutdown_redis_failure_does_not_prevent_engine_disposal(
 ) -> None:
     engine = _FakeEngine()
     settings = SimpleNamespace(
+        environment="development",
+        account_deletion_configured=False,
+        account_deletion_journal_bucket="",
         redis_url="redis://test",
         recipe_query_cache_ttl_seconds=1800,
         redis_timeout_seconds=1.0,

@@ -8,8 +8,13 @@ import { linkItems } from "../navigation/registry";
 import type { LayoutMode } from "../navigation/types";
 import { useTheme } from "../theme/ThemeProvider";
 import { getTheme } from "../theme/tokens";
+import { webDataset } from "../utils/webDataset";
 import { BottomNavigation, COMPACT_NAVIGATION_HEIGHT } from "./BottomNavigation";
 import { Sidebar } from "./Sidebar";
+
+export function isCookingPath(pathname: string): boolean {
+  return /^\/recipes\/[^/]+\/cook\/?$/.test(pathname);
+}
 
 const SIDEBAR_STORAGE_KEY = "storecipe.sidebar-collapsed";
 const layoutBreakpoints = getTheme("light").breakpoints;
@@ -33,7 +38,7 @@ export function getLayoutMode(width: number): LayoutMode {
 export function AppShell({ children, viewportWidth }: PropsWithChildren<{ viewportWidth?: number }>) {
   const { width } = useWindowDimensions();
   const mode = getLayoutMode(viewportWidth ?? width);
-  const { theme } = useTheme();
+  const { theme, resolvedScheme } = useTheme();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const router = useRouter();
@@ -44,7 +49,15 @@ export function AppShell({ children, viewportWidth }: PropsWithChildren<{ viewpo
     persistCollapsedPreference(next);
     return next;
   });
+  const cooking = isCookingPath(pathname);
   const content = <View testID="app-shell-content" style={styles.content}>{children}</View>;
+  if (cooking) {
+    return (
+      <View testID={`app-shell-${mode}`} style={[mode === "compact" ? styles.compact : styles.desktop, { backgroundColor: theme.colors.canvas }]}>
+        {content}
+      </View>
+    );
+  }
   if (mode === "compact") {
     return (
       <View testID="app-shell-compact" style={[styles.compact, { backgroundColor: theme.colors.canvas, paddingBottom: insets.bottom + COMPACT_NAVIGATION_HEIGHT }]}>
@@ -55,7 +68,7 @@ export function AppShell({ children, viewportWidth }: PropsWithChildren<{ viewpo
   }
   return (
     <View testID={`app-shell-${mode}`} style={[styles.desktop, { backgroundColor: theme.colors.canvas }]}>
-      <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
+      <Sidebar collapsed={collapsed} onToggle={toggleSidebar} showLineArt={mode === "expanded" && resolvedScheme === "light"} />
       <View style={[styles.canvas, { paddingTop: insets.top + theme.spacing.md, paddingRight: insets.right + theme.spacing.lg, paddingBottom: insets.bottom + theme.spacing.lg, paddingLeft: theme.spacing.lg }]}>
         {create && pathname !== create.href ? (
           <Pressable
@@ -64,6 +77,7 @@ export function AppShell({ children, viewportWidth }: PropsWithChildren<{ viewpo
             accessibilityLabel={create.label}
             onPress={() => router.push(create.href)}
             style={[styles.createAction, { backgroundColor: theme.colors.accent }]}
+            {...webDataset({ printHide: true })}
           >
             <Ionicons name={create.icon} size={theme.sizing.icon} color={theme.colors.accentContrast} />
           </Pressable>

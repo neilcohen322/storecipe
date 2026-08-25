@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 test("renders the responsive shell, restores history, and has no serious accessibility violations", async ({ page }, testInfo) => {
   const errors = captureConsoleErrors(page);
   await page.goto("/recipes?text=pasta&ingredient=tomato&ingredient=garlic&tag=weeknight&tag=vegetarian&maxTotalMinutes=30&minRating=4&ratingState=rated&sort=rating%3Adesc");
-  await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your cookbook" })).toBeVisible();
   await expect(page.getByLabel("Search recipes")).toHaveValue("pasta");
   await expect(page.getByRole("button", { name: "Filters (7)" })).toBeVisible();
   await page.getByRole("button", { name: "Filters (7)" }).click();
@@ -45,7 +45,7 @@ test("renders the responsive shell, restores history, and has no serious accessi
 
 test("supports keyboard navigation with visible focus", async ({ page }) => {
   await page.goto("/recipes");
-  await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your cookbook" })).toBeVisible();
   await page.keyboard.press("Tab");
   const focused = page.locator(":focus");
   await expect(focused).toBeVisible();

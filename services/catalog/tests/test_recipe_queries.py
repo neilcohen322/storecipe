@@ -193,6 +193,28 @@ def test_empty_query_request_is_valid() -> None:
     assert request.limit == 20
 
 
+def test_query_accepts_only_the_true_favorite_filter() -> None:
+    assert RecipeQueryRequest(favorite=True).favorite is True
+    with pytest.raises(ValidationError, match="favorite"):
+        RecipeQueryRequest(favorite=False)
+
+
+def test_default_query_keeps_frozen_v2_bytes_and_live_sha256() -> None:
+    import hashlib
+
+    golden = (
+        b'{"cursor":null,"ingredients":[],"limit":20,"max_total_minutes":null,'
+        b'"min_rating":null,"rating_state":"any","sort":[],"tags":[],"text":null}'
+    )
+
+    assert canonical_query_json(RecipeQueryRequest()) == golden
+    assert recipe_query_hash(RecipeQueryRequest()) == hashlib.sha256(golden).hexdigest()
+
+    favorite = RecipeQueryRequest(favorite=True)
+    assert canonical_query_json(favorite) != golden
+    assert recipe_query_hash(favorite) != hashlib.sha256(golden).hexdigest()
+
+
 def test_canonical_query_json_is_complete_compact_and_ordered() -> None:
     request = RecipeQueryRequest(
         max_total_minutes=30,

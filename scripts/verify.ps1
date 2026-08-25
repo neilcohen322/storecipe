@@ -87,7 +87,8 @@ if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
             $repoPath = (Resolve-Path .).Path
             docker run --rm --mount "type=bind,source=$repoPath,target=/repo,readonly" `
                 bash:5.3 bash -n /repo/scripts/deploy/deploy.sh /repo/scripts/deploy/backup.sh `
-                /repo/scripts/deploy/restore_verify.sh /repo/scripts/deploy/run_with_runtime_env.sh
+                /repo/scripts/deploy/restore_verify.sh /repo/scripts/deploy/verify_restore_local.sh `
+                /repo/scripts/deploy/run_with_runtime_env.sh
         }
         Invoke-Step 'Terraform formatting' {
             $repoPath = (Resolve-Path .).Path
@@ -116,6 +117,9 @@ if ($null -eq (Get-Command docker -ErrorAction SilentlyContinue)) {
                 --build-arg EXPO_PUBLIC_AUTH0_AUDIENCE=https://storecipe.example/api `
                 --build-arg EXPO_PUBLIC_CATALOG_API_URL=https://storecipe.example `
                 --build-arg EXPO_PUBLIC_INGESTION_API_URL=https://storecipe.example `
+                --build-arg "EXPO_PUBLIC_LEGAL_OPERATOR_NAME=Storecipe Verification Operator" `
+                --build-arg EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL=privacy@storecipe.test `
+                --build-arg EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE=2026-01-01 `
                 -t storecipe-web:verify .
         }
     }
@@ -176,6 +180,9 @@ try {
             'EXPO_PUBLIC_AUTH0_AUDIENCE',
             'EXPO_PUBLIC_CATALOG_API_URL',
             'EXPO_PUBLIC_INGESTION_API_URL',
+            'EXPO_PUBLIC_LEGAL_OPERATOR_NAME',
+            'EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL',
+            'EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE',
             'EXPO_PUBLIC_E2E_MODE'
         )
         $saved = @{}
@@ -188,6 +195,9 @@ try {
             $env:EXPO_PUBLIC_AUTH0_AUDIENCE = 'https://storecipe.example/api'
             $env:EXPO_PUBLIC_CATALOG_API_URL = 'https://storecipe.example'
             $env:EXPO_PUBLIC_INGESTION_API_URL = 'https://storecipe.example'
+            $env:EXPO_PUBLIC_LEGAL_OPERATOR_NAME = 'Storecipe Verification Operator'
+            $env:EXPO_PUBLIC_PRIVACY_CONTACT_EMAIL = 'privacy@storecipe.test'
+            $env:EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE = '2026-01-01'
             Remove-Item Env:EXPO_PUBLIC_E2E_MODE -ErrorAction SilentlyContinue
             pnpm run test:production-bundle
         } finally {

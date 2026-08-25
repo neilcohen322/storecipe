@@ -101,6 +101,8 @@ class CatalogRecipeCreate(ApiModel):
 
 
 class RecipeView(ApiModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: UUID
     title: Title
     source_url: SourceUrl

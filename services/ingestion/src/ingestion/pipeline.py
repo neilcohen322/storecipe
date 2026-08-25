@@ -56,6 +56,7 @@ from ingestion.models import (
     LlmOperationKind,
 )
 from ingestion.orchestration import LeaseToken, StaleLease
+from ingestion.repositories.account_deletions import AccountDeletionRepository
 from ingestion.repositories.budgets import AiBudgetRepository, BudgetExceeded
 from ingestion.repositories.imports import MAX_PIPELINE_PAYLOAD_BYTES, ImportRepository
 from ingestion.server_rendered_variants import (
@@ -63,6 +64,7 @@ from ingestion.server_rendered_variants import (
     ShellReason,
     classify_shell,
 )
+from ingestion.services.account_deletions import AccountDeleted
 from ingestion.telemetry import ImportEvent, emit_import_event
 
 PROVIDER_ATTEMPT_SECONDS = 60
@@ -147,13 +149,17 @@ class ImportPipeline:
         self._budgets = budgets
         self._budget_policy = budget_policy
         self._normalization_budget_policy = normalization_budget_policy
+        self._account_deletions = AccountDeletionRepository(repository.session)
+        self._owner_subject: str | None = None
 
     async def run(self, job_id: UUID, lease_token: LeaseToken, adapters: ImportAdapters) -> None:
         if job_id != lease_token.job_id:
             raise ValueError("job id does not match the lease token")
         job = await self._repository.get_job_for_lease(lease_token)
+        self._owner_subject = job.owner_subject
         if job.status is not ImportStatus.PROCESSING:
             return
+        await self._lock_and_require_active_subject()
         if await self._finish_if_cancelled_or_timed_out(job, lease_token):
             return
         if job.stage is ImportStage.QUEUED:
@@ -250,6 +256,19 @@ class ImportPipeline:
                 ),
             )
             raise
+        except AccountDeleted:
+            emit_import_event(
+                logger,
+                ImportEvent(
+                    name="stage.aborted",
+                    job_id=str(job_id),
+                    dispatch_generation=token.generation,
+                    stage=stage.value,
+                    elapsed_ms=max(0, int((time.monotonic() - started) * 1000)),
+                    error_category="account_deleted",
+                ),
+            )
+            raise
         job = await self._repository.session.get(ImportJob, job_id)
         if job is None:
             return
@@ -280,6 +299,7 @@ class ImportPipeline:
         )
 
     async def _checkpoint_source(self, job_id: UUID, token: LeaseToken, fetcher: Fetcher) -> None:
+        await self._lock_and_require_active_subject()
         job = await self._repository.get_job_for_lease(token)
         retained = await self._repository.load_payload(job_id, "fetched", self._payload_cipher)
         checkpoint_hash: str
@@ -325,6 +345,7 @@ class ImportPipeline:
                         byte_count=len(plaintext),
                     )
             except FetchError as error:
+                await self._lock_and_require_active_subject()
                 if self._fetch_failure_retryable(error) and job.fetch_count < 2:
                     await self._repository.schedule_retry(
                         token,
@@ -340,6 +361,7 @@ class ImportPipeline:
                     )
                 await self._commit()
                 return
+            await self._lock_and_require_active_subject()
             if classify_access_challenge(source) is not None:
                 await self._repository.finish_terminal(
                     token,
@@ -368,6 +390,7 @@ class ImportPipeline:
     async def _run_deterministic(
         self, job_id: UUID, token: LeaseToken, adapters: ImportAdapters
     ) -> None:
+        await self._lock_and_require_active_subject()
         job = await self._repository.get_job_for_lease(token)
         if (
             job.candidate_content_hash is not None
@@ -399,6 +422,7 @@ class ImportPipeline:
         document = await self._load_document(job_id, token, emit_variant_checkpoint_event=True)
         await self._commit()
         if classify_access_challenge(document) is not None:
+            await self._lock_and_require_active_subject()
             await self._repository.finish_terminal(
                 token,
                 ImportStatus.FAILED,
@@ -439,6 +463,7 @@ class ImportPipeline:
                             }:
                                 return
         if failure is not None:
+            await self._lock_and_require_active_subject()
             if failure.candidate is not None:
                 try:
                     payload = self._serialize_candidate(failure.candidate)
@@ -484,6 +509,7 @@ class ImportPipeline:
         adapters: ImportAdapters,
         deterministic: DeterministicRecipeCandidate,
     ) -> None:
+        await self._lock_and_require_active_subject()
         job = await self._repository.get_job_for_lease(token)
         normalizer = adapters.normalizer
         if normalizer is None:
@@ -603,6 +629,7 @@ class ImportPipeline:
                 )
             return
         await self._commit()
+        await self._lock_and_require_active_subject()
         provider_attempt = await self._repository.adopt_provider_attempt(
             token, attempt.operation_id, stage=ImportStage.EXTRACTING
         )
@@ -612,6 +639,7 @@ class ImportPipeline:
             )
             await self._commit()
             return
+        await self._commit()
         raw_lines = [line.raw_text for line in deterministic.ingredients]
         try:
             outcome = await normalizer.normalize(raw_lines)
@@ -620,6 +648,7 @@ class ImportPipeline:
                 token, provider_attempt, reservation.invocation_id, error, deterministic
             )
             return
+        await self._lock_and_require_active_subject()
         normalized_items = outcome.items
         usage = outcome.usage
         model_name = outcome.model
@@ -665,6 +694,7 @@ class ImportPipeline:
                 status=ImportStatus.PROCESSING.value,
             ),
         )
+        await self._lock_and_require_active_subject()
         await self._repository.adopt_provider_success(
             token,
             provider_attempt.operation_id,
@@ -702,6 +732,7 @@ class ImportPipeline:
 
         assert isinstance(attempt, ProviderAttempt)
         assert self._budgets is not None
+        await self._lock_and_require_active_subject()
         category, retryable = self._normalization_failure(error)
         review_required = category in {
             "provider_invalid_output",
@@ -789,6 +820,7 @@ class ImportPipeline:
             source_host=source_host,
             started=started,
         )
+        await self._lock_and_require_active_subject()
         if not await self._repository.reserve_variant_fetch(token):
             await self._commit()
             return None
@@ -806,6 +838,7 @@ class ImportPipeline:
         try:
             fetched = await adapters.fetcher.fetch(candidate_url)
         except FetchError as error:
+            await self._lock_and_require_active_subject()
             recorded = await self._repository.record_variant_fetch_failure(token, error.code.value)
             await self._commit()
             if recorded:
@@ -818,6 +851,7 @@ class ImportPipeline:
                     error_category=error.code.value,
                 )
             return None
+        await self._lock_and_require_active_subject()
         if classify_access_challenge(fetched) is not None:
             recorded = await self._repository.record_variant_fetch_failure(
                 token, FetchFailureCode.ACCESS_DENIED.value
@@ -864,6 +898,7 @@ class ImportPipeline:
     async def _run_model(
         self, job_id: UUID, token: LeaseToken, extractor: ModelExtractor | None
     ) -> None:
+        await self._lock_and_require_active_subject()
         job = await self._repository.get_job_for_lease(token)
         if (
             job.candidate_content_hash is not None
@@ -957,6 +992,7 @@ class ImportPipeline:
         except BudgetExceeded:
             await self._repository.session.rollback()
             job = await self._repository.get_job_for_lease(token)
+            await self._lock_and_require_active_subject()
             await self._repository.finish_terminal(
                 token,
                 ImportStatus.REVIEW_REQUIRED,
@@ -1017,6 +1053,7 @@ class ImportPipeline:
                 )
             return
         await self._commit()
+        await self._lock_and_require_active_subject()
         provider_attempt = await self._repository.adopt_provider_attempt(
             token, attempt.operation_id
         )
@@ -1029,6 +1066,7 @@ class ImportPipeline:
         document = await self._load_document(job_id, token)
         await self._commit()
         if classify_access_challenge(document) is not None:
+            await self._lock_and_require_active_subject()
             await self._repository.finish_terminal(
                 token,
                 ImportStatus.FAILED,
@@ -1049,6 +1087,7 @@ class ImportPipeline:
                 token, provider_attempt, reservation.invocation_id, error
             )
             return
+        await self._lock_and_require_active_subject()
         if not self._usage_is_consistent(result.usage):
             await self._handle_provider_failure(
                 token,
@@ -1097,6 +1136,7 @@ class ImportPipeline:
                 status=ImportStatus.PROCESSING.value,
             ),
         )
+        await self._lock_and_require_active_subject()
         await self._repository.adopt_provider_success(
             token,
             provider_attempt.operation_id,
@@ -1111,6 +1151,7 @@ class ImportPipeline:
 
         assert isinstance(attempt, ProviderAttempt)
         assert self._budgets is not None
+        await self._lock_and_require_active_subject()
         category, retryable = self._provider_failure(error)
         await self._repository.fail_provider_attempt(
             token, attempt.operation_id, outcome_category=category
@@ -1259,6 +1300,7 @@ class ImportPipeline:
     async def _run_catalog(self, job_id: UUID, token: LeaseToken, catalog: CatalogGateway) -> None:
         """Reserve, execute, and finalize the idempotent Catalog handoff."""
 
+        await self._lock_and_require_active_subject()
         job = await self._repository.get_job_for_lease(token)
         if job.cancel_requested_at is not None:
             await self._repository.finish_cancelled(token)
@@ -1318,6 +1360,7 @@ class ImportPipeline:
             job_id, "candidate", self._payload_cipher
         )
         if candidate_payload is None:
+            await self._lock_and_require_active_subject()
             await self._repository.fail_catalog_attempt(
                 token, adopted.operation_id, outcome_category="candidate_checkpoint_missing"
             )
@@ -1351,6 +1394,7 @@ class ImportPipeline:
                 candidate,
             )
         except CatalogError as error:
+            await self._lock_and_require_active_subject()
             category = error.code.value
             await self._repository.fail_catalog_attempt(
                 token, adopted.operation_id, outcome_category=category
@@ -1385,6 +1429,7 @@ class ImportPipeline:
             )
             return
         except (TimeoutError, aiohttp.ClientError):
+            await self._lock_and_require_active_subject()
             await self._repository.fail_catalog_attempt(
                 token, adopted.operation_id, outcome_category="catalog_transport"
             )
@@ -1407,6 +1452,7 @@ class ImportPipeline:
                 ),
             )
             return
+        await self._lock_and_require_active_subject()
         await self._repository.attach_catalog_success(
             token, adopted.operation_id, catalog_recipe_id=recipe_id
         )
@@ -1432,6 +1478,7 @@ class ImportPipeline:
         from ingestion.models import ImportJob
 
         if isinstance(job, ImportJob) and job.cancel_requested_at is not None:
+            await self._lock_and_require_active_subject()
             await self._repository.finish_cancelled(token)
             await self._commit()
             return True
@@ -1448,12 +1495,23 @@ class ImportPipeline:
             job.deadline_at, datetime.now(UTC)
         ):
             return False
+        await self._lock_and_require_active_subject()
         await self._repository.finish_pre_catalog_timeout(token)
         await self._commit()
         return True
 
     async def _commit(self) -> None:
+        await self._lock_and_require_active_subject()
         await self._repository.session.commit()
+
+    async def _lock_and_require_active_subject(self) -> None:
+        owner_subject = self._owner_subject
+        if owner_subject is None:
+            raise RuntimeError("import owner is unavailable")
+        await self._account_deletions.acquire_subject_lock(owner_subject)
+        if await self._account_deletions.is_tombstoned(owner_subject):
+            await self._repository.session.rollback()
+            raise AccountDeleted
 
     async def _finish_review_required_with_draft(
         self,
@@ -1461,6 +1519,7 @@ class ImportPipeline:
         deterministic: DeterministicRecipeCandidate,
         error_category: str,
     ) -> None:
+        await self._lock_and_require_active_subject()
         try:
             payload = self._serialize_candidate(review_draft_from_deterministic(deterministic))
             checkpoint_hash = await self._repository.store_pipeline_payload(

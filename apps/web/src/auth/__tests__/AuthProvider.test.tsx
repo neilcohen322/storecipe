@@ -24,9 +24,12 @@ function LoginButton() {
 }
 
 let readAccessToken: (() => Promise<string>) | undefined;
+let readAccountDeletionAccessToken: (() => Promise<string>) | undefined;
 
 function TokenProbe() {
-  readAccessToken = useAuth().getAccessToken;
+  const auth = useAuth();
+  readAccessToken = auth.getAccessToken;
+  readAccountDeletionAccessToken = auth.getAccountDeletionAccessToken;
   return null;
 }
 
@@ -87,8 +90,23 @@ test("starts Auth0-hosted Google login with the API scope and web redirect", asy
     audience: "https://api.test",
     connection: "google-oauth2",
     redirectUrl: "https://storecipe.test",
-    scope: "openid profile email offline_access recipes:read recipes:write ratings:write",
+    scope: "openid profile email offline_access recipes:read recipes:write ratings:write account:delete",
   });
+});
+
+test("gets a deletion token with only the deletion scope without changing ordinary token requests", async () => {
+  process.env.EXPO_PUBLIC_AUTH0_DOMAIN = "tenant.auth0.com";
+  process.env.EXPO_PUBLIC_AUTH0_CLIENT_ID = "client-id";
+  process.env.EXPO_PUBLIC_AUTH0_AUDIENCE = "https://api.test";
+  const getApiCredentials = jest.fn().mockResolvedValue({ accessToken: "deletion-token" });
+  useAuth0.mockReturnValue({ user: { sub: "auth0|recipe-owner" }, isLoading: false, error: null, authorize: mockAuthorize, clearSession: jest.fn(), getCredentials: jest.fn(), getApiCredentials });
+
+  await render(<AuthProvider><TokenProbe /></AuthProvider>);
+  await expect(readAccessToken?.()).resolves.toBe("deletion-token");
+  await expect(readAccountDeletionAccessToken?.()).resolves.toBe("deletion-token");
+
+  expect(getApiCredentials).toHaveBeenNthCalledWith(1, "https://api.test", "openid profile email offline_access recipes:read recipes:write ratings:write");
+  expect(getApiCredentials).toHaveBeenNthCalledWith(2, "https://api.test", "account:delete");
 });
 
 test.each(["web", "ios"] as const)(

@@ -150,6 +150,8 @@ swapon --show=NAME --noheadings | grep -q . || { echo "Active swap is required" 
 
 source /etc/storecipe-host.conf
 : "${RUNTIME_SECRET_NAME:?RUNTIME_SECRET_NAME is required}"
+: "${CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET:?host journal bucket binding is required}"
+HOST_ACCOUNT_DELETION_JOURNAL_BUCKET=$CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET
 install -d -m 0750 -o root -g root /run/storecipe /opt/storecipe/releases
 gcloud secrets versions access latest --secret "$RUNTIME_SECRET_NAME" > "$RUNTIME_ENV"
 chmod 0600 "$RUNTIME_ENV"
@@ -164,6 +166,7 @@ required_names=(
   INGESTION_PAYLOAD_ACTIVE_KEY_ID INGESTION_PAYLOAD_KEYRING PUBLIC_ORIGIN PUBLIC_HOST
   CATALOG_M2M_TOKEN_URL CATALOG_M2M_CLIENT_ID CATALOG_M2M_CLIENT_SECRET
   AUTH0_ISSUER AUTH0_AUDIENCE OPENROUTER_API_KEY CATALOG_MEDIA_BUCKET
+  CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET
   MCP_RESOURCE_URL MCP_OBO_CLIENT_ID MCP_OBO_CLIENT_SECRET
 )
 for name in "${required_names[@]}"; do
@@ -184,6 +187,11 @@ set -a
 # shellcheck disable=SC1090
 source "$RUNTIME_ENV"
 set +a
+
+if [[ $CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET != "$HOST_ACCOUNT_DELETION_JOURNAL_BUCKET" ]]; then
+  echo "Runtime deletion-journal bucket does not match the Terraform host binding" >&2
+  exit 1
+fi
 
 manifest_origin=$(jq -r '.public.origin' "$TARGET_MANIFEST")
 manifest_audience=$(jq -r '.public.api_audience' "$TARGET_MANIFEST")
@@ -246,7 +254,14 @@ if ! run_step "Ingestion migration" compose --profile migration run --rm --no-de
 fi
 MIGRATIONS_APPLIED=catalog-and-ingestion
 
+# The old application containers remain stopped while this one-off process reapplies
+# every active, private deletion record to restored database state.
 STACK_CHANGED=1
+run_step "stop previous application services" compose stop "${APP_SERVICES[@]}"
+run_step "account-deletion journal replay" compose --profile migration run --rm --no-deps \
+  -e CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET -e INGESTION_DATABASE_URL \
+  catalog-migrate python -m catalog.deletion_journal_replay
+
 run_step "start target release" compose up -d --remove-orphans
 run_step "container readiness" wait_for_healthy
 run_step "local Host routing" wait_for_local_https
