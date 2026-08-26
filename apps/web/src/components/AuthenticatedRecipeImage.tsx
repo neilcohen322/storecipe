@@ -3,6 +3,14 @@ import { Image } from "react-native";
 
 import type { CoverImageResponse } from "../api/catalog";
 
+const OBJECT_URL_REVOKE_DELAY_MS = 1_000;
+
+function revokeObjectUrlAfterBrowserUse(objectUrl: string): void {
+  // React can unmount an image before Chromium has consumed its blob URL.
+  // Immediate revocation makes that normal transition surface as ERR_FILE_NOT_FOUND.
+  setTimeout(() => URL.revokeObjectURL(objectUrl), OBJECT_URL_REVOKE_DELAY_MS);
+}
+
 export type CoverImageLoader = (args: {
   recipeId: string;
   url: string;
@@ -66,7 +74,7 @@ export function AuthenticatedRecipeImage({
         }
         createdUrl = URL.createObjectURL(result.blob);
         if (objectUrlRef.current && objectUrlRef.current !== createdUrl) {
-          URL.revokeObjectURL(objectUrlRef.current);
+          revokeObjectUrlAfterBrowserUse(objectUrlRef.current);
         }
         objectUrlRef.current = createdUrl;
         cacheRef.current = { recipeId, etag: result.etag ?? etag, objectUrl: createdUrl };
@@ -90,7 +98,7 @@ export function AuthenticatedRecipeImage({
       return;
     }
     return () => {
-      URL.revokeObjectURL(objectUrl);
+      revokeObjectUrlAfterBrowserUse(objectUrl);
       if (objectUrlRef.current === objectUrl) {
         objectUrlRef.current = null;
       }
