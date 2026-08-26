@@ -77,7 +77,8 @@ test("first load is unconditional; 304 is used only after bytes are cached", asy
   await act(async () => {
     screen.unmount();
   });
-  expect(revoked.length).toBeGreaterThan(0);
+  expect(revoked).toEqual([]);
+  await waitFor(() => expect(revoked).toEqual(created), { timeout: 2_000 });
 });
 
 test("304 without cached bytes stays on the placeholder", async () => {
