@@ -10,6 +10,9 @@ INSTALL = ROOT / "scripts" / "deploy" / "install_host.sh"
 STARTUP = ROOT / "infra" / "terraform" / "production" / "templates" / "startup.sh.tftpl"
 RUNTIME_OPERATION = ROOT / "scripts" / "deploy" / "run_with_runtime_env.sh"
 BOOTSTRAP_TLS = ROOT / "scripts" / "deploy" / "start_bootstrap_tls.sh"
+CADDY_IMAGE = (
+    "caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
+)
 
 
 def test_host_uses_retained_data_disk_for_docker_and_two_gb_swap() -> None:
@@ -74,10 +77,7 @@ def test_bootstrap_tls_is_hostname_bounded_and_reuses_production_caddy_data() ->
     assert "^[a-z0-9]" in text
     assert "-p 80:80 -p 443:443" in text
     assert "storecipe-production_caddy-data:/data" in text
-    assert (
-        "caddy:2.11.4-alpine@sha256:"
-        "5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
-    ) in text
+    assert CADDY_IMAGE in text
     assert "Certificate issuance is asynchronous" in text
 
 
