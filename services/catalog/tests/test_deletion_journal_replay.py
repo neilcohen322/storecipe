@@ -49,6 +49,7 @@ async def test_replay_uses_separate_subject_locks_and_restores_tombstones() -> N
     assert "DELETE FROM catalog.tags" in catalog_sql
     assert "INSERT INTO catalog.account_deletions" in catalog_sql
     assert "'pending'" in catalog_sql
+    assert "journal_committed" in catalog_sql
     assert "recipe_images" in catalog_sql
     assert "catalog.account_deletions.status = 'completed'" in catalog_sql
     assert "pg_advisory_xact_lock(:lock_key)" in ingestion_sql

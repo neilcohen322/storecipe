@@ -14,6 +14,7 @@ from typing import Protocol
 from uuid import UUID
 
 import aiohttp
+from sqlalchemy import select
 from yarl import URL
 
 from ingestion.access_challenge import classify_access_challenge
@@ -155,11 +156,17 @@ class ImportPipeline:
     async def run(self, job_id: UUID, lease_token: LeaseToken, adapters: ImportAdapters) -> None:
         if job_id != lease_token.job_id:
             raise ValueError("job id does not match the lease token")
+        with self._repository.session.no_autoflush:
+            owner_subject = await self._repository.session.scalar(
+                select(ImportJob.owner_subject).where(ImportJob.id == job_id)
+            )
+        if owner_subject is None:
+            return
+        self._owner_subject = owner_subject
+        await self._lock_and_require_active_subject()
         job = await self._repository.get_job_for_lease(lease_token)
-        self._owner_subject = job.owner_subject
         if job.status is not ImportStatus.PROCESSING:
             return
-        await self._lock_and_require_active_subject()
         if await self._finish_if_cancelled_or_timed_out(job, lease_token):
             return
         if job.stage is ImportStage.QUEUED:
