@@ -91,6 +91,9 @@ for _ in $(seq 1 30); do
 done
 if sudo docker info >/dev/null 2>&1; then
   sudo docker compose build
+  # Bake the external base images (postgres, redis) into the snapshot too, so
+  # the first boot does not need to pull from a registry.
+  sudo docker compose pull postgres redis redis-broker
 else
   echo "WARN: Docker daemon not available during install; images will build on first start."
 fi
