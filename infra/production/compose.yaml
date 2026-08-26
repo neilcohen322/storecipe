@@ -64,7 +64,7 @@ services:
 
   postgres:
     <<: *service-defaults
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     environment:
       POSTGRES_DB: storecipe
@@ -88,7 +88,7 @@ services:
 
   redis-cache:
     <<: *service-defaults
-    image: redis:7.4-alpine
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     command: ["redis-server", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -101,7 +101,7 @@ services:
 
   redis-broker:
     <<: *service-defaults
-    image: redis:7.4-alpine
+    image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     command: ["redis-server", "--maxmemory", "160mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
     volumes:
       - redis-broker-data:/data

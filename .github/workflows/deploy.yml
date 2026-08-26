@@ -24,6 +24,7 @@ permissions:
   contents: read
   actions: read
   id-token: write
+  packages: read
 
 jobs:
   deploy:
@@ -109,19 +110,24 @@ jobs:
           VM: ${{ vars.GCP_VM_NAME }}
           ZONE: ${{ vars.GCP_ZONE }}
           CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ -n "${CLOUDSDK_CORE_PROJECT:-}" ]] || { echo "GCP_PROJECT_ID is required" >&2; exit 1; }
+          umask 077
+          printf '%s' "$GH_TOKEN" > ghcr-pull.token
           gcloud compute scp --quiet --tunnel-through-iap --zone "$ZONE" \
-            storecipe-deployment.tgz release/release-manifest.json "$VM:~/"
+            storecipe-deployment.tgz release/release-manifest.json ghcr-pull.token "$VM:~/"
+          rm -f ghcr-pull.token
       - name: Run backup-first host deployment through IAP
         env:
           VM: ${{ vars.GCP_VM_NAME }}
           ZONE: ${{ vars.GCP_ZONE }}
           CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GH_ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
-          gcloud compute ssh "$VM" --quiet --tunnel-through-iap --zone "$ZONE" --command '
+          gcloud compute ssh "$VM" --quiet --tunnel-through-iap --zone "$ZONE" --command "
             set -Eeuo pipefail
             sudo tar -xzf ~/storecipe-deployment.tgz -C /opt/storecipe/current
             sudo chown -R root:root /opt/storecipe/current
@@ -130,12 +136,18 @@ jobs:
             sudo systemctl daemon-reload
             sudo systemctl enable --now storecipe-backup.timer storecipe-media-reconcile.timer
             sudo install -m 0600 ~/release-manifest.json /opt/storecipe/releases/incoming-release-manifest.json
+            sudo install -d -m 0700 /run/storecipe
+            sudo install -m 0600 ~/ghcr-pull.token /run/storecipe/ghcr-pull.token
+            rm -f ~/ghcr-pull.token
             sudo docker stop storecipe-bootstrap >/dev/null 2>&1 || true
-            if ! sudo /opt/storecipe/current/scripts/deploy/deploy.sh /opt/storecipe/releases/incoming-release-manifest.json; then
-              if ! sudo docker ps --filter name=storecipe-production-edge --format "{{.ID}}" | grep -q .; then
+            if ! sudo env GHCR_PULL_TOKEN_FILE=/run/storecipe/ghcr-pull.token GHCR_PULL_USERNAME='$GH_ACTOR' \
+              /opt/storecipe/current/scripts/deploy/deploy.sh /opt/storecipe/releases/incoming-release-manifest.json; then
+              sudo rm -f /run/storecipe/ghcr-pull.token
+              sudo docker logout ghcr.io >/dev/null 2>&1 || true
+              if ! sudo docker ps --filter name=storecipe-production-edge --format '{{.ID}}' | grep -q .; then
                 sudo docker start storecipe-bootstrap >/dev/null 2>&1 || true
               fi
               exit 1
             fi
             rm -f ~/storecipe-deployment.tgz ~/release-manifest.json
-          '
+          "

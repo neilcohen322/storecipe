@@ -36,13 +36,19 @@ def test_restore_is_disposable_and_always_cleaned() -> None:
     assert "matched no objects" in text
     assert "Failed to list account-deletion journal objects" in text
     assert "media_snapshot" in text
+    assert "information_schema.columns" in text
+    assert "column_name = 'journal_committed'" in text
+    assert "journal_committed" in text
+    assert "v_media, TRUE)" in text
+    assert "journal_committed = CASE" in text
+    assert "ELSE TRUE" in text
     assert ".completed" in text
     assert "COALESCE(EXCLUDED.media_snapshot" in text
     assert ".committed" in text
     assert "completedAt" in text
 
 
-def test_local_restore_proof_uses_disposable_synthetic_data() -> None:
+def test_local_restore_proof_covers_previous_and_current_deletion_schemas() -> None:
     text = LOCAL_PROOF.read_text(encoding="utf-8")
     assert "postgres:17-alpine" in text
     assert "storecipe-backup-source" in text
@@ -55,3 +61,8 @@ def test_local_restore_proof_uses_disposable_synthetic_data() -> None:
     assert "CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET=fake-storecipe" in text
     assert "docker exec -i" in text
     assert ".committed" in text
+    assert "seed_fixture no" in text
+    assert "seed_fixture yes" in text
+    assert "journal_committed boolean NOT NULL DEFAULT false" in text
+    assert "previous-schema-without-journal_committed" in text
+    assert "current-schema-with-journal_committed" in text

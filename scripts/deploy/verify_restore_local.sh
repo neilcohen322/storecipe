@@ -26,8 +26,16 @@ for _ in $(seq 1 30); do
 done
 docker exec "$SOURCE_CONTAINER" pg_isready -U source_admin -d storecipe >/dev/null
 
-docker exec -i -e PGPASSWORD="$SOURCE_PASSWORD" "$SOURCE_CONTAINER" \
-  psql -U source_admin -d storecipe -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+seed_fixture() {
+  local with_journal_committed=$1
+  local journal_column=""
+  if [[ $with_journal_committed == yes ]]; then
+    journal_column=$',\n  journal_committed boolean NOT NULL DEFAULT false'
+  fi
+  docker exec -i -e PGPASSWORD="$SOURCE_PASSWORD" "$SOURCE_CONTAINER" \
+    psql -U source_admin -d storecipe -v ON_ERROR_STOP=1 <<SQL >/dev/null
+DROP SCHEMA IF EXISTS catalog CASCADE;
+DROP SCHEMA IF EXISTS ingestion CASCADE;
 CREATE SCHEMA catalog;
 CREATE SCHEMA ingestion;
 CREATE TABLE catalog.alembic_version_catalog (version_num varchar(32) PRIMARY KEY);
@@ -62,7 +70,7 @@ CREATE TABLE catalog.account_deletions (
   lease_expires_at timestamptz,
   last_error text,
   catalog_user_id uuid,
-  media_snapshot json
+  media_snapshot json${journal_column}
 );
 CREATE TABLE ingestion.import_jobs (
   id uuid PRIMARY KEY,
@@ -95,19 +103,32 @@ INSERT INTO ingestion.import_jobs VALUES
   ('33333333-3333-3333-3333-333333333333', 'auth0|deleted-chef'),
   ('66666666-6666-6666-6666-666666666666', 'auth0|active-chef');
 SQL
+}
 
-OBJECT=storecipe-20260824T000000Z.dump
-docker exec -e PGPASSWORD="$SOURCE_PASSWORD" "$SOURCE_CONTAINER" \
-  pg_dump -U source_admin -d storecipe --format=custom --file="/tmp/$OBJECT"
-docker cp "$SOURCE_CONTAINER:/tmp/$OBJECT" "$TMP_DIR/fake-gcs/daily/$OBJECT" >/dev/null
-(cd "$TMP_DIR/fake-gcs/daily" && sha256sum "$OBJECT" > "$OBJECT.sha256")
+run_restore_proof() {
+  local label=$1
+  local object=$2
+  echo "Verify restore local proof: $label"
+  docker exec -e PGPASSWORD="$SOURCE_PASSWORD" "$SOURCE_CONTAINER" \
+    pg_dump -U source_admin -d storecipe --format=custom --file="/tmp/$object"
+  docker cp "$SOURCE_CONTAINER:/tmp/$object" "$TMP_DIR/fake-gcs/daily/$object" >/dev/null
+  (cd "$TMP_DIR/fake-gcs/daily" && sha256sum "$object" > "$object.sha256")
 
-cat > "$TMP_DIR/fake-gcs/account-deletions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json" <<'EOF'
+  cat > "$TMP_DIR/fake-gcs/account-deletions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json" <<'EOF'
 {"deletionId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","expiresAt":"2026-11-22T00:00:00Z","requestId":"restore-proof","requestedAt":"2026-08-24T00:00:00Z","subject":"auth0|deleted-chef"}
 EOF
-cp "$TMP_DIR/fake-gcs/account-deletions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json" \
-  "$TMP_DIR/fake-gcs/account-deletions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.committed"
+  cp "$TMP_DIR/fake-gcs/account-deletions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json" \
+    "$TMP_DIR/fake-gcs/account-deletions/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.committed"
 
-FAKE_GCS_ROOT="$TMP_DIR/fake-gcs" GCLOUD_BIN="$TMP_DIR/bin/gcloud" \
-  CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET=fake-storecipe \
-  bash "$ROOT_DIR/scripts/deploy/restore_verify.sh" "gs://fake-storecipe/daily/$OBJECT"
+  FAKE_GCS_ROOT="$TMP_DIR/fake-gcs" GCLOUD_BIN="$TMP_DIR/bin/gcloud" \
+    CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET=fake-storecipe \
+    bash "$ROOT_DIR/scripts/deploy/restore_verify.sh" "gs://fake-storecipe/daily/$object"
+}
+
+# Previous-schema backup (no journal_committed) must still verify when journal entries exist.
+seed_fixture no
+run_restore_proof "previous-schema-without-journal_committed" storecipe-20260824T000000Z.dump
+
+# Current-schema backup includes journal_committed and must set it true on replay.
+seed_fixture yes
+run_restore_proof "current-schema-with-journal_committed" storecipe-20260826T000000Z.dump

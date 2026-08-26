@@ -140,8 +140,9 @@ backups. `scripts/deploy/restore_verify.sh` restores a selected dump into a disp
 PostgreSQL 17 container, checks both schemas, migration heads, bounded counts, and
 foreign-key validity without printing recipe data, then replays the private
 account-deletion journal so a backup taken before deletion cannot resurrect that
-account. The local proof uses only synthetic rows, including a pre-deletion snapshot
-and a journal object for the deleted subject:
+account. The local proof exercises both a previous-schema backup (no
+`journal_committed` column) and a current-schema backup, including a pre-deletion
+snapshot and a journal object for the deleted subject:
 
 ```powershell
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock `
@@ -157,9 +158,11 @@ Production deployment is performed by `scripts/deploy/deploy.sh` on the VM with 
 validated release manifest. The script takes an exclusive lock, fetches the runtime
 bundle from Secret Manager into a root-only temporary file, checks at least 5 GiB of
 free disk and active swap, and verifies that public runtime identifiers match the
-release. It then backs up PostgreSQL, pulls immutable image digests, runs Catalog and
-Ingestion migrations in that order, starts the stack, waits for health, and performs
-local and public HTTPS smoke checks.
+release. It then backs up PostgreSQL, authenticates to GHCR with a short-lived
+deployment token (packages stay private; credentials are removed immediately after
+`compose pull`), pulls immutable image digests, runs Catalog and Ingestion migrations
+in that order, starts the stack, waits for health, and performs local and public HTTPS
+smoke checks.
 
 The persistent data disk is protected twice: Terraform will not destroy it without an
 explicit reviewed lifecycle edit, and the separate attachment resource keeps it when
@@ -177,6 +180,13 @@ GitHub authentication uses one GCP WIF provider with a two-workflow allowlist:
 `terraform.yml` and `deploy.yml` on `master`. That provider is only the first gate. The
 Terraform service account additionally accepts only the Terraform workflow identity;
 the deployment service account remains bound to the protected `production` environment.
+Admission uses immutable GitHub `repository_id` and `repository_owner_id` values, and the
+environment claim is mapped conditionally so Terraform plan jobs (no GitHub environment)
+can authenticate while deploy remains gated on `production`.
+
+Before the first Terraform plan, set the repository variable `GCP_PUBLIC_HOSTNAME` to the
+production HTTPS hostname (for example `storecipe.example`). The plan workflow passes it as
+`TF_VAR_public_hostname` for uptime checks and fails closed when it is missing.
 
 If a failure occurs after containers begin changing, the script recreates application
 and edge containers from the prior manifest's image digests. It deliberately never
@@ -210,7 +220,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy/build_runti
   -PrivacyContactEmail '<PRIVACY_CONTACT_EMAIL>' `
   -LegalEffectiveDate '2026-08-24' `
   -MediaBucket '<GCP_MEDIA_BUCKET>' `
-  -BackupBucket '<GCP_BACKUP_BUCKET>'
+  -BackupBucket '<GCP_BACKUP_BUCKET>' `
   -AccountDeletionJournalBucket '<ACCOUNT_DELETION_JOURNAL_BUCKET>'
 ```
 

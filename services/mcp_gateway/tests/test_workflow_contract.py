@@ -29,6 +29,8 @@ def test_terraform_pr_validation_is_offline_and_manual_cloud_is_wif() -> None:
     assert "bootstrap.tfplan" not in text
     assert "production.tfplan" in text
     assert "GCP_BUDGET_NOTIFICATION_EMAIL" in text
+    assert "TF_VAR_public_hostname: ${{ vars.GCP_PUBLIC_HOSTNAME }}" in text
+    assert "TF_VAR_public_hostname" in text.split("Require public infrastructure inputs", 1)[1]
 
 
 def test_terraform_apply_uses_exact_plan_and_production_gate() -> None:
@@ -49,12 +51,15 @@ def test_deploy_is_manual_locked_wif_iap_and_vm_reads_secrets() -> None:
     assert "environment: production" in text
     assert "concurrency:" in text and "production-deployment" in text
     assert "id-token: write" in text
+    assert "packages: read" in text
     assert "git merge-base --is-ancestor" in text
     assert "validate_manifest.py" in text
     assert "--tunnel-through-iap" in text
     assert "gcloud compute scp" in text
     assert "gcloud compute ssh" in text
     assert "scripts/deploy/deploy.sh" in text
+    assert "ghcr-pull.token" in text
+    assert "GHCR_PULL_TOKEN_FILE=/run/storecipe/ghcr-pull.token" in text
     assert "secrets versions access" not in text
     assert "runtime.env" not in text
     assert "project_id: ${{ vars.GCP_PROJECT_ID }}" in text

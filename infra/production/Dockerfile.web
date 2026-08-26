@@ -1,4 +1,4 @@
-FROM node:24-alpine AS web-build
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS web-build
 
 RUN corepack enable && corepack prepare pnpm@11.3.0 --activate
 WORKDIR /workspace/apps/web
@@ -41,7 +41,7 @@ RUN test -n "$EXPO_PUBLIC_AUTH0_DOMAIN" \
  && printf '%s' "$EXPO_PUBLIC_LEGAL_EFFECTIVE_DATE" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
  && pnpm run test:production-bundle
 
-FROM caddy:2.11.4-alpine
+FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
 COPY infra/production/Caddyfile /etc/caddy/Caddyfile
 COPY --from=web-build /workspace/apps/web/dist /srv/web
 

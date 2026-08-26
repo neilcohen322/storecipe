@@ -26,14 +26,17 @@ def test_state_bucket_is_private_versioned_and_retained() -> None:
 def test_wif_admits_only_terraform_and_deploy_workflows_on_master() -> None:
     text = combined()
     assert 'issuer_uri = "https://token.actions.githubusercontent.com"' in text
-    assert "attribute.repository ==" in text
+    assert "assertion.repository_id ==" in text
+    assert "assertion.repository_owner_id ==" in text
     assert "assertion.ref == 'refs/heads/master'" in text
-    assert '"attribute.workflow"    = "assertion.workflow_ref"' in text
+    assert '"attribute.workflow"' in text and "assertion.workflow_ref" in text
+    assert "has(assertion.environment)" in text
     assert ".github/workflows/terraform.yml@refs/heads/master" in text
     assert ".github/workflows/deploy.yml@refs/heads/master" in text
     assert "attribute.workflow in [" in text
     assert "roles/iam.workloadIdentityUser" in text
     assert "google_service_account_key" not in text
+    assert '"attribute.environment" = "assertion.environment"' not in text
 
 
 def test_terraform_service_account_is_bound_only_to_terraform_workflow() -> None:

@@ -28,7 +28,7 @@ docker run -d --name storecipe-bootstrap --restart unless-stopped \
   -v "$BOOTSTRAP_DIR/index.html:/srv/index.html:ro" \
   -v "$BOOTSTRAP_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" \
   -v storecipe-production_caddy-data:/data \
-  caddy:2.11.4-alpine
+  caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
 
 echo "Bootstrap TLS requested for $PUBLIC_HOST. Certificate issuance is asynchronous."
 echo "Wait and verify the public HTTPS page before creating Auth0 production resources."

@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.11.28-python3.13-trixie-slim
+FROM ghcr.io/astral-sh/uv:0.11.28-python3.13-trixie-slim@sha256:08477888ac23d6cfbeb8c7dc6fc70cf297fd38b7bf35522be33ce832750ca242
 
 WORKDIR /app
 ENV PATH="/app/.venv/bin:$PATH" \
