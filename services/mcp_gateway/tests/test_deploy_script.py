@@ -26,11 +26,16 @@ def test_deploy_is_locked_and_validates_before_mutating() -> None:
 def test_deploy_orders_backup_pull_migrations_and_start() -> None:
     text = DEPLOY.read_text(encoding="utf-8")
     backup = text.index('run_step "pre-deployment backup"')
+    login = text.index('run_step "authenticate GHCR for private pulls"')
     pull = text.index('run_step "pull immutable images"')
     catalog = text.index('run_step "Catalog migration"')
     ingestion = text.index('run_step "Ingestion migration"')
     start = text.index('run_step "start target release"')
-    assert backup < pull < catalog < ingestion < start
+    assert backup < login < pull < catalog < ingestion < start
+    assert "login_ghcr_for_pull" in text
+    assert "docker login ghcr.io" in text
+    assert "docker logout ghcr.io" in text
+    assert "GHCR_PULL_TOKEN_FILE" in text
     assert "scripts/deploy/backup.sh" in text
     assert "catalog-migrate" in text
     assert "ingestion-migrate" in text

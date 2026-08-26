@@ -18,20 +18,43 @@ def test_application_images_are_required_full_digests() -> None:
     ):
         assert re.search(rf"image: \$\{{{variable}:\?", text)
     assert (
-        "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
+        "postgres:17-alpine@sha256:"
+        "18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
         in text
     )
-    assert text.count(
-        "redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
-    ) == 2
+    assert (
+        text.count(
+            "redis:7.4-alpine@sha256:"
+            "ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
+        )
+        == 2
+    )
 
 
 def test_web_base_image_is_digest_pinned() -> None:
     text = WEB_DOCKERFILE.read_text(encoding="utf-8")
     assert (
-        "FROM caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
-        in text
+        "FROM caddy:2.11.4-alpine@sha256:"
+        "5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
+    ) in text
+    assert (
+        "FROM node:24-alpine@sha256:"
+        "d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43"
+    ) in text
+
+
+def test_service_base_images_are_digest_pinned() -> None:
+    pinned = (
+        "FROM ghcr.io/astral-sh/uv:0.11.28-python3.13-trixie-slim@sha256:"
+        "08477888ac23d6cfbeb8c7dc6fc70cf297fd38b7bf35522be33ce832750ca242"
     )
+    for relative in (
+        "services/catalog/Dockerfile",
+        "services/ingestion/Dockerfile",
+        "services/mcp_gateway/Dockerfile",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert pinned in text
 
 
 def test_only_edge_publishes_ports() -> None:

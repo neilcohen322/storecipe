@@ -31,11 +31,48 @@ flock -n 9 || { echo "Another Storecipe deployment is already running" >&2; exit
 
 cleanup() {
   rm -f "$RUNTIME_ENV" "$TARGET_ENV" "$PREVIOUS_ENV"
+  if [[ -n ${GHCR_LOGGED_IN:-} ]]; then
+    docker logout ghcr.io >/dev/null 2>&1 || true
+    GHCR_LOGGED_IN=
+  fi
+  if [[ -n ${GHCR_TOKEN_FILE:-} && -f ${GHCR_TOKEN_FILE:-} ]]; then
+    rm -f "$GHCR_TOKEN_FILE"
+  fi
 }
 trap cleanup EXIT
 
 compose() {
   docker compose --env-file "$ACTIVE_ENV" -f "$COMPOSE_FILE" "$@"
+}
+
+login_ghcr_for_pull() {
+  local token_file=${GHCR_PULL_TOKEN_FILE:-}
+  local username=${GHCR_PULL_USERNAME:-}
+  if [[ -z $token_file ]]; then
+    echo "GHCR_PULL_TOKEN_FILE is required; deploy authenticates briefly then removes credentials" >&2
+    exit 2
+  fi
+  if [[ ! -f $token_file ]]; then
+    echo "GHCR pull token file is missing" >&2
+    exit 2
+  fi
+  if [[ -z $username ]]; then
+    echo "GHCR_PULL_USERNAME is required for authenticated image pulls" >&2
+    exit 2
+  fi
+  # Token material must never enter process listings or shell history via argv.
+  docker login ghcr.io --username "$username" --password-stdin <"$token_file"
+  GHCR_LOGGED_IN=1
+  GHCR_TOKEN_FILE=$token_file
+  rm -f "$token_file"
+  GHCR_TOKEN_FILE=
+}
+
+logout_ghcr() {
+  if [[ -n ${GHCR_LOGGED_IN:-} ]]; then
+    docker logout ghcr.io >/dev/null 2>&1 || true
+    GHCR_LOGGED_IN=
+  fi
 }
 
 append_manifest_images() {
@@ -240,7 +277,9 @@ if [[ -z $(compose ps -q postgres) ]]; then
 fi
 
 run_step "pre-deployment backup" "$ROOT_DIR/scripts/deploy/backup.sh"
+run_step "authenticate GHCR for private pulls" login_ghcr_for_pull
 run_step "pull immutable images" compose pull "${APP_SERVICES[@]}"
+logout_ghcr
 catalog_revision=$(jq -r '.migrations.catalog' "$TARGET_MANIFEST")
 ingestion_revision=$(jq -r '.migrations.ingestion' "$TARGET_MANIFEST")
 if ! run_step "Catalog migration" compose --profile migration run --rm --no-deps catalog-migrate \

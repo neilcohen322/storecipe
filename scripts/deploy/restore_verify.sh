@@ -150,67 +150,130 @@ BEGIN
     );
   END IF;
   IF to_regclass('catalog.account_deletions') IS NOT NULL THEN
-    INSERT INTO catalog.account_deletions
-      (id, auth_subject, status, request_id, attempts, next_attempt_at, created_at,
-       updated_at, completed_at, expires_at, lease_owner, lease_expires_at,
-       catalog_user_id, media_snapshot, journal_committed)
-    VALUES
-      ({deletion_id}::uuid, {subject}, 'pending', {request_id}, 0, NOW(),
-       {requested_at}::timestamptz, NOW(), NULL,
-       {expires_at}::timestamptz, NULL, NULL, v_user_id, v_media, TRUE)
-    ON CONFLICT (auth_subject) DO UPDATE SET
-      status = CASE
-        WHEN catalog.account_deletions.status = 'completed'
-         AND catalog.account_deletions.expires_at IS NOT NULL
-         AND catalog.account_deletions.expires_at > NOW()
-        THEN catalog.account_deletions.status
-        ELSE 'pending'
-      END,
-      completed_at = CASE
-        WHEN catalog.account_deletions.status = 'completed'
-         AND catalog.account_deletions.expires_at IS NOT NULL
-         AND catalog.account_deletions.expires_at > NOW()
-        THEN catalog.account_deletions.completed_at
-        ELSE NULL
-      END,
-      request_id = EXCLUDED.request_id,
-      expires_at = CASE
-        WHEN catalog.account_deletions.status = 'completed'
-         AND catalog.account_deletions.expires_at IS NOT NULL
-         AND catalog.account_deletions.expires_at > NOW()
-        THEN catalog.account_deletions.expires_at
-        ELSE EXCLUDED.expires_at
-      END,
-      catalog_user_id = CASE
-        WHEN catalog.account_deletions.status = 'completed'
-         AND catalog.account_deletions.expires_at IS NOT NULL
-         AND catalog.account_deletions.expires_at > NOW()
-        THEN catalog.account_deletions.catalog_user_id
-        ELSE COALESCE(EXCLUDED.catalog_user_id, catalog.account_deletions.catalog_user_id)
-      END,
-      media_snapshot = CASE
-        WHEN catalog.account_deletions.status = 'completed'
-         AND catalog.account_deletions.expires_at IS NOT NULL
-         AND catalog.account_deletions.expires_at > NOW()
-        THEN catalog.account_deletions.media_snapshot
-        ELSE COALESCE(EXCLUDED.media_snapshot, catalog.account_deletions.media_snapshot)
-      END,
-      journal_committed = CASE
-        WHEN catalog.account_deletions.status = 'completed'
-         AND catalog.account_deletions.expires_at IS NOT NULL
-         AND catalog.account_deletions.expires_at > NOW()
-        THEN catalog.account_deletions.journal_committed
-        ELSE TRUE
-      END,
-      next_attempt_at = CASE
-        WHEN catalog.account_deletions.status = 'completed'
-         AND catalog.account_deletions.expires_at IS NOT NULL
-         AND catalog.account_deletions.expires_at > NOW()
-        THEN catalog.account_deletions.next_attempt_at
-        ELSE NOW()
-      END,
-      updated_at = NOW(), last_error = NULL,
-      lease_owner = NULL, lease_expires_at = NULL;
+    IF EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'catalog'
+        AND table_name = 'account_deletions'
+        AND column_name = 'journal_committed'
+    ) THEN
+      INSERT INTO catalog.account_deletions
+        (id, auth_subject, status, request_id, attempts, next_attempt_at, created_at,
+         updated_at, completed_at, expires_at, lease_owner, lease_expires_at,
+         catalog_user_id, media_snapshot, journal_committed)
+      VALUES
+        ({deletion_id}::uuid, {subject}, 'pending', {request_id}, 0, NOW(),
+         {requested_at}::timestamptz, NOW(), NULL,
+         {expires_at}::timestamptz, NULL, NULL, v_user_id, v_media, TRUE)
+      ON CONFLICT (auth_subject) DO UPDATE SET
+        status = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.status
+          ELSE 'pending'
+        END,
+        completed_at = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.completed_at
+          ELSE NULL
+        END,
+        request_id = EXCLUDED.request_id,
+        expires_at = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.expires_at
+          ELSE EXCLUDED.expires_at
+        END,
+        catalog_user_id = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.catalog_user_id
+          ELSE COALESCE(EXCLUDED.catalog_user_id, catalog.account_deletions.catalog_user_id)
+        END,
+        media_snapshot = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.media_snapshot
+          ELSE COALESCE(EXCLUDED.media_snapshot, catalog.account_deletions.media_snapshot)
+        END,
+        journal_committed = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.journal_committed
+          ELSE TRUE
+        END,
+        next_attempt_at = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.next_attempt_at
+          ELSE NOW()
+        END,
+        updated_at = NOW(), last_error = NULL,
+        lease_owner = NULL, lease_expires_at = NULL;
+    ELSE
+      INSERT INTO catalog.account_deletions
+        (id, auth_subject, status, request_id, attempts, next_attempt_at, created_at,
+         updated_at, completed_at, expires_at, lease_owner, lease_expires_at,
+         catalog_user_id, media_snapshot)
+      VALUES
+        ({deletion_id}::uuid, {subject}, 'pending', {request_id}, 0, NOW(),
+         {requested_at}::timestamptz, NOW(), NULL,
+         {expires_at}::timestamptz, NULL, NULL, v_user_id, v_media)
+      ON CONFLICT (auth_subject) DO UPDATE SET
+        status = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.status
+          ELSE 'pending'
+        END,
+        completed_at = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.completed_at
+          ELSE NULL
+        END,
+        request_id = EXCLUDED.request_id,
+        expires_at = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.expires_at
+          ELSE EXCLUDED.expires_at
+        END,
+        catalog_user_id = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.catalog_user_id
+          ELSE COALESCE(EXCLUDED.catalog_user_id, catalog.account_deletions.catalog_user_id)
+        END,
+        media_snapshot = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.media_snapshot
+          ELSE COALESCE(EXCLUDED.media_snapshot, catalog.account_deletions.media_snapshot)
+        END,
+        next_attempt_at = CASE
+          WHEN catalog.account_deletions.status = 'completed'
+           AND catalog.account_deletions.expires_at IS NOT NULL
+           AND catalog.account_deletions.expires_at > NOW()
+          THEN catalog.account_deletions.next_attempt_at
+          ELSE NOW()
+        END,
+        updated_at = NOW(), last_error = NULL,
+        lease_owner = NULL, lease_expires_at = NULL;
+    END IF;
   END IF;
   IF to_regclass('ingestion.llm_invocations') IS NOT NULL THEN
     DELETE FROM ingestion.llm_invocations WHERE owner_subject = {subject};

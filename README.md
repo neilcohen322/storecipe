@@ -140,8 +140,9 @@ backups. `scripts/deploy/restore_verify.sh` restores a selected dump into a disp
 PostgreSQL 17 container, checks both schemas, migration heads, bounded counts, and
 foreign-key validity without printing recipe data, then replays the private
 account-deletion journal so a backup taken before deletion cannot resurrect that
-account. The local proof uses only synthetic rows, including a pre-deletion snapshot
-and a journal object for the deleted subject:
+account. The local proof exercises both a previous-schema backup (no
+`journal_committed` column) and a current-schema backup, including a pre-deletion
+snapshot and a journal object for the deleted subject:
 
 ```powershell
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock `
@@ -157,9 +158,11 @@ Production deployment is performed by `scripts/deploy/deploy.sh` on the VM with 
 validated release manifest. The script takes an exclusive lock, fetches the runtime
 bundle from Secret Manager into a root-only temporary file, checks at least 5 GiB of
 free disk and active swap, and verifies that public runtime identifiers match the
-release. It then backs up PostgreSQL, pulls immutable image digests, runs Catalog and
-Ingestion migrations in that order, starts the stack, waits for health, and performs
-local and public HTTPS smoke checks.
+release. It then backs up PostgreSQL, authenticates to GHCR with a short-lived
+deployment token (packages stay private; credentials are removed immediately after
+`compose pull`), pulls immutable image digests, runs Catalog and Ingestion migrations
+in that order, starts the stack, waits for health, and performs local and public HTTPS
+smoke checks.
 
 The persistent data disk is protected twice: Terraform will not destroy it without an
 explicit reviewed lifecycle edit, and the separate attachment resource keeps it when
