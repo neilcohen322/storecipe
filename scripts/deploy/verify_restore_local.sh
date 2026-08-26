@@ -4,7 +4,7 @@ umask 077
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 TMP_DIR=$(mktemp -d)
-SOURCE_CONTAINER="storecipe-backup-source-$$"
+SOURCE_CONTAINER="storecipe-backup-source-$(openssl rand -hex 12)"
 cleanup() {
   docker rm -f "$SOURCE_CONTAINER" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
@@ -20,16 +20,36 @@ printf 'POSTGRES_PASSWORD=%s\nPOSTGRES_USER=source_admin\nPOSTGRES_DB=storecipe\
   "$SOURCE_PASSWORD" > "$TMP_DIR/source.env"
 docker run --detach --name "$SOURCE_CONTAINER" --env-file "$TMP_DIR/source.env" \
   postgres:17-alpine >/dev/null
-for _ in $(seq 1 30); do
-  if docker exec "$SOURCE_CONTAINER" pg_isready -U source_admin -d storecipe >/dev/null 2>&1; then break; fi
+ready=0
+consecutive=0
+for _ in $(seq 1 60); do
+  if docker exec -e PGPASSWORD="$SOURCE_PASSWORD" "$SOURCE_CONTAINER" \
+    psql -U source_admin -d storecipe --no-psqlrc --tuples-only \
+    --set ON_ERROR_STOP=1 --command 'SELECT 1' >/dev/null 2>&1; then
+    consecutive=$((consecutive + 1))
+    if (( consecutive >= 3 )); then
+      ready=1
+      break
+    fi
+  else
+    consecutive=0
+  fi
   sleep 1
 done
-docker exec "$SOURCE_CONTAINER" pg_isready -U source_admin -d storecipe >/dev/null
+if (( ready != 1 )); then
+  echo "Source container $SOURCE_CONTAINER did not become ready" >&2
+  docker logs "$SOURCE_CONTAINER" >&2 || true
+  exit 1
+fi
 
 seed_fixture() {
   local with_journal_committed=$1
+  local catalog_version=20260824_02
+  local ingestion_version=20260824_01
   local journal_column=""
   if [[ $with_journal_committed == yes ]]; then
+    catalog_version=20260826_01
+    ingestion_version=20260826_01
     journal_column=$',\n  journal_committed boolean NOT NULL DEFAULT false'
   fi
   docker exec -i -e PGPASSWORD="$SOURCE_PASSWORD" "$SOURCE_CONTAINER" \
@@ -40,8 +60,8 @@ CREATE SCHEMA catalog;
 CREATE SCHEMA ingestion;
 CREATE TABLE catalog.alembic_version_catalog (version_num varchar(32) PRIMARY KEY);
 CREATE TABLE ingestion.alembic_version_ingestion (version_num varchar(32) PRIMARY KEY);
-INSERT INTO catalog.alembic_version_catalog VALUES ('20260824_02');
-INSERT INTO ingestion.alembic_version_ingestion VALUES ('20260824_01');
+INSERT INTO catalog.alembic_version_catalog VALUES ('${catalog_version}');
+INSERT INTO ingestion.alembic_version_ingestion VALUES ('${ingestion_version}');
 CREATE TABLE catalog.users (
   id uuid PRIMARY KEY,
   auth_subject text UNIQUE NOT NULL

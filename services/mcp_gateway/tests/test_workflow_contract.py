@@ -60,10 +60,15 @@ def test_deploy_is_manual_locked_wif_iap_and_vm_reads_secrets() -> None:
     assert "scripts/deploy/deploy.sh" in text
     assert "ghcr-pull.token" in text
     assert "GHCR_PULL_TOKEN_FILE=/run/storecipe/ghcr-pull.token" in text
+    assert "trap 'rm -f ghcr-pull.token' EXIT" in text
+    assert "if: always()" in text
+    assert "Remove GHCR pull credentials" in text
+    assert "sudo docker logout ghcr.io" in text
+    assert "sudo rm -f /run/storecipe/ghcr-pull.token" in text
     assert "secrets versions access" not in text
     assert "runtime.env" not in text
     assert "project_id: ${{ vars.GCP_PROJECT_ID }}" in text
-    assert text.count("CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}") == 2
+    assert text.count("CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}") == 3
     assert '[[ -n "${CLOUDSDK_CORE_PROJECT:-}" ]]' in text
     assert "actions/runs/$RELEASE_RUN_ID" in text
     assert ".github/workflows/release.yml" in text

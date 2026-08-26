@@ -28,6 +28,14 @@ def test_restore_is_disposable_and_always_cleaned() -> None:
     assert "ingestion.alembic_version_ingestion" in text
     assert "docker rm -f" in text
     assert "trap cleanup EXIT" in text
+    assert "openssl rand -hex 12" in text
+    assert 'CONTAINER="storecipe-restore-$(date -u +%s)-$$"' not in text
+    assert "failed at line" in text
+    assert "did not become ready" in text
+    assert "docker logs" in text
+    assert "true_rows" in text
+    assert "|| true" in text
+    assert "consecutive >= 3" in text
     assert "CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET" in text
     assert "account-deletions/" in text
     assert "account_deletion_tombstones" in text
@@ -66,3 +74,10 @@ def test_local_restore_proof_covers_previous_and_current_deletion_schemas() -> N
     assert "journal_committed boolean NOT NULL DEFAULT false" in text
     assert "previous-schema-without-journal_committed" in text
     assert "current-schema-with-journal_committed" in text
+    assert "catalog_version=20260824_02" in text
+    assert "catalog_version=20260826_01" in text
+    assert "ingestion_version=20260826_01" in text
+    assert "INSERT INTO catalog.alembic_version_catalog VALUES ('20260824_02')" not in text
+    assert "openssl rand -hex 12" in text
+    assert "did not become ready" in text
+    assert "consecutive >= 3" in text

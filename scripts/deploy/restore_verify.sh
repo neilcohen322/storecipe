@@ -19,11 +19,12 @@ SOURCE=$1
 JOURNAL_BUCKET=$CATALOG_ACCOUNT_DELETION_JOURNAL_BUCKET
 GCLOUD_BIN=${GCLOUD_BIN:-gcloud}
 TMP_DIR=$(mktemp -d /var/lib/storecipe/restore.XXXXXX)
-CONTAINER="storecipe-restore-$(date -u +%s)-$$"
+CONTAINER="storecipe-restore-$(openssl rand -hex 12)"
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR"
 }
+trap 'echo "restore_verify.sh failed at line $LINENO (container=$CONTAINER)" >&2' ERR
 trap cleanup EXIT
 
 DUMP="$TMP_DIR/backup.dump"
@@ -54,12 +55,32 @@ fi
 RESTORE_PASSWORD=$(openssl rand -hex 24)
 printf 'POSTGRES_PASSWORD=%s\nPOSTGRES_USER=restore_admin\nPOSTGRES_DB=storecipe_restore\n' \
   "$RESTORE_PASSWORD" > "$TMP_DIR/container.env"
-docker run --detach --name "$CONTAINER" --env-file "$TMP_DIR/container.env" postgres:17-alpine >/dev/null
-for _ in $(seq 1 30); do
-  if docker exec "$CONTAINER" pg_isready -U restore_admin -d storecipe_restore >/dev/null 2>&1; then break; fi
+if ! docker run --detach --name "$CONTAINER" --env-file "$TMP_DIR/container.env" postgres:17-alpine >/dev/null; then
+  echo "Failed to start restore container $CONTAINER" >&2
+  exit 1
+fi
+ready=0
+consecutive=0
+# Three consecutive queries skip the official image's post-initdb restart window.
+for _ in $(seq 1 60); do
+  if docker exec -e PGPASSWORD="$RESTORE_PASSWORD" "$CONTAINER" \
+    psql --username restore_admin --dbname storecipe_restore --no-psqlrc --tuples-only \
+    --set ON_ERROR_STOP=1 --command 'SELECT 1' >/dev/null 2>&1; then
+    consecutive=$((consecutive + 1))
+    if (( consecutive >= 3 )); then
+      ready=1
+      break
+    fi
+  else
+    consecutive=0
+  fi
   sleep 1
 done
-docker exec "$CONTAINER" pg_isready -U restore_admin -d storecipe_restore >/dev/null
+if (( ready != 1 )); then
+  echo "Restore container $CONTAINER did not become ready" >&2
+  docker logs "$CONTAINER" >&2 || true
+  exit 1
+fi
 docker cp "$DUMP" "$CONTAINER:/tmp/backup.dump"
 docker exec -e PGPASSWORD="$RESTORE_PASSWORD" "$CONTAINER" \
   pg_restore --username restore_admin --dbname storecipe_restore --no-owner --no-privileges \
@@ -81,8 +102,10 @@ SQL
 RESULT=$(docker exec -e PGPASSWORD="$RESTORE_PASSWORD" "$CONTAINER" \
   psql --username restore_admin --dbname storecipe_restore --no-psqlrc --tuples-only \
   --set ON_ERROR_STOP=1 --command "$SQL")
-if [[ $(grep -c 't' <<<"$RESULT") -lt 3 ]]; then
-  echo "Restore integrity checks failed" >&2
+true_rows=$(grep -c '^[[:space:]]*t[[:space:]]*$' <<<"$RESULT" || true)
+if (( true_rows < 3 )); then
+  echo "Restore integrity checks failed for $CONTAINER (true_rows=$true_rows)" >&2
+  printf '%s\n' "$RESULT" >&2
   exit 1
 fi
 
@@ -334,8 +357,10 @@ for journal_file in "${journal_files[@]}"; do
   replay_result=$(docker exec -e PGPASSWORD="$RESTORE_PASSWORD" "$CONTAINER" \
     psql --username restore_admin --dbname storecipe_restore --no-psqlrc --tuples-only \
     --set ON_ERROR_STOP=1 --file /tmp/replay.sql)
-  if [[ $(grep -c 't' <<<"$replay_result") -lt 4 ]]; then
-    echo "Account-deletion journal replay failed for ${journal_file##*/}" >&2
+  replay_true_rows=$(grep -c '^[[:space:]]*t[[:space:]]*$' <<<"$replay_result" || true)
+  if (( replay_true_rows < 4 )); then
+    echo "Account-deletion journal replay failed for ${journal_file##*/} (true_rows=$replay_true_rows)" >&2
+    printf '%s\n' "$replay_result" >&2
     exit 1
   fi
 done

@@ -116,9 +116,9 @@ jobs:
           [[ -n "${CLOUDSDK_CORE_PROJECT:-}" ]] || { echo "GCP_PROJECT_ID is required" >&2; exit 1; }
           umask 077
           printf '%s' "$GH_TOKEN" > ghcr-pull.token
+          trap 'rm -f ghcr-pull.token' EXIT
           gcloud compute scp --quiet --tunnel-through-iap --zone "$ZONE" \
             storecipe-deployment.tgz release/release-manifest.json ghcr-pull.token "$VM:~/"
-          rm -f ghcr-pull.token
       - name: Run backup-first host deployment through IAP
         env:
           VM: ${{ vars.GCP_VM_NAME }}
@@ -151,3 +151,17 @@ jobs:
             fi
             rm -f ~/storecipe-deployment.tgz ~/release-manifest.json
           "
+      - name: Remove GHCR pull credentials
+        if: always()
+        env:
+          VM: ${{ vars.GCP_VM_NAME }}
+          ZONE: ${{ vars.GCP_ZONE }}
+          CLOUDSDK_CORE_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CLOUDSDK_CORE_PROJECT:-}" ]] || { echo "GCP_PROJECT_ID is required" >&2; exit 1; }
+          gcloud compute ssh "$VM" --quiet --tunnel-through-iap --zone "$ZONE" --command '
+            rm -f ~/ghcr-pull.token || true
+            sudo rm -f /run/storecipe/ghcr-pull.token || true
+            sudo docker logout ghcr.io >/dev/null 2>&1 || true
+          ' || echo "Remote GHCR credential cleanup could not run" >&2
