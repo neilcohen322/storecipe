@@ -10,6 +10,9 @@ locals {
     "roles/serviceusage.serviceUsageAdmin",
     "roles/storage.admin",
   ])
+  # Plan jobs omit GitHub's environment claim; map a sentinel so provider admission
+  # still succeeds while deploy remains gated on attribute.environment/production.
+  wif_environment_mapping = "has(assertion.environment) ? assertion.environment : \"none\""
 }
 
 resource "google_project_service" "bootstrap" {
@@ -64,7 +67,8 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_provider_id = "storecipe-repository"
   display_name                       = "Storecipe repository"
   attribute_condition                = <<-EOT
-    attribute.repository == '${local.repository}' &&
+    assertion.repository_id == '${var.github_repository_id}' &&
+    assertion.repository_owner_id == '${var.github_repository_owner_id}' &&
     assertion.ref == 'refs/heads/master' &&
     attribute.workflow in [
       '${local.repository}/.github/workflows/terraform.yml@refs/heads/master',
@@ -75,7 +79,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "google.subject"        = "assertion.sub"
     "attribute.repository"  = "assertion.repository"
     "attribute.ref"         = "assertion.ref"
-    "attribute.environment" = "assertion.environment"
+    "attribute.environment" = local.wif_environment_mapping
     "attribute.workflow"    = "assertion.workflow_ref"
   }
   oidc {

@@ -33,3 +33,15 @@ variable "github_repository" {
   type    = string
   default = "storecipe"
 }
+
+variable "github_repository_id" {
+  description = "Immutable GitHub repository ID used in the WIF attribute condition."
+  type        = string
+  default     = "1302868485"
+}
+
+variable "github_repository_owner_id" {
+  description = "Immutable GitHub owner ID used in the WIF attribute condition."
+  type        = string
+  default     = "74861105"
+}

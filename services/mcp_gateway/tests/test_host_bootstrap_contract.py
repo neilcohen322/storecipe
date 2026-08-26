@@ -74,7 +74,7 @@ def test_bootstrap_tls_is_hostname_bounded_and_reuses_production_caddy_data() ->
     assert "^[a-z0-9]" in text
     assert "-p 80:80 -p 443:443" in text
     assert "storecipe-production_caddy-data:/data" in text
-    assert "caddy:2.11.4-alpine" in text
+    assert "caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648" in text
     assert "Certificate issuance is asynchronous" in text
 
 

@@ -29,6 +29,8 @@ def test_terraform_pr_validation_is_offline_and_manual_cloud_is_wif() -> None:
     assert "bootstrap.tfplan" not in text
     assert "production.tfplan" in text
     assert "GCP_BUDGET_NOTIFICATION_EMAIL" in text
+    assert "TF_VAR_public_hostname: ${{ vars.GCP_PUBLIC_HOSTNAME }}" in text
+    assert "TF_VAR_public_hostname" in text.split("Require public infrastructure inputs", 1)[1]
 
 
 def test_terraform_apply_uses_exact_plan_and_production_gate() -> None:

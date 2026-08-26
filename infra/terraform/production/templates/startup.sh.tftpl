@@ -99,5 +99,5 @@ cat >/opt/storecipe/bootstrap/index.html <<'HTML'
 HTML
 if ! docker inspect storecipe-bootstrap >/dev/null 2>&1; then
   docker run -d --name storecipe-bootstrap --restart unless-stopped -p 80:80 \
-    -v /opt/storecipe/bootstrap:/usr/share/caddy:ro caddy:2.11.4-alpine
+    -v /opt/storecipe/bootstrap:/usr/share/caddy:ro caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
 fi

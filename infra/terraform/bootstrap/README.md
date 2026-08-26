@@ -5,7 +5,8 @@ Federation, and the Terraform service account. It does not create a VM, applicat
 bucket, database, service-account key, or secret payload.
 
 1. Copy `terraform.tfvars.example` to the ignored `terraform.tfvars` and enter only the
-   project, billing account, region, GitHub repository, and unique bucket suffix.
+   project, billing account, region, GitHub repository name and immutable numeric IDs,
+   and unique bucket suffix.
 2. Run `terraform init`, `terraform fmt -check`, `terraform validate`,
    `terraform plan -out bootstrap.tfplan`, and inspect `terraform show bootstrap.tfplan`.
 3. Apply only the inspected file with `terraform apply bootstrap.tfplan`.

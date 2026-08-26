@@ -75,6 +75,7 @@ jobs:
       TF_VAR_bucket_suffix: ${{ vars.GCP_BUCKET_SUFFIX }}
       TF_VAR_workload_identity_pool_name: ${{ vars.GCP_WIF_POOL_NAME }}
       TF_VAR_budget_notification_email: ${{ vars.GCP_BUDGET_NOTIFICATION_EMAIL }}
+      TF_VAR_public_hostname: ${{ vars.GCP_PUBLIC_HOSTNAME }}
       TF_VAR_github_owner: ${{ github.repository_owner }}
       TF_VAR_github_repository: ${{ github.event.repository.name }}
     steps:
@@ -92,7 +93,7 @@ jobs:
           STATE_BUCKET: ${{ vars.GCP_TERRAFORM_STATE_BUCKET }}
         run: |
           set -euo pipefail
-          for name in TF_VAR_project_id TF_VAR_billing_account_id TF_VAR_region TF_VAR_zone TF_VAR_bucket_suffix TF_VAR_workload_identity_pool_name TF_VAR_budget_notification_email STATE_BUCKET; do
+          for name in TF_VAR_project_id TF_VAR_billing_account_id TF_VAR_region TF_VAR_zone TF_VAR_bucket_suffix TF_VAR_workload_identity_pool_name TF_VAR_budget_notification_email TF_VAR_public_hostname STATE_BUCKET; do
             [[ -n "${!name:-}" ]] || { echo "Missing required variable: $name" >&2; exit 1; }
           done
       - name: Create saved production plan

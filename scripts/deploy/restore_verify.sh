@@ -153,11 +153,11 @@ BEGIN
     INSERT INTO catalog.account_deletions
       (id, auth_subject, status, request_id, attempts, next_attempt_at, created_at,
        updated_at, completed_at, expires_at, lease_owner, lease_expires_at,
-       catalog_user_id, media_snapshot)
+       catalog_user_id, media_snapshot, journal_committed)
     VALUES
       ({deletion_id}::uuid, {subject}, 'pending', {request_id}, 0, NOW(),
        {requested_at}::timestamptz, NOW(), NULL,
-       {expires_at}::timestamptz, NULL, NULL, v_user_id, v_media)
+       {expires_at}::timestamptz, NULL, NULL, v_user_id, v_media, TRUE)
     ON CONFLICT (auth_subject) DO UPDATE SET
       status = CASE
         WHEN catalog.account_deletions.status = 'completed'
@@ -194,6 +194,13 @@ BEGIN
          AND catalog.account_deletions.expires_at > NOW()
         THEN catalog.account_deletions.media_snapshot
         ELSE COALESCE(EXCLUDED.media_snapshot, catalog.account_deletions.media_snapshot)
+      END,
+      journal_committed = CASE
+        WHEN catalog.account_deletions.status = 'completed'
+         AND catalog.account_deletions.expires_at IS NOT NULL
+         AND catalog.account_deletions.expires_at > NOW()
+        THEN catalog.account_deletions.journal_committed
+        ELSE TRUE
       END,
       next_attempt_at = CASE
         WHEN catalog.account_deletions.status = 'completed'

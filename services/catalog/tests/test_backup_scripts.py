@@ -36,6 +36,10 @@ def test_restore_is_disposable_and_always_cleaned() -> None:
     assert "matched no objects" in text
     assert "Failed to list account-deletion journal objects" in text
     assert "media_snapshot" in text
+    assert "journal_committed" in text
+    assert "v_media, TRUE)" in text
+    assert "journal_committed = CASE" in text
+    assert "ELSE TRUE" in text
     assert ".completed" in text
     assert "COALESCE(EXCLUDED.media_snapshot" in text
     assert ".committed" in text

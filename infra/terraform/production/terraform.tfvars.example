@@ -9,4 +9,5 @@ github_owner                    = "neilcohen322"
 github_repository               = "storecipe"
 budget_amount_usd               = 10
 budget_notification_email       = "operator@example.com"
+public_hostname                 = "storecipe.example"
 deletion_protection             = true

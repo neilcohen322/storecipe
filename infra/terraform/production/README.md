@@ -30,6 +30,13 @@ they do not extend erasure semantics. The VM startup contract writes its name to
 that existing host binding into the Catalog runtime environment.
 
 The shared GitHub WIF provider admits only the `terraform.yml` and `deploy.yml`
-workflows from `master`. Service-account bindings then narrow authority again: the
-Terraform service account is bound only to the Terraform workflow identity, while the
-deployment service account requires the protected `production` environment identity.
+workflows from `master`, using immutable GitHub repository and owner IDs. The
+environment claim is mapped only when present so Terraform plan can authenticate
+without a GitHub environment, while deploy still requires `production`. Service-account
+bindings then narrow authority again: the Terraform service account is bound only to the
+Terraform workflow identity, while the deployment service account requires the protected
+`production` environment identity.
+
+Set the GitHub Actions repository variable `GCP_PUBLIC_HOSTNAME` before running a
+production plan. The workflow maps it to `TF_VAR_public_hostname` for Monitoring uptime
+checks and rejects empty values.
