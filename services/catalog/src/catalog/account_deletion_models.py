@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     Index,
@@ -45,6 +46,7 @@ class AccountDeletion(Base):
     auth_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    journal_committed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     catalog_user_id: Mapped[UUID | None] = mapped_column(nullable=True)
     media_snapshot: Mapped[list[dict[str, str]] | None] = mapped_column(JSON, nullable=True)

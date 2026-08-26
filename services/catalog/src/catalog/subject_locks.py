@@ -15,7 +15,8 @@ async def lock_subject(session: AsyncSession, subject: str) -> None:
     bind = session.get_bind()
     if bind.dialect.name != "postgresql":
         return
-    await session.execute(
-        text("SELECT pg_advisory_xact_lock(hashtextextended(:subject, 0))"),
-        {"subject": subject},
-    )
+    with session.no_autoflush:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:subject, 0))"),
+            {"subject": subject},
+        )

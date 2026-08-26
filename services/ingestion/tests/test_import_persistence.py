@@ -94,6 +94,19 @@ async def session() -> AsyncSession:
     await engine.dispose()
 
 
+def test_jobs_index_owner_history_for_newest_first_pagination() -> None:
+    indexes = {index.name: index for index in ImportJob.__table__.indexes}
+
+    index = indexes["ix_import_jobs_owner_history"]
+
+    assert isinstance(index, Index)
+    assert tuple(column.name for column in index.columns) == (
+        "owner_subject",
+        "created_at",
+        "id",
+    )
+
+
 def test_jobs_enforce_unique_owner_idempotency_key_only_when_a_key_is_present() -> None:
     indexes = {index.name: index for index in ImportJob.__table__.indexes}
 

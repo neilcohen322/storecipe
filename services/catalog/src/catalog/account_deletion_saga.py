@@ -22,6 +22,7 @@ from catalog.subject_locks import lock_subject
 logger = logging.getLogger(__name__)
 _LEASE = timedelta(minutes=5)
 _RETENTION = timedelta(days=90)
+_LOOP_IDLE_SECONDS = 5.0
 
 
 async def run_account_deletion_loop(
@@ -35,29 +36,76 @@ async def run_account_deletion_loop(
 ) -> None:
     worker_id = str(uuid4())
     while not stop.is_set():
-        await _reconcile_journal(session_factory, journal)
-        await _prune_expired(session_factory)
-        await _purge_expired_completed_journals(journal)
-        await _alert_incomplete(session_factory)
-        job_id = await _claim(session_factory, worker_id)
-        if job_id is None:
+        try:
+            await _reconcile_journal(session_factory, journal)
+            await _prune_expired(session_factory)
+            await _purge_expired_completed_journals(journal)
+            await _alert_incomplete(session_factory)
+            job_id = await _claim(session_factory, worker_id)
+            if job_id is None:
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=_LOOP_IDLE_SECONDS)
+                except TimeoutError:
+                    continue
+                return
             try:
-                await asyncio.wait_for(stop.wait(), timeout=5)
+                await _process(
+                    session_factory,
+                    job_id,
+                    clients=clients,
+                    redis=redis,
+                    store=store,
+                    journal=journal,
+                )
+            except Exception as exc:
+                logger.exception("account_deletion.retry", extra={"deletion_id": str(job_id)})
+                try:
+                    await _retry(session_factory, job_id, type(exc).__name__)
+                except Exception:
+                    logger.exception(
+                        "account_deletion.retry_failed", extra={"deletion_id": str(job_id)}
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("account_deletion.loop_failed")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=_LOOP_IDLE_SECONDS)
             except TimeoutError:
                 continue
             return
+
+
+async def run_supervised_account_deletion_loop(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    clients: AccountDeletionClients,
+    redis: object,
+    store: RecipeImageStore | None,
+    stop: asyncio.Event,
+    journal: DeletionJournal | None = None,
+) -> None:
+    """Restart the deletion worker after an unexpected exit until shutdown."""
+
+    while not stop.is_set():
         try:
-            await _process(
+            await run_account_deletion_loop(
                 session_factory,
-                job_id,
                 clients=clients,
                 redis=redis,
                 store=store,
+                stop=stop,
                 journal=journal,
             )
-        except Exception as exc:
-            logger.exception("account_deletion.retry", extra={"deletion_id": str(job_id)})
-            await _retry(session_factory, job_id, type(exc).__name__)
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("account_deletion.worker_crashed")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=_LOOP_IDLE_SECONDS)
+            except TimeoutError:
+                continue
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -89,6 +137,7 @@ async def _reconcile_journal(
         try:
             await journal.write(entry)
             await journal.commit(entry)
+            await _mark_journal_committed(factory, job.id)
             if job.status == "completed":
                 completed_at = _as_utc(job.completed_at) if job.completed_at is not None else now
                 await journal.complete(entry, completed_at=completed_at)
@@ -124,6 +173,7 @@ async def _restore_missing_from_journal(
                         auth_subject=entry.subject,
                         request_id=entry.request_id,
                         status="pending",
+                        journal_committed=True,
                         expires_at=entry.expires_at,
                         created_at=entry.requested_at,
                         updated_at=datetime.now(UTC),
@@ -169,6 +219,15 @@ async def _alert_incomplete(factory: async_sessionmaker[AsyncSession]) -> None:
         logger.error("account_deletion.incomplete", extra={"incomplete_count": int(count)})
 
 
+async def _mark_journal_committed(factory: async_sessionmaker[AsyncSession], job_id: UUID) -> None:
+    async with factory.begin() as session:
+        job = await session.get(AccountDeletion, job_id)
+        if job is None or job.journal_committed:
+            return
+        job.journal_committed = True
+        job.updated_at = datetime.now(UTC)
+
+
 async def _claim(factory: async_sessionmaker[AsyncSession], worker_id: str) -> UUID | None:
     now = datetime.now(UTC)
     async with factory.begin() as session:
@@ -176,6 +235,7 @@ async def _claim(factory: async_sessionmaker[AsyncSession], worker_id: str) -> U
             select(AccountDeletion)
             .where(
                 AccountDeletion.status != "completed",
+                AccountDeletion.journal_committed.is_(True),
                 AccountDeletion.next_attempt_at <= now,
                 or_(
                     AccountDeletion.lease_expires_at.is_(None),

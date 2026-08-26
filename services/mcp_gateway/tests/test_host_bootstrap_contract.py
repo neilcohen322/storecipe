@@ -41,6 +41,12 @@ def test_host_install_is_idempotent_and_root_owned() -> None:
     assert "install ok installed" in startup
     assert "list-unit-files google-cloud-ops-agent" not in text
     assert "list-unit-files google-cloud-ops-agent" not in startup
+    assert "add-google-cloud-ops-agent-repo.sh" not in text
+    assert "add-google-cloud-ops-agent-repo.sh" not in startup
+    assert "google-cloud-ops-agent-${VERSION_CODENAME}-all" in text
+    assert "google-cloud-ops-agent-$VERSION_CODENAME-all" in startup
+    assert "signed-by=/usr/share/keyrings/cloud.google.gpg" in text
+    assert "signed-by=/usr/share/keyrings/cloud.google.gpg" in startup
 
 
 def test_scheduled_operations_fetch_and_remove_runtime_secret() -> None:

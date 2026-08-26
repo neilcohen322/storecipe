@@ -88,5 +88,16 @@ async def request_account_deletion(
                 requested_at=_as_utc(deletion.created_at),
                 request_id=deletion.request_id,
             )
-        await journal.commit(entry)
+        try:
+            await journal.commit(entry)
+        except DeletionJournalUnavailable:
+            logger.error(
+                "account_deletion.journal_commit_deferred",
+                extra={"deletion_id": str(deletion.id)},
+            )
+            return deletion
+        if not deletion.journal_committed:
+            deletion.journal_committed = True
+            deletion.updated_at = datetime.now(UTC)
+            await session.commit()
     return deletion
