@@ -30,11 +30,21 @@ async def readiness(request: Request) -> dict[str, Any]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="dependency unavailable: postgres",
         )
+    if getattr(request.app.state, "account_deletion_required", False):
+        deletion_task = getattr(request.app.state, "account_deletion_task", None)
+        if deletion_task is None or deletion_task.done():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="dependency unavailable: account_deletion_worker",
+            )
+    dependencies: dict[str, str] = {
+        "postgres": "ok",
+        "redis_cache": "ok" if redis_ok else "degraded",
+    }
+    if getattr(request.app.state, "account_deletion_required", False):
+        dependencies["account_deletion_worker"] = "ok"
     return {
         "status": "ok",
         "service": get_settings().service_name,
-        "dependencies": {
-            "postgres": "ok",
-            "redis_cache": "ok" if redis_ok else "degraded",
-        },
+        "dependencies": dependencies,
     }

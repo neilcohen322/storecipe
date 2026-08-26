@@ -1327,6 +1327,21 @@ class ImportRepository:
         return cast(Select[tuple[datetime]], select(func.clock_timestamp()))
 
     async def _locked_job(self, job_id: UUID) -> ImportJob | None:
+        """Lock the owning subject before the job row.
+
+        Heartbeats take the same order. Taking the row first deadlocks against a
+        concurrent session that already holds the subject advisory lock.
+        """
+
+        from ingestion.repositories.account_deletions import AccountDeletionRepository
+
+        with self.session.no_autoflush:
+            owner_subject = await self.session.scalar(
+                select(ImportJob.owner_subject).where(ImportJob.id == job_id)
+            )
+        if owner_subject is None:
+            return None
+        await AccountDeletionRepository(self.session).acquire_subject_lock(owner_subject)
         statement = select(ImportJob).where(ImportJob.id == job_id).with_for_update()
         return cast(ImportJob | None, await self.session.scalar(statement))
 

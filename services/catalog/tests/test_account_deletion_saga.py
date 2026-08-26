@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -9,7 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from test_deletion_journal import FakeClient
 
 from catalog.account_deletion_models import AccountDeletion
-from catalog.account_deletion_saga import _process, _reconcile_journal, _retry
+from catalog.account_deletion_saga import (
+    _claim,
+    _process,
+    _reconcile_journal,
+    _retry,
+    run_account_deletion_loop,
+)
 from catalog.deletion_journal import (
     DeletionJournalEntry,
     DeletionJournalUnavailable,
@@ -278,6 +285,7 @@ async def test_reconcile_upserts_tombstone_from_committed_journal(
     assert persisted is not None
     assert persisted.id == entry.deletion_id
     assert persisted.status == "pending"
+    assert persisted.journal_committed is True
 
 
 @pytest.mark.asyncio
@@ -325,3 +333,65 @@ async def test_reconcile_completes_journal_after_deferred_completion_marker(
     assert f"account-deletions/{deletion_id}.json" not in client.blobs
     assert f"account-deletions/{deletion_id}.committed" not in client.blobs
     assert completed_key not in client.blobs
+
+
+@pytest.mark.asyncio
+async def test_claim_skips_jobs_until_journal_is_committed(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    pending_id = uuid4()
+    async with factory.begin() as session:
+        session.add(
+            AccountDeletion(
+                id=pending_id,
+                auth_subject=SUBJECT,
+                request_id="request-uncommitted",
+                status="pending",
+                journal_committed=False,
+            )
+        )
+
+    assert await _claim(factory, "worker-1") is None
+
+    async with factory.begin() as session:
+        job = await session.get(AccountDeletion, pending_id)
+        assert job is not None
+        job.journal_committed = True
+
+    assert await _claim(factory, "worker-1") == pending_id
+
+
+@pytest.mark.asyncio
+async def test_loop_survives_transient_maintenance_error(
+    factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import catalog.account_deletion_saga as saga
+
+    stop = asyncio.Event()
+    calls = {"n": 0}
+
+    async def failing_reconcile(*_args: object, **_kwargs: object) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("postgres flap")
+        stop.set()
+
+    async def noop(*_args: object, **_kwargs: object) -> object:
+        return None
+
+    monkeypatch.setattr(saga, "_LOOP_IDLE_SECONDS", 0.01)
+    monkeypatch.setattr(saga, "_reconcile_journal", failing_reconcile)
+    monkeypatch.setattr(saga, "_prune_expired", noop)
+    monkeypatch.setattr(saga, "_purge_expired_completed_journals", noop)
+    monkeypatch.setattr(saga, "_alert_incomplete", noop)
+    monkeypatch.setattr(saga, "_claim", noop)
+
+    await run_account_deletion_loop(
+        factory,
+        clients=RecordingClients([]),
+        redis=object(),
+        store=None,
+        stop=stop,
+    )
+    assert calls["n"] >= 2

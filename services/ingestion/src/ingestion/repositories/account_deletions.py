@@ -23,16 +23,22 @@ class AccountDeletionRepository:
         self.session = session
 
     async def acquire_subject_lock(self, subject: str) -> None:
-        """Serialize subject writes until the current transaction ends."""
+        """Serialize subject writes until the current transaction ends.
+
+        Autoflush is disabled so pending subject-owned row writes cannot take
+        row locks before this advisory lock. Callers that lock a subject-owned
+        row must acquire this lock first.
+        """
 
         bind = self.session.get_bind()
         if bind.dialect.name != "postgresql":
             # Unit tests use SQLite; production admission is PostgreSQL-only.
             return
-        await self.session.execute(
-            text("SELECT pg_advisory_xact_lock(:lock_key)"),
-            {"lock_key": subject_advisory_lock_key(subject)},
-        )
+        with self.session.no_autoflush:
+            await self.session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": subject_advisory_lock_key(subject)},
+            )
 
     async def is_tombstoned(
         self,

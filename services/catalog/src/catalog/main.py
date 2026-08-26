@@ -11,7 +11,7 @@ from catalog.account_deletion_clients import (
     AccountDeletionClients,
     ClientCredentialsTokenProvider,
 )
-from catalog.account_deletion_saga import run_account_deletion_loop
+from catalog.account_deletion_saga import run_supervised_account_deletion_loop
 from catalog.auth import build_token_verifier
 from catalog.config import get_settings
 from catalog.cover_upload_limit import CoverUploadBodyLimitMiddleware
@@ -176,6 +176,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.image_processing_semaphore = asyncio.Semaphore(1)
     deletion_task: asyncio.Task[None] | None = None
     deletion_stop = asyncio.Event()
+    app.state.account_deletion_required = runtime_settings.account_deletion_configured
+    app.state.account_deletion_task = None
     if runtime_settings.account_deletion_configured:
         internal_tokens = ClientCredentialsTokenProvider(
             token_url=runtime_settings.account_deletion_token_url,
@@ -196,7 +198,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             auth0_tokens=auth0_tokens,
         )
         deletion_task = asyncio.create_task(
-            run_account_deletion_loop(
+            run_supervised_account_deletion_loop(
                 app.state.session_factory,
                 clients=deletion_clients,
                 redis=app.state.redis,
@@ -205,6 +207,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 journal=app.state.account_deletion_journal,
             )
         )
+        app.state.account_deletion_task = deletion_task
     try:
         yield
     finally:

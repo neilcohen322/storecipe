@@ -119,6 +119,12 @@ class ImportJob(Base):
     __tablename__ = "import_jobs"
     __table_args__ = (
         Index(
+            "ix_import_jobs_owner_history",
+            "owner_subject",
+            "created_at",
+            "id",
+        ),
+        Index(
             "uq_import_jobs_owner_idempotency_key",
             "owner_subject",
             "idempotency_key",

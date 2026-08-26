@@ -87,6 +87,7 @@ async def test_tombstone_blocks_user_recreation_for_full_retention_window(
         session, SUBJECT, "test-request-id", journal=RecordingJournal([])
     )
     assert deletion.status == "pending"
+    assert deletion.journal_committed is True
 
     with pytest.raises(AccountDeleted):
         await resolve_user(session, SUBJECT)
@@ -120,11 +121,12 @@ async def test_journal_is_written_before_tombstone_commit(session: AsyncSession)
     session.commit = recording_commit  # type: ignore[method-assign]
     deletion = await request_account_deletion(session, SUBJECT, "request-123", journal=journal)
 
-    assert events == ["journal", "commit", "committed"]
+    assert events == ["journal", "commit", "committed", "commit"]
     assert journal.entries[0].deletion_id == deletion.id
     assert journal.committed[0].deletion_id == deletion.id
     assert journal.entries[0].expires_at > journal.entries[0].requested_at
     assert deletion.created_at == journal.entries[0].requested_at
+    assert deletion.journal_committed is True
 
 
 @pytest.mark.asyncio
@@ -239,15 +241,15 @@ async def test_public_request_rejects_client_credentials_token(
 async def test_commit_marker_failure_after_db_commit_keeps_tombstone(
     session: AsyncSession,
 ) -> None:
-    with pytest.raises(DeletionJournalUnavailable):
-        await request_account_deletion(
-            session,
-            SUBJECT,
-            "request-123",
-            journal=RecordingJournal([], fail_commit=True),
-        )
+    deletion = await request_account_deletion(
+        session,
+        SUBJECT,
+        "request-123",
+        journal=RecordingJournal([], fail_commit=True),
+    )
 
-    assert await session.scalar(select(AccountDeletion.id)) is not None
+    assert deletion.journal_committed is False
+    assert await session.scalar(select(AccountDeletion.id)) == deletion.id
 
 
 @pytest.mark.asyncio
@@ -263,8 +265,8 @@ async def test_commit_marker_failure_then_restore_replay_does_not_delete_user(
     session.add(User(auth_subject=SUBJECT))
     await session.commit()
 
-    with pytest.raises(DeletionJournalUnavailable):
-        await request_account_deletion(session, SUBJECT, "request-123", journal=journal)
+    deletion = await request_account_deletion(session, SUBJECT, "request-123", journal=journal)
+    assert deletion.journal_committed is False
 
     await session.execute(delete(AccountDeletion))
     await session.commit()

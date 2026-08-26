@@ -88,11 +88,11 @@ async def replay_entry(
             INSERT INTO catalog.account_deletions
               (id, auth_subject, status, request_id, attempts, next_attempt_at, created_at,
                updated_at, completed_at, expires_at, lease_owner, lease_expires_at,
-               catalog_user_id, media_snapshot)
+               catalog_user_id, media_snapshot, journal_committed)
             VALUES
               (:id, :subject, 'pending', :request_id, 0, :now, :requested_at,
                :now, NULL, :expires_at, NULL, NULL,
-               :catalog_user_id, CAST(:media_snapshot AS json))
+               :catalog_user_id, CAST(:media_snapshot AS json), TRUE)
             ON CONFLICT (auth_subject) DO UPDATE SET
               status = CASE
                 WHEN {_IN_WINDOW_COMPLETED}
@@ -123,6 +123,11 @@ async def replay_entry(
                 ELSE COALESCE(
                   EXCLUDED.media_snapshot, catalog.account_deletions.media_snapshot
                 )
+              END,
+              journal_committed = CASE
+                WHEN {_IN_WINDOW_COMPLETED}
+                THEN catalog.account_deletions.journal_committed
+                ELSE TRUE
               END,
               next_attempt_at = CASE
                 WHEN {_IN_WINDOW_COMPLETED}

@@ -132,6 +132,54 @@ def test_readiness_reports_healthy_optional_cache(
     assert response.json()["dependencies"] == {"postgres": "ok", "redis_cache": "ok"}
 
 
+def test_readiness_rejects_dead_account_deletion_worker(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def dependency_ok(_: object, **_kwargs: float) -> bool:
+        return True
+
+    class _FinishedTask:
+        def done(self) -> bool:
+            return True
+
+    monkeypatch.setattr(health_service, "check_postgres", dependency_ok)
+    monkeypatch.setattr(health_service, "check_redis", dependency_ok)
+    monkeypatch.setattr(app.state, "account_deletion_required", True, raising=False)
+    monkeypatch.setattr(app.state, "account_deletion_task", _FinishedTask(), raising=False)
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "dependency unavailable: account_deletion_worker"
+
+
+def test_readiness_reports_running_account_deletion_worker(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def dependency_ok(_: object, **_kwargs: float) -> bool:
+        return True
+
+    class _RunningTask:
+        def done(self) -> bool:
+            return False
+
+    monkeypatch.setattr(health_service, "check_postgres", dependency_ok)
+    monkeypatch.setattr(health_service, "check_redis", dependency_ok)
+    monkeypatch.setattr(app.state, "account_deletion_required", True, raising=False)
+    monkeypatch.setattr(app.state, "account_deletion_task", _RunningTask(), raising=False)
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["dependencies"] == {
+        "postgres": "ok",
+        "redis_cache": "ok",
+        "account_deletion_worker": "ok",
+    }
+
+
 def test_readiness_rejects_postgres_failure(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
