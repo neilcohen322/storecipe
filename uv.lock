@@ -8,6 +8,7 @@ members = [
     "storecipe-catalog",
     "storecipe-ingestion",
     "storecipe-mcp-gateway",
+    "storecipe-store",
     "storecipe-workspace",
 ]
 constraints = [
@@ -1801,6 +1802,23 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10,<2.12" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },
     { name = "storecipe-auth", editable = "packages/storecipe_auth" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<0.36" },
+]
+
+[[package]]
+name = "storecipe-store"
+version = "0.1.0"
+source = { editable = "services/recipe_store" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = ">=1.26,<2" },
+    { name = "pydantic", specifier = ">=2.10,<2.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<0.36" },
 ]
 

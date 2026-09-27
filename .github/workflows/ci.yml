@@ -53,7 +53,7 @@ jobs:
       - run: uv sync --all-packages --group dev --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy packages/storecipe_auth/src services/catalog/src services/ingestion/src services/mcp_gateway/src
+      - run: uv run mypy packages/storecipe_auth/src services/catalog/src services/ingestion/src services/mcp_gateway/src services/recipe_store/src
       - name: Bootstrap Catalog and Ingestion schemas
         run: |
           docker run --rm --network host -e PGPASSWORD=storecipe postgres:17-alpine \

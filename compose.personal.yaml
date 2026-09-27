@@ -1,0 +1,41 @@
+name: storecipe-personal
+
+services:
+  recipe-store:
+    build:
+      context: .
+      dockerfile: services/recipe_store/Dockerfile
+    environment:
+      STORECIPE_DATA_PATH: /data/storecipe.sqlite
+      STORECIPE_TRANSPORT: http
+      STORECIPE_HOST: 0.0.0.0
+      STORECIPE_PORT: "8765"
+      STORECIPE_TOKEN: ${STORECIPE_TOKEN:?Set STORECIPE_TOKEN to at least 16 characters}
+    ports:
+      - "127.0.0.1:${STORECIPE_PORT:-8765}:8765"
+    volumes:
+      - storecipe-data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["share"]
+    command: tunnel --no-autoupdate --url http://recipe-store:8765
+    depends_on:
+      recipe-store:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  storecipe-data:

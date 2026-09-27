@@ -1,5 +1,101 @@
 # Storecipe
 
+Personal recipe storage for one library. There is no UI on this path. Recipes live in a
+SQLite file, and an MCP server exposes tools so Cursor, ChatGPT, or Grok can search and
+update that library. The model answers; Storecipe stores.
+
+The Expo app and the multi-service stack below are the earlier design. You do not need
+them to use the personal store.
+
+## Personal store
+
+Tools:
+
+- `search_recipes` finds recipes. Every ingredient and tag is required. An empty search
+  lists the most recently updated recipes.
+- `get_recipe` returns ingredients, steps, rating, notes, and the last cooked time.
+- `save_recipe` creates a recipe, or replaces it when you pass `recipe_id`. A replacement
+  keeps the rating, favorite flag, and last cooked time.
+- `update_recipe` changes only the fields you pass.
+- `delete_recipe` removes one recipe.
+- `catalog_overview` returns counts, the average rating, time buckets, and the top tags
+  and ingredients.
+
+One process should own a given SQLite file. If Docker is running the store, point Cursor
+at that HTTP URL instead of starting a second stdio process on a different file.
+
+### Cursor on this machine
+
+From the repository root, after `uv sync --all-packages`:
+
+```json
+{
+  "mcpServers": {
+    "storecipe": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/storecipe", "python", "-m", "storecipe_store"]
+    }
+  }
+}
+```
+
+That uses stdio and stores recipes at `~/.storecipe/storecipe.sqlite`. Set
+`STORECIPE_DATA_PATH` in the server `env` block to choose another file.
+
+### Docker
+
+Generate a token and put it in `.env` as `STORECIPE_TOKEN` (at least 16 characters, no
+spaces):
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+docker compose -f compose.personal.yaml up --build
+```
+
+The server listens on `127.0.0.1:8765`. Cursor can use HTTP instead of stdio:
+
+```json
+{
+  "mcpServers": {
+    "storecipe": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+    }
+  }
+}
+```
+
+The published port is bound to loopback. Other machines still need a tunnel.
+
+### ChatGPT and Grok
+
+Both clients call a public HTTPS URL. They cannot attach a stdio process on your laptop.
+A Cloudflare quick tunnel is free and needs no account. The hostname changes every time
+the tunnel process starts:
+
+```powershell
+docker compose -f compose.personal.yaml --profile share up --build
+docker compose -f compose.personal.yaml logs tunnel
+```
+
+Use the printed `https://<host>.trycloudflare.com/mcp` URL. The store speaks Streamable
+HTTP, which works through that tunnel. Send `Authorization: Bearer <STORECIPE_TOKEN>`.
+
+ChatGPT (Plus, Pro, Business, Enterprise, or Edu, with developer mode): Settings, Apps
+and Connectors (some workspaces still show this under Connectors, Advanced), create a
+connector, paste the `/mcp` URL, and choose Token authentication. If that workspace only
+offers OAuth, this server will not connect there.
+
+Grok on the web: `grok.com/connectors`, New Connector, Custom, then the `/mcp` URL. The
+xAI API accepts the same URL as a remote MCP tool with
+`authorization` set to `Bearer <STORECIPE_TOKEN>`.
+
+A stable hostname needs a domain on Cloudflare's free plan and a named tunnel token.
+Replace the `tunnel` service command with `tunnel --no-autoupdate run --token <token>`
+and point the tunnel's public hostname at `http://recipe-store:8765`.
+
+## Earlier multi-service app
+
 Storecipe is an AI-assisted personal recipe platform for storing, rating, searching,
 and importing recipes. It provides user-owned recipe management, Auth0 JWT
 authorization, private search and filtering, and one authenticated REST-backed MCP

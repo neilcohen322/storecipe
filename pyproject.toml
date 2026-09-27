@@ -15,6 +15,7 @@ members = [
     "services/catalog",
     "services/ingestion",
     "services/mcp_gateway",
+    "services/recipe_store",
 ]
 
 [dependency-groups]
@@ -37,6 +38,7 @@ testpaths = [
     "services/catalog/tests",
     "services/ingestion/tests",
     "services/mcp_gateway/tests",
+    "services/recipe_store/tests",
 ]
 markers = [
     "integration: requires an explicitly configured PostgreSQL integration database",
@@ -53,6 +55,7 @@ src = [
     "services/catalog/src",
     "services/ingestion/src",
     "services/mcp_gateway/src",
+    "services/recipe_store/src",
 ]
 # Evaluation notebooks are exploratory; keep CI lint/format on service code.
 extend-exclude = ["*.ipynb"]
@@ -69,6 +72,7 @@ files = [
     "services/catalog/src",
     "services/ingestion/src",
     "services/mcp_gateway/src",
+    "services/recipe_store/src",
 ]
 plugins = ["pydantic.mypy"]
 
