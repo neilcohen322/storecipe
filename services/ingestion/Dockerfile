@@ -11,6 +11,7 @@ COPY pyproject.toml uv.lock ./
 COPY packages/storecipe_auth/pyproject.toml packages/storecipe_auth/pyproject.toml
 COPY services/catalog/pyproject.toml services/catalog/pyproject.toml
 COPY services/ingestion/pyproject.toml services/ingestion/pyproject.toml
+COPY services/recipe_store/pyproject.toml services/recipe_store/pyproject.toml
 RUN uv sync --frozen --no-dev --no-install-workspace --package storecipe-ingestion
 
 COPY packages/storecipe_auth packages/storecipe_auth
