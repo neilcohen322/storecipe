@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 10
     steps:
       # actions/checkout v5
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       # hashicorp/setup-terraform v4
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
         with:
@@ -79,7 +79,7 @@ jobs:
       TF_VAR_github_owner: ${{ github.repository_owner }}
       TF_VAR_github_repository: ${{ github.event.repository.name }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
         with:
           terraform_version: 1.15.0
@@ -159,7 +159,7 @@ jobs:
           [[ "$(jq -r '.conclusion' <<<"$run")" == "success" ]] || { echo "Selected Terraform run was not successful" >&2; exit 1; }
           [[ "$(jq -r '.head_branch' <<<"$run")" == "master" ]] || { echo "Selected plan was not created from master" >&2; exit 1; }
           [[ "$(jq -r '.head_sha' <<<"$run")" == "$EXPECTED_COMMIT" ]] || { echo "Selected plan is stale; create a fresh plan for the current master commit" >&2; exit 1; }
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
         with:
           terraform_version: 1.15.0
