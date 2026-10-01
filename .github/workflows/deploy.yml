@@ -65,7 +65,7 @@ jobs:
           [[ "$(jq -r '.conclusion' <<<"$run")" == "success" ]] || { echo "Selected Release run was not successful" >&2; exit 1; }
           event=$(jq -r '.event' <<<"$run")
           [[ "$event" == "workflow_dispatch" || "$event" == "workflow_run" ]] || { echo "Selected Release run has an unexpected trigger" >&2; exit 1; }
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-${{ inputs.release_commit }}
           path: release
