@@ -1,0 +1,18 @@
+{
+  "name": "Storecipe",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "expo-web",
+      "command": "cd apps/web && pnpm run web",
+      "description": "Expo web dev server for the universal client (http://localhost:8081)."
+    }
+  ],
+  "ports": [
+    { "name": "catalog-api", "port": 8000 },
+    { "name": "ingestion-api", "port": 8001 },
+    { "name": "mcp-gateway", "port": 8002 },
+    { "name": "expo-web", "port": 8081 }
+  ]
+}
